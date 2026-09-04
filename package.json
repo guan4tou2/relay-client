@@ -8,7 +8,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "test": "jest --verbose",
+    "test": "jest --runInBand",
     "make-icon": "node scripts/make-icon.js",
     "pack": "npm run make-icon && electron-builder --win --dir",
     "dist": "npm run make-icon && electron-builder --win",
