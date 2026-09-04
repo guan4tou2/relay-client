@@ -1,0 +1,60 @@
+/* ===== 代理客戶端 — 照 Claude Design 稿還原 =====
+   設計本體大量使用 inline style；此檔只放：reset、CSS 變數、keyframes、
+   scrollbar、hover 工具類（設計稿的 style-hover 在真實 HTML 需用 :hover）、
+   以及 frameless 視窗拖曳所需的 -webkit-app-region。 */
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Noto Sans TC','Microsoft JhengHei','PingFang TC',-apple-system,'Segoe UI',sans-serif;
+  font-size:14px;
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+  user-select:none;
+
+  --bg:#f2f2f7;--panel:#fff;--panelq:rgba(255,255,255,.72);--card:#fff;--fill:#78788029;--fill2:#7878801f;
+  --text:#1c1c1e;--text2:#3c3c4399;--text3:#3c3c434d;--sep:#3c3c431f;--accent:#4470c4;--accent-dim:#4470c414;
+  --good:#2f9e78;--amber:#d98b1f;--red:#d9534a;--purple:#7a72cf;
+  --shadow:0 8px 24px rgba(0,0,0,.10),0 1px 2px rgba(0,0,0,.06);
+}
+body[data-theme="dark"]{
+  --bg:#1c1c1e;--panel:#2c2c2e;--panelq:rgba(44,44,46,.72);--card:#2c2c2e;--fill:#7878805c;--fill2:#78788033;
+  --text:#fff;--text2:#ebebf599;--text3:#ebebf54d;--sep:#54545899;--accent:#8cb0ef;--accent-dim:#8cb0ef1f;
+  --good:#54c69b;--amber:#e8b055;--red:#ef7a70;--purple:#a49ce6;
+  --shadow:0 10px 30px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.3);
+}
+
+a{color:var(--accent)}a:hover{color:var(--good)}
+input,button,select,textarea{font-family:inherit}
+input:focus{border-color:var(--accent)}
+
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--fill);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+
+@keyframes ringPulse{0%,100%{opacity:.3;transform:scale(1)}50%{opacity:.08;transform:scale(1.1)}}
+@keyframes spinArc{to{transform:rotate(360deg)}}
+@keyframes nodeBeat{0%,100%{transform:scale(1)}50%{transform:scale(1.14)}}
+@keyframes ripple{0%{transform:scale(1);opacity:.5}70%{opacity:0}100%{transform:scale(1.35);opacity:0}}
+@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-5px)}40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}}
+@keyframes dotBeat{0%,100%{box-shadow:0 0 0 2px rgba(47,158,120,.30)}50%{box-shadow:0 0 0 6px rgba(47,158,120,.06)}}
+@keyframes arcSettle{0%{transform:rotate(0deg);animation-timing-function:cubic-bezier(.3,0,.35,1)}62%{transform:rotate(372deg);animation-timing-function:cubic-bezier(.34,1.2,.64,1)}80%{transform:rotate(352deg);animation-timing-function:cubic-bezier(.34,1.1,.64,1)}91%{transform:rotate(362.5deg)}97%{transform:rotate(359deg)}100%{transform:rotate(360deg)}}
+@keyframes hopFlow{0%{stroke-dashoffset:16}100%{stroke-dashoffset:0}}
+@keyframes sheetIn{from{transform:translateX(28px);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes toastIn{from{transform:translateY(-8px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes fadeUp{from{transform:translateY(6px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* hover 工具類：設計稿 style-hover 的等價實作。用 !important 覆蓋 inline background。 */
+.hvFill2:hover{background:var(--fill2)!important}
+.hvFill:hover{background:var(--fill)!important;color:var(--text)!important}
+.hvBright:hover{filter:brightness(1.08)}
+.hvRed:hover{background:var(--red)!important;color:#fff!important}
+.hvAcc:hover{background:var(--accent)!important;color:#fff!important}
+.hvAccDim:hover{background:var(--accent-dim)!important}
+
+/* frameless 視窗：標題列可拖曳，互動元件不可拖曳 */
+.titlebar{-webkit-app-region:drag}
+.titlebar button,.titlebar input,.no-drag{-webkit-app-region:no-drag}

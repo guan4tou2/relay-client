@@ -1,0 +1,112 @@
+{
+  "name": "socks5-client",
+  "version": "1.1.0",
+  "description": "代理客戶端 — 多端口路由 · 多跳串鏈 · Per-app 分流 (SOCKS5 / SOCKS4 / HTTP / HTTPS)",
+  "main": "main.js",
+  "author": "guantou",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "jest --verbose",
+    "make-icon": "node scripts/make-icon.js",
+    "pack": "npm run make-icon && electron-builder --win --dir",
+    "dist": "npm run make-icon && electron-builder --win",
+    "release": "npm run make-icon && electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-store": "^8.1.0",
+    "electron-updater": "^6.8.9",
+    "socks": "^2.8.3"
+  },
+  "devDependencies": {
+    "electron": "^32.3.3",
+    "electron-builder": "^24.13.3",
+    "jest": "^30.5.1",
+    "png-to-ico": "^2.1.8",
+    "sharp": "^0.33.5"
+  },
+  "jest": {
+    "testTimeout": 15000
+  },
+  "build": {
+    "appId": "com.guantou.relayclient",
+    "productName": "代理客戶端",
+    "copyright": "Copyright © 2026 guantou",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "guan4tou2",
+        "repo": "relay-client"
+      }
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "assets/tray.png",
+      "assets/tray-active.png",
+      "assets/icon.png"
+    ],
+    "afterPack": "scripts/afterPack.js",
+    "compression": "maximum",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "**/*",
+      "!test/**",
+      "!.claude/**",
+      "!scripts/**",
+      "!engine/**",
+      "!build/**",
+      "!**/*.test.js",
+      "!**/*.map",
+      "!**/*.md",
+      "!**/*.markdown",
+      "!**/*.ts",
+      "!**/{test,tests,__tests__,example,examples,docs,doc,.github,.vscode}/**",
+      "!**/{CHANGELOG,CHANGES,HISTORY,AUTHORS,CONTRIBUTORS}*",
+      "!**/*.min.js.map",
+      "!**/tsconfig.json",
+      "!**/.eslintrc*",
+      "!.gitignore",
+      "!package-lock.json"
+    ],
+    "extraResources": [
+      {
+        "from": "engine/sing-box.exe",
+        "to": "engine/sing-box.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "代理客戶端",
+      "artifactName": "RelayClient-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "RelayClient-Portable-${version}.${ext}"
+    }
+  }
+}
