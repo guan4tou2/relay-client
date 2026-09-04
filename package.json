@@ -59,6 +59,8 @@
       "!scripts/**",
       "!engine/**",
       "!build/**",
+      "!docs/**",
+      "!.github/**",
       "!**/*.test.js",
       "!**/*.map",
       "!**/*.md",
