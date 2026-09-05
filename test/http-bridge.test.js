@@ -8,8 +8,16 @@ jest.mock('../src/proxy/connect', () => ({
 }));
 const { connectViaProxy, openSocketToProxy } = require('../src/proxy/connect');
 
-function getRandomPort() {
-  return 30000 + Math.floor(Math.random() * 20000);
+// Grab an OS-assigned free port. A fixed random range occasionally hit
+// Windows reserved/excluded ports on CI (listen EACCES); asking the OS avoids that.
+function getFreePort() {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
 }
 
 describe('HttpBridge — lifecycle', () => {
@@ -21,14 +29,14 @@ describe('HttpBridge — lifecycle', () => {
 
   test('starts listening on specified port', async () => {
     bridge = new HttpBridge();
-    const port = getRandomPort();
+    const port = await getFreePort();
     await bridge.start(port, { host: '127.0.0.1', port: 1080 });
     expect(bridge.running).toBe(true);
   });
 
   test('emits listening event', async () => {
     bridge = new HttpBridge();
-    const port = getRandomPort();
+    const port = await getFreePort();
     const listening = jest.fn();
     bridge.on('listening', listening);
     await bridge.start(port, { host: '127.0.0.1', port: 1080 });
@@ -37,7 +45,7 @@ describe('HttpBridge — lifecycle', () => {
 
   test('stop resolves and clears state', async () => {
     bridge = new HttpBridge();
-    const port = getRandomPort();
+    const port = await getFreePort();
     await bridge.start(port, { host: '127.0.0.1', port: 1080 });
     await bridge.stop();
     expect(bridge.running).toBe(false);
@@ -52,7 +60,7 @@ describe('HttpBridge — lifecycle', () => {
 
   test('rejects on port conflict', async () => {
     bridge = new HttpBridge();
-    const port = getRandomPort();
+    const port = await getFreePort();
     await bridge.start(port, { host: '127.0.0.1', port: 1080 });
     const bridge2 = new HttpBridge();
     bridge2.on('error', () => {});
@@ -79,7 +87,7 @@ describe('HttpBridge — HTTPS CONNECT tunnel', () => {
   beforeEach(async () => {
     connectViaProxy.mockReset();
     bridge = new HttpBridge();
-    port = getRandomPort();
+    port = await getFreePort();
   });
 
   afterEach(async () => {
@@ -191,7 +199,7 @@ describe('HttpBridge — plain HTTP forwarding', () => {
     connectViaProxy.mockReset();
     openSocketToProxy.mockReset();
     bridge = new HttpBridge();
-    port = getRandomPort();
+    port = await getFreePort();
   });
 
   afterEach(async () => {
@@ -358,9 +366,11 @@ describe('HttpBridge — plain HTTP forwarding', () => {
 });
 
 describe('HttpBridge — bytes tracking', () => {
+  let port;
+  beforeEach(async () => { port = await getFreePort(); });
+
   test('tracks upload bytes through CONNECT tunnel', (done) => {
     const bridge = new HttpBridge();
-    const port = getRandomPort();
     connectViaProxy.mockReset();
     const fakeRemote = new net.Socket();
     connectViaProxy.mockResolvedValue(fakeRemote);
@@ -391,7 +401,6 @@ describe('HttpBridge — bytes tracking', () => {
 
   test('tracks download bytes through CONNECT tunnel', (done) => {
     const bridge = new HttpBridge();
-    const port = getRandomPort();
     connectViaProxy.mockReset();
     const { PassThrough } = require('stream');
     const fakeRemote = new PassThrough();
@@ -424,9 +433,11 @@ describe('HttpBridge — bytes tracking', () => {
 });
 
 describe('HttpBridge — CONNECT error log', () => {
+  let port;
+  beforeEach(async () => { port = await getFreePort(); });
+
   test('emits error log on CONNECT failure', (done) => {
     const bridge = new HttpBridge();
-    const port = getRandomPort();
     connectViaProxy.mockReset();
     connectViaProxy.mockRejectedValue(new Error('proxy unreachable'));
     const logSpy = jest.fn();
@@ -457,9 +468,11 @@ describe('HttpBridge — CONNECT error log', () => {
 });
 
 describe('HttpBridge — stats tracking', () => {
+  let port;
+  beforeEach(async () => { port = await getFreePort(); });
+
   test('emits stats on new connection', (done) => {
     const bridge = new HttpBridge();
-    const port = getRandomPort();
     const fakeRemote = new net.Socket();
     connectViaProxy.mockResolvedValue(fakeRemote);
 
@@ -494,7 +507,7 @@ describe('HttpBridge — stats tracking', () => {
 describe('HttpBridge — stop cleans up', () => {
   test('stop destroys tracked sockets', async () => {
     const bridge = new HttpBridge();
-    const port = getRandomPort();
+    const port = await getFreePort();
     const fakeRemote = new net.Socket();
     connectViaProxy.mockResolvedValue(fakeRemote);
 

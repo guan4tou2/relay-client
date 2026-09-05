@@ -1,7 +1,15 @@
 const net = require('net');
 
-function getRandomPort() {
-  return 30000 + Math.floor(Math.random() * 20000);
+// Grab an OS-assigned free port. A fixed random range occasionally hit
+// Windows reserved/excluded ports on CI (listen EACCES); asking the OS avoids that.
+function getFreePort() {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
 }
 
 // Replicate testRawHandshake and testProxyHandshake from main.js for unit testing
@@ -74,7 +82,7 @@ describe('testProxyHandshake — SOCKS5', () => {
   });
 
   test('succeeds when proxy replies with 0x05', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => {
       socket.once('data', (data) => {
         if (data[0] === 0x05) {
@@ -91,7 +99,7 @@ describe('testProxyHandshake — SOCKS5', () => {
   });
 
   test('fails when proxy replies with non-SOCKS5', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => {
       socket.once('data', () => {
         socket.write(Buffer.from([0x04, 0x00]));
@@ -105,7 +113,7 @@ describe('testProxyHandshake — SOCKS5', () => {
   });
 
   test('defaults to socks5 when type is omitted', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => {
       socket.once('data', (data) => {
         if (data[0] === 0x05) socket.write(Buffer.from([0x05, 0x00]));
@@ -119,7 +127,7 @@ describe('testProxyHandshake — SOCKS5', () => {
   });
 
   test('fails when connection is refused', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     await expect(testProxyHandshake({ host: '127.0.0.1', port, type: 'socks5' }))
       .rejects.toThrow(/ECONNREFUSED/);
   });
@@ -138,7 +146,7 @@ describe('testProxyHandshake — SOCKS4', () => {
   });
 
   test('succeeds when proxy replies with 0x00 0x5a', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => {
       socket.once('data', (data) => {
         if (data[0] === 0x04) {
@@ -154,7 +162,7 @@ describe('testProxyHandshake — SOCKS4', () => {
   });
 
   test('fails when reply does not start with 0x00', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => {
       socket.once('data', () => {
         socket.write(Buffer.from([0x05, 0x00]));
@@ -181,7 +189,7 @@ describe('testProxyHandshake — HTTP proxy', () => {
   });
 
   test('succeeds when proxy replies with HTTP status', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => {
       socket.once('data', (data) => {
         const str = data.toString();
@@ -198,7 +206,7 @@ describe('testProxyHandshake — HTTP proxy', () => {
   });
 
   test('succeeds even with 407 response (proxy is alive)', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => {
       socket.once('data', () => {
         socket.write('HTTP/1.1 407 Proxy Auth Required\r\n\r\n');
@@ -212,7 +220,7 @@ describe('testProxyHandshake — HTTP proxy', () => {
   });
 
   test('fails when reply is not HTTP', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => {
       socket.once('data', () => {
         socket.write(Buffer.from([0x05, 0x00]));
@@ -246,7 +254,7 @@ describe('testProxyHandshake — latency measurement', () => {
   });
 
   test('measures latency within reasonable range', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => {
       socket.once('data', () => {
         setTimeout(() => {

@@ -7,8 +7,16 @@ jest.mock('../src/proxy/connect', () => ({
 }));
 const { connectViaProxy } = require('../src/proxy/connect');
 
-function getRandomPort() {
-  return 30000 + Math.floor(Math.random() * 20000);
+// Grab an OS-assigned free port. A fixed random range occasionally hit
+// Windows reserved/excluded ports on CI (listen EACCES); asking the OS avoids that.
+function getFreePort() {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
 }
 
 describe('SocksRelay — lifecycle', () => {
@@ -20,14 +28,14 @@ describe('SocksRelay — lifecycle', () => {
 
   test('starts listening on specified port', async () => {
     relay = new SocksRelay();
-    const port = getRandomPort();
+    const port = await getFreePort();
     await relay.start(port, { host: '127.0.0.1', port: 1080 });
     expect(relay.running).toBe(true);
   });
 
   test('emits listening event', async () => {
     relay = new SocksRelay();
-    const port = getRandomPort();
+    const port = await getFreePort();
     const listening = jest.fn();
     relay.on('listening', listening);
     await relay.start(port, { host: '127.0.0.1', port: 1080 });
@@ -36,7 +44,7 @@ describe('SocksRelay — lifecycle', () => {
 
   test('stop resolves and sets running to false', async () => {
     relay = new SocksRelay();
-    const port = getRandomPort();
+    const port = await getFreePort();
     await relay.start(port, { host: '127.0.0.1', port: 1080 });
     await relay.stop();
     expect(relay.running).toBe(false);
@@ -50,7 +58,7 @@ describe('SocksRelay — lifecycle', () => {
 
   test('rejects on port conflict', async () => {
     relay = new SocksRelay();
-    const port = getRandomPort();
+    const port = await getFreePort();
     await relay.start(port, { host: '127.0.0.1', port: 1080 });
     const relay2 = new SocksRelay();
     relay2.on('error', () => {});
@@ -77,7 +85,7 @@ describe('SocksRelay — SOCKS5 handshake', () => {
   beforeEach(async () => {
     connectViaProxy.mockReset();
     relay = new SocksRelay();
-    port = getRandomPort();
+    port = await getFreePort();
   });
 
   afterEach(async () => {
@@ -207,7 +215,7 @@ describe('SocksRelay — IPv6 and edge cases', () => {
   beforeEach(async () => {
     connectViaProxy.mockReset();
     relay = new SocksRelay();
-    port = getRandomPort();
+    port = await getFreePort();
   });
 
   afterEach(async () => {
@@ -353,10 +361,12 @@ describe('SocksRelay — IPv6 and edge cases', () => {
 });
 
 describe('SocksRelay — proxy passthrough', () => {
+  let port;
+  beforeEach(async () => { port = await getFreePort(); });
+
   test('passes proxy config to connectViaProxy', (done) => {
     connectViaProxy.mockReset();
     const relay = new SocksRelay();
-    const port = getRandomPort();
     const remoteSocket = new net.Socket();
     connectViaProxy.mockResolvedValue(remoteSocket);
 
@@ -391,7 +401,6 @@ describe('SocksRelay — proxy passthrough', () => {
   test('works with no-auth proxy', (done) => {
     connectViaProxy.mockReset();
     const relay = new SocksRelay();
-    const port = getRandomPort();
     const remoteSocket = new net.Socket();
     connectViaProxy.mockResolvedValue(remoteSocket);
 
@@ -420,10 +429,12 @@ describe('SocksRelay — proxy passthrough', () => {
 });
 
 describe('SocksRelay — cleanup guard', () => {
+  let port;
+  beforeEach(async () => { port = await getFreePort(); });
+
   test('connections never goes negative after socket close+error', (done) => {
     connectViaProxy.mockReset();
     const relay = new SocksRelay();
-    const port = getRandomPort();
     const remoteSocket = new net.Socket();
     connectViaProxy.mockResolvedValue(remoteSocket);
 
@@ -456,7 +467,7 @@ describe('SocksRelay — stop cleans up sockets', () => {
   test('stop destroys all active sockets', async () => {
     connectViaProxy.mockReset();
     const relay = new SocksRelay();
-    const port = getRandomPort();
+    const port = await getFreePort();
 
     const remoteSocket = new net.Socket();
     const destroySpy = jest.spyOn(remoteSocket, 'destroy');

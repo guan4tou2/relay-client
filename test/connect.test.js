@@ -7,8 +7,16 @@ const { SocksClient } = require('socks');
 
 const { connectViaProxy, openSocketToProxy } = require('../src/proxy/connect');
 
-function getRandomPort() {
-  return 30000 + Math.floor(Math.random() * 20000);
+// Grab an OS-assigned free port. A fixed random range occasionally hit
+// Windows reserved/excluded ports on CI (listen EACCES); asking the OS avoids that.
+function getFreePort() {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
 }
 
 describe('connectViaProxy — socks5', () => {
@@ -81,7 +89,7 @@ describe('connectViaProxy — http proxy (CONNECT tunnel)', () => {
   });
 
   test('establishes CONNECT tunnel on 200', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => {
       socket.once('data', (data) => {
         const str = data.toString();
@@ -101,7 +109,7 @@ describe('connectViaProxy — http proxy (CONNECT tunnel)', () => {
   });
 
   test('rejects on non-200 response', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => {
       socket.once('data', () => {
         socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
@@ -116,7 +124,7 @@ describe('connectViaProxy — http proxy (CONNECT tunnel)', () => {
   });
 
   test('sends Proxy-Authorization header when auth is set', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     let receivedHeader = '';
     fakeProxy = net.createServer((socket) => {
       socket.once('data', (data) => {
@@ -159,7 +167,7 @@ describe('openSocketToProxy — TCP', () => {
   });
 
   test('opens TCP connection to proxy', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     fakeProxy = net.createServer((socket) => { socket.end(); });
     await new Promise(resolve => fakeProxy.listen(port, '127.0.0.1', resolve));
 
@@ -169,7 +177,7 @@ describe('openSocketToProxy — TCP', () => {
   });
 
   test('rejects when proxy is unreachable', async () => {
-    const port = getRandomPort();
+    const port = await getFreePort();
     await expect(openSocketToProxy({ host: '127.0.0.1', port }, false))
       .rejects.toThrow(/ECONNREFUSED/);
   });
