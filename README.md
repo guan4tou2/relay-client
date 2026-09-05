@@ -20,6 +20,8 @@
 
 ## 為什麼用 RelayClient？
 
+如果你在 Linux 上用 proxychains 串過代理，RelayClient 可以想成它的 Windows 圖形版。差別是它不只做串鏈，還能同時開好幾個本地端口、各綁不同的代理或整條鏈，也能直接指定某支程式走哪一條路。
+
 一般代理工具通常只做一件事：要嘛**攔截個別程式的連線**幫你轉走（Proxifier、ProxyCap、WideCap），要嘛做一個**靠規則自動分流的隧道**（Clash / Mihomo，要寫 YAML 設定，主打 Shadowsocks / VMess / Trojan 那類協定）。
 
 **RelayClient 兩種都做**，但刻意只支援最單純的 **SOCKS5 / SOCKS4 / HTTP / HTTPS** 代理：不用寫 YAML，也不碰 Shadowsocks / VMess 那類協定。開源、免費。「多個本地端口」和「用虛擬網卡攔截指定程式」可以同時用，全在一支原生 app 裡。
@@ -100,6 +102,7 @@ flowchart LR
 - **對比 Proxifier / ProxyCap**：它們是成熟的**商業**軟體，可以依「主機 / 端口 / 程式」設很細的規則。RelayClient 免費開源，多了「多個本地端口各綁一串代理」和「指定程式的斷線保護」，但**沒有**依網域自動分流的規則引擎。
 - **對比 Clash / Mihomo**：Clash 支援 Shadowsocks/VMess/Trojan 一堆協定、能依網域和地區自動分流，但要寫 YAML。RelayClient 刻意簡單：只吃單純的 SOCKS/HTTP 代理、依「程式」或「端口」分流、完全不用寫設定檔。想要協定多樣＋規則引擎就用 Clash；只有幾台 SOCKS5 想要指定程式＋多端口＋串接的圖形介面就用 RelayClient。
 - **對比 WideCap**：老牌 Windows 代理工具、幾乎停止維護；RelayClient 是現代、開源、還多了串接與斷線保護的替代品。
+- **對比 proxychains**：proxychains 是 Linux 終端機工具，用 `LD_PRELOAD` 掛住你啟動的那支指令來串代理鏈；RelayClient 等於把它搬上 Windows GUI，改用虛擬網卡從網路層攔，因此連沒設 proxy、靜態編譯或走 UDP 的程式都管得到，也能對已經在跑的程式按名字套規則。反過來，proxychains 更輕、可腳本化、不用管理員權限。
 
 ### 什麼情況選誰
 

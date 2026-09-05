@@ -20,6 +20,8 @@ Turn any SOCKS / HTTP upstream into **multiple local ports · multi-hop chains �
 
 ## Why RelayClient?
 
+If you've chained proxies with proxychains on Linux, think of RelayClient as its Windows GUI equivalent. The difference is that it does more than chaining: several local listener ports at once, each bound to its own proxy or full chain, plus sending a specific program down a specific path.
+
 Most tools pick **one** model: either they **intercept per-app traffic** (Proxifier, ProxyCap, WideCap) or they run a **rule-based tunnel** (Clash / Mihomo — YAML-driven, for the Shadowsocks/VMess/Trojan ecosystem).
 
 **RelayClient does both**, deliberately scoped to plain **SOCKS5 / SOCKS4 / HTTP / HTTPS** upstreams — no YAML, no exotic protocols, open-source and free. You get simultaneous local relay ports *and* per-app TUN interception in one small native app.
@@ -98,6 +100,7 @@ If the engine crashes (vs. you stopping it), RelayClient immediately re-establis
 - **vs Proxifier / ProxyCap** — mature *commercial* per-app proxifiers with rich host/port/app rule engines. RelayClient is free & open, adds the multiple-local-ports-each-with-its-own-chain model and a per-app kill-switch, but intentionally has **no** domain/host rule engine.
 - **vs Clash / Mihomo** — a powerful rule-based tunnel for the SS/VMess/Trojan world with domain & GeoIP rules, configured in YAML. RelayClient stays simple: plain SOCKS/HTTP upstreams, routing by app or by port, zero YAML.
 - **vs WideCap** — an older, largely unmaintained Windows proxifier; RelayClient is a modern, open alternative with chaining and a kill-switch.
+- **vs proxychains** — proxychains is a Linux CLI that uses `LD_PRELOAD` to hook the command you launch and push its connections through a proxy chain. RelayClient brings that chaining to a Windows GUI but intercepts at the network layer via a TUN adapter, so it also catches apps that ignore proxy settings, are statically linked, or use UDP, and it applies rules to already-running processes. proxychains, in turn, is lighter, scriptable, and needs no admin rights.
 
 ## Install
 
