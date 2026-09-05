@@ -1,7 +1,7 @@
 {
   "name": "socks5-client",
   "version": "1.1.1",
-  "description": "代理客戶端 — 多端口路由 · 多跳串鏈 · Per-app 分流 (SOCKS5 / SOCKS4 / HTTP / HTTPS)",
+  "description": "Windows 圖形化 proxychains：串接 SOCKS/HTTP 代理、指定程式走代理、斷線保護（SOCKS5 / SOCKS4 / HTTP / HTTPS）",
   "main": "main.js",
   "author": "guantou",
   "license": "MIT",
