@@ -4,7 +4,7 @@
 
 [繁體中文](README.md) · **English**
 
-Turn any SOCKS / HTTP upstream into **multiple local ports · multi-hop chains · per-app tunnels** — with a real fail-closed kill-switch.
+Turn any SOCKS / HTTP upstream into **multiple local ports · multi-hop chains · per-app tunnels**, with a real fail-closed kill-switch.
 
 [![CI](https://github.com/guan4tou2/relay-client/actions/workflows/ci.yml/badge.svg)](https://github.com/guan4tou2/relay-client/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D6)
@@ -26,13 +26,12 @@ Most tools pick **one** model: either they **intercept per-app traffic** (Proxif
 
 ## Features
 
-- 🎛️ **Multi-port routes** — every local port binds to its **own** upstream or chain, running independently and concurrently. Point Chrome at `:10810`, a scraper at `:10811`, each exiting through a different proxy.
-- 🔗 **Multi-hop chaining** — `you → A → B → C → target`, proxychains-style, per route.
-- 🎯 **Per-app split routing (TUN)** — force programs by **name or full path** through a chosen route while everything else stays direct — like Proxifier, using a modern TUN engine ([sing-box](https://github.com/SagerNet/sing-box), gVisor stack) instead of legacy LSP hooks.
-- 🛡️ **Kill-switch (fail-closed)** — if the split engine dies unexpectedly, protected apps are **blocked**, not silently leaked through your real IP.
-- 🔌 One-click system proxy, latency test, per-route traffic stats, live multi-hop view.
-- 🌗 Dark / light / system theme · tray · boot auto-start · import/export · **auto-update**.
-- 🔒 **Hardened**: `contextIsolation` + `sandbox`, strict CSP, fully offline (no remote fonts/CDN), navigation locked to local pages.
+- **Multi-port routes**: every local port binds to its own upstream or chain, running independently and concurrently. Point Chrome at `:10810`, a scraper at `:10811`, each exiting through a different proxy.
+- **Multi-hop chaining**: `your app → A → B → C → target`, proxychains-style, configured per route.
+- **Per-app split routing (TUN)**: force programs by name or full path through a chosen route while everything else stays direct — like Proxifier, but on a modern TUN engine ([sing-box](https://github.com/SagerNet/sing-box), gVisor stack) rather than legacy LSP hooks. Works even for apps that have no proxy setting of their own.
+- **Kill-switch (fail-closed)**: if the split engine dies unexpectedly, protected apps are blocked rather than quietly falling back to your real IP.
+- **Also included**: one-click system proxy, latency test, per-route traffic stats, live multi-hop view, dark / light / system theme, tray, boot auto-start, import/export, auto-update.
+- **Hardened**: `contextIsolation` + `sandbox`, strict CSP, fully offline (no remote fonts/CDN), navigation locked to local pages.
 
 ## Overview
 
