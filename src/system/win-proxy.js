@@ -28,16 +28,17 @@ function getProxyState() {
 
 function enableProxy(httpPort) {
   const server = `127.0.0.1:${httpPort}`;
-  execSync(
-    `reg add "${REG_PATH}" /v ProxyEnable /t REG_DWORD /d 1 /f`,
-    { windowsHide: true }
-  );
+  // 先寫 server / override，最後才 ProxyEnable=1；任一步失敗都不會停在「已啟用但指向壞位址」的狀態。
   execSync(
     `reg add "${REG_PATH}" /v ProxyServer /t REG_SZ /d "${server}" /f`,
     { windowsHide: true }
   );
   execSync(
     `reg add "${REG_PATH}" /v ProxyOverride /t REG_SZ /d "localhost;127.*;10.*;192.168.*;<local>" /f`,
+    { windowsHide: true }
+  );
+  execSync(
+    `reg add "${REG_PATH}" /v ProxyEnable /t REG_DWORD /d 1 /f`,
     { windowsHide: true }
   );
   _refreshProxy();

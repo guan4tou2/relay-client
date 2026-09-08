@@ -102,13 +102,13 @@ class HttpBridge extends EventEmitter {
     this.connections++;
     this.emit('stats', this._getStats());
 
+    let remoteSocket = null; // 提到 try 外，讓 catch 也能收掉上游 socket（否則洩漏）
     try {
       const url = new URL(req.url);
       const host = url.hostname;
       const port = parseInt(url.port, 10) || 80;
       this.emit('log', 'info', `${req.method} ${host}:${port}${url.pathname}`);
 
-      let remoteSocket;
       let rawReq;
 
       if (this.chain.length > 1) {
@@ -175,6 +175,7 @@ class HttpBridge extends EventEmitter {
         if (res.socket) this.activeSockets.delete(res.socket);
         this.emit('stats', this._getStats());
         remoteSocket.destroy();
+        if (res.socket && !res.socket.destroyed) res.socket.destroy(); // 連同 client 側一起收，避免半開洩漏
       };
 
       res.socket.on('close', cleanup);
@@ -185,8 +186,8 @@ class HttpBridge extends EventEmitter {
       this.connections = Math.max(0, this.connections - 1); // 計數永不為負（防重複遞減顯示 -1）
       this.emit('stats', this._getStats());
       this.emit('log', 'error', `HTTP FAILED ${req.url} — ${err.message}`);
-      res.writeHead(502);
-      res.end('Bad Gateway');
+      if (remoteSocket) remoteSocket.destroy(); // 避免上游 socket 洩漏
+      try { res.writeHead(502); res.end('Bad Gateway'); } catch (e) {}
     }
   }
 

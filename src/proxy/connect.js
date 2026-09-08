@@ -49,9 +49,14 @@ async function chainHop(proxy, target, upstream) {
 
   if (type === 'http' || type === 'https') {
     let sock = upstream || await openSocketToProxy(proxy, false);
-    if (type === 'https') sock = await tlsHandshake(sock, proxy.host); // 與 proxy 先建 TLS（可跑在通道上）
-    await httpConnectOverSocket(sock, target, proxy);
-    return sock;
+    try {
+      if (type === 'https') sock = await tlsHandshake(sock, proxy.host); // 與 proxy 先建 TLS（可跑在通道上）
+      await httpConnectOverSocket(sock, target, proxy);
+      return sock;
+    } catch (err) {
+      if (!upstream) { try { sock.destroy(); } catch (e) {} } // 首跳自己建的 socket 要收掉，避免洩漏
+      throw err;
+    }
   }
 
   throw new Error(`Unsupported proxy type: ${type}`);

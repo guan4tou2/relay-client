@@ -55,20 +55,20 @@ describe('win-proxy — enableProxy', () => {
     expect(result.enabled).toBe(true);
     expect(result.server).toBe('127.0.0.1:10808');
 
-    // Should call: ProxyEnable=1, ProxyServer, ProxyOverride, refresh
+    // 先寫 server/override，最後才 Enable=1（避免停在「已啟用但指向壞位址」）：ProxyServer, ProxyOverride, ProxyEnable=1, refresh
     expect(execSync).toHaveBeenCalledTimes(4);
 
     const calls = execSync.mock.calls.map(c => c[0]);
-    expect(calls[0]).toMatch(/ProxyEnable.*\/d 1/);
-    expect(calls[1]).toMatch(/ProxyServer.*127\.0\.0\.1:10808/);
-    expect(calls[2]).toMatch(/ProxyOverride/);
+    expect(calls[0]).toMatch(/ProxyServer.*127\.0\.0\.1:10808/);
+    expect(calls[1]).toMatch(/ProxyOverride/);
+    expect(calls[2]).toMatch(/ProxyEnable.*\/d 1/);
   });
 
   test('uses the port number provided', () => {
     execSync.mockReturnValue('');
     winProxy.enableProxy(9999);
 
-    const serverCall = execSync.mock.calls[1][0];
+    const serverCall = execSync.mock.calls[0][0];
     expect(serverCall).toContain('127.0.0.1:9999');
   });
 
@@ -76,7 +76,7 @@ describe('win-proxy — enableProxy', () => {
     execSync.mockReturnValue('');
     winProxy.enableProxy(10808);
 
-    const overrideCall = execSync.mock.calls[2][0];
+    const overrideCall = execSync.mock.calls[1][0];
     expect(overrideCall).toContain('localhost');
     expect(overrideCall).toContain('127.*');
     expect(overrideCall).toContain('<local>');

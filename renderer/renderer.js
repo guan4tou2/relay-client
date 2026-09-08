@@ -10,7 +10,7 @@ const setDisp = (id, on) => { const e = $(id); if (e) e.style.display = on ? 'bl
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // 真實伺服器物件用 type/username/password；設計稿用 proto/user/pass。統一以下列存取。
-const sProto = s => (s && s.type) || 'socks5';
+const sProto = s => { const t = (s && s.type) || 'socks5'; return PROTO[t] ? t : 'socks5'; }; // 未知型別退回 socks5，避免 PROTO[..] undefined 整頁崩
 const sUser = s => (s && s.username) || '';
 const sPass = s => (s && s.password) || '';
 
@@ -252,7 +252,7 @@ function renderSidebar() {
       </div>
       <div style="display:flex;align-items:center;gap:6px">
         <span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 5px;border-radius:5px;background:var(--fill2);color:var(--text2);flex-shrink:0">${r.kind === 'http' ? 'HTTP' : 'SOCKS5'}</span>
-        <span style="font-size:11.5px;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">127.0.0.1:${r.localPort}</span>
+        <span style="font-size:11.5px;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">127.0.0.1:${esc(String(r.localPort))}</span>
         <span style="margin-left:auto;font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:96px">${esc(exitName)}</span>
       </div>
       ${active ? `<div style="display:flex;gap:6px;padding-top:2px">
@@ -620,7 +620,7 @@ function renderServers() {
       : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>';
     return `<div class="hvFill2" style="display:flex;align-items:center;padding:11px 16px;border-bottom:1px solid var(--sep);font-size:12.5px">
       <span style="width:150px;flex-shrink:0;font-weight:600;padding-right:10px;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.name || '未命名')}</span>
-      <span style="width:158px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text2);padding-right:10px;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.host)}:${s.port}</span>
+      <span style="width:158px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text2);padding-right:10px;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.host)}:${esc(String(s.port))}</span>
       <span style="width:78px;flex-shrink:0"><span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);white-space:nowrap">${PROTO[sProto(s)].label}</span></span>
       <span style="width:74px;flex-shrink:0;color:var(--text2);display:flex;align-items:center;gap:5px;white-space:nowrap">${authIcon}${sUser(s) ? '已設定' : '無'}</span>
       <span style="flex:1;min-width:0;padding-right:12px;box-sizing:border-box;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:${testColor(lat)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(tText)}</span>

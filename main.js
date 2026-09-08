@@ -162,10 +162,7 @@ function createTray() {
   tray = new Tray(icon);
   updateTrayMenu();
   tray.setToolTip('RelayClient');
-  tray.on('double-click', () => {
-    mainWindow.show();
-    mainWindow.focus();
-  });
+  tray.on('double-click', () => showMainWindow());
 }
 
 function updateTrayMenu() {
@@ -206,7 +203,7 @@ function updateTrayMenu() {
     { type: 'separator' },
     {
       label: '顯示主視窗',
-      click: () => { mainWindow.show(); mainWindow.focus(); }
+      click: () => showMainWindow()
     },
     {
       label: '結束',
@@ -765,7 +762,7 @@ function listProcesses() {
 ipcMain.handle('get-split', () => config.getSplit());
 ipcMain.handle('save-split', async (_e, patch) => {
   const s = config.saveSplit(patch);
-  if (engine && engine.state === 'running') { await engine.stop(); await engine.start(engineParams()); sendEngineStatus(); } // 立即套用
+  if (engine && engine.state === 'running') { await engine.stop(); await ensureSplitRoutesStarted(); await engine.start(engineParams()); sendEngineStatus(); } // 立即套用（先帶起規則要用的路由）
   return s;
 });
 ipcMain.handle('list-processes', () => listProcesses());
@@ -877,8 +874,16 @@ app.whenReady().then(() => {
   checkUpdatesOnStartup(); // 啟動後靜默檢查更新（僅安裝版）
 });
 
+// 顯示主視窗：若視窗已被銷毀（minimizeToTray 關閉時關窗會銷毀它）就重建，避免 show() 一個已銷毀物件而拋錯。
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  else { mainWindow.show(); mainWindow.focus(); }
+}
+
 app.on('window-all-closed', () => {
-  // Keep running in tray
+  // minimizeToTray 關閉時：關窗＝結束整個 app（否則視窗被銷毀但行程還在 → 匣點擊會開不出來）。
+  if (!config.getSettings().minimizeToTray) app.quit();
+  // 開啟時：保留在系統匣背景執行。
 });
 
 // Electron 不會 await before-quit 的 async handler，所以先擋下結束、把清理做完再真正退出。
