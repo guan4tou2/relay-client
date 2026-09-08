@@ -147,6 +147,15 @@ describe('SingBoxEngine.generateBlockConfig — 斷線保護 fail-closed', () =>
     expect(cfg._blocking).toBe(true);
   });
 
+  test('_forEngine 去掉底線內部欄位（否則 sing-box check unknown field → kill-switch 失效）', () => {
+    const e = mk();
+    const clean = e._forEngine(e.generateBlockConfig({ rules: [{ on: true, exe: 'chrome.exe', target: 'r1' }], selfNames: ['RelayClient.exe'] }));
+    expect(clean._blocking).toBeUndefined();
+    expect(clean._udp).toBeUndefined();
+    expect(clean.route).toBeDefined();        // 正常欄位保留
+    expect(clean.inbounds[0].type).toBe('tun');
+  });
+
   test('無規則 → 只有 self bypass（不誤擋整機）', () => {
     const cfg = mk().generateBlockConfig({ rules: [], selfNames: [] });
     expect(cfg.route.rules).toEqual([{ process_name: ['sing-box.exe'], outbound: 'direct' }]);

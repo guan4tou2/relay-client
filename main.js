@@ -771,6 +771,7 @@ ipcMain.handle('browse-exe', async () => {
 });
 ipcMain.handle('engine-start', async () => {
   setupEngine();
+  await ensureSplitRoutesStarted(); // 引擎要用的路由先帶起來，避免 TUN 往死掉的本地埠送流量
   const r = await engine.start(engineParams());
   sendEngineStatus();
   return r;
@@ -809,19 +810,26 @@ function relaunchElevated() {
 ipcMain.handle('engine-elevate', () => relaunchElevated());
 ipcMain.handle('is-elevated', () => { setupEngine(); return engine.isElevated(); });
 
-// 提權重啟後自動啟動引擎（先把規則會用到的路由帶起來）
-async function autoStartEngineElevated() {
-  setupEngine();
+// 分流引擎需要它引用的路由是「活的」（本地端口在聽），否則 TUN 會把流量送往死掉的埠。
+// 啟動引擎前先把 split 規則會用到的路由帶起來（與「啟動時自動套用路由」launch 開關無關）。
+async function ensureSplitRoutesStarted() {
+  setupRouteManager();
   const split = config.getSplit();
   const wanted = new Set([split.defaultTarget, ...split.rules.filter(r => r.on).map(r => r.target)].filter(t => t && t !== 'direct'));
   for (const rid of wanted) {
     const def = config.getRoutes().find(r => r.id === rid);
     if (def && !routeManager.isRunning(rid)) {
       const rr = resolveRoute(def);
-      if (rr.hops.length) { try { await routeManager.start(rr); } catch (e) {} }
+      if (rr.hops.length && await checkPortFree(rr.localPort)) { try { await routeManager.start(rr); } catch (e) {} }
     }
   }
   sendRouteStatus();
+}
+
+// 提權重啟後自動啟動引擎（先把規則會用到的路由帶起來）
+async function autoStartEngineElevated() {
+  setupEngine();
+  await ensureSplitRoutesStarted();
   const r = await engine.start(engineParams());
   sendEngineStatus();
   addLog(r.ok ? 'info' : 'error', 'engine', r.ok ? '分流引擎已自動啟動（提權後）' : ('引擎自動啟動失敗：' + (r.error || r.message || '')));
@@ -851,6 +859,7 @@ app.whenReady().then(() => {
   if (settings.autoStartRoutes !== false) {
     applyRoutes().catch(err => addLog('error', 'route', err.message));
   } else {
+    setupRouteManager(); // 仍建立 route manager（只是不自動起路由），避免其他路徑存取 null
     addLog('info', 'route', '「啟動時自動套用路由」已關閉，略過自動啟動（可到「總覽」手動啟用）');
   }
 

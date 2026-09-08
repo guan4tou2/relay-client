@@ -114,10 +114,18 @@ class SingBoxEngine extends EventEmitter {
     };
   }
 
+  // 內部欄位（以底線開頭，如 _blocking / _udp）只給 app 自己判斷用，
+  // 絕不能寫進 sing-box 設定——sing-box 對未知欄位會直接 FATAL（kill-switch 失效的元兇）。
+  _forEngine(cfg) {
+    const c = { ...cfg };
+    for (const k of Object.keys(c)) if (k.startsWith('_')) delete c[k];
+    return c;
+  }
+
   // 只驗證設定是否合法（sing-box check），不啟動 TUN，不需提權
   validate(cfgObj) {
     const tmp = path.join(os.tmpdir(), 'proxyclient-singbox-check.json');
-    const clean = { ...cfgObj }; delete clean._udp;
+    const clean = this._forEngine(cfgObj);
     fs.writeFileSync(tmp, JSON.stringify(clean, null, 2));
     try { execSync(`"${this.binPath}" check -c "${tmp}"`, { stdio: 'pipe', windowsHide: true }); return { ok: true }; }
     catch (e) { return { ok: false, error: (e.stderr || e.stdout || e.message || '').toString().trim() }; }
@@ -147,7 +155,12 @@ class SingBoxEngine extends EventEmitter {
     }
 
     this._userStopping = false;
-    const clean = { ...cfg }; delete clean._udp; delete clean._blocking;
+    // 清掉可能殘留、占用同名 TUN 介面的舊 sing-box（上次崩潰未清乾淨 → "file already exists"）
+    if (process.platform === 'win32' && !this.proc) {
+      try { execSync('taskkill /IM sing-box.exe /F /T', { stdio: 'ignore', windowsHide: true, timeout: 3000 }); } catch (e) {}
+      await new Promise(r => setTimeout(r, 300));
+    }
+    const clean = this._forEngine(cfg);
     fs.writeFileSync(this.configPath, JSON.stringify(clean, null, 2));
 
     this._setState('starting');

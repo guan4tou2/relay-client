@@ -623,8 +623,8 @@ function renderServers() {
       <span style="width:158px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text2);padding-right:10px;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.host)}:${s.port}</span>
       <span style="width:78px;flex-shrink:0"><span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);white-space:nowrap">${PROTO[sProto(s)].label}</span></span>
       <span style="width:74px;flex-shrink:0;color:var(--text2);display:flex;align-items:center;gap:5px;white-space:nowrap">${authIcon}${sUser(s) ? '已設定' : '無'}</span>
-      <span style="flex:1;min-width:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:${testColor(lat)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(tText)}</span>
-      <span style="width:88px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
+      <span style="flex:1;min-width:0;padding-right:12px;box-sizing:border-box;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:${testColor(lat)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(tText)}</span>
+      <span style="width:96px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
         <button class="hvAcc" data-stest="${s.id}" title="測試連線" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z"></path></svg></button>
         <button class="hvAcc" data-sedit="${s.id}" title="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
         <button class="hvRed" data-sdel="${s.id}" title="${pend ? '再按一次確認刪除' : '刪除'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
@@ -643,7 +643,7 @@ function renderServers() {
       </div>
       <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden">
         <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px">
-          <span style="width:150px;flex-shrink:0;white-space:nowrap">名稱</span><span style="width:158px;flex-shrink:0;white-space:nowrap">位址</span><span style="width:78px;flex-shrink:0;white-space:nowrap">協定</span><span style="width:74px;flex-shrink:0;white-space:nowrap">認證</span><span style="flex:1;min-width:0;white-space:nowrap">測試結果</span><span style="width:88px;flex-shrink:0"></span>
+          <span style="width:150px;flex-shrink:0;white-space:nowrap">名稱</span><span style="width:158px;flex-shrink:0;white-space:nowrap">位址</span><span style="width:78px;flex-shrink:0;white-space:nowrap">協定</span><span style="width:74px;flex-shrink:0;white-space:nowrap">認證</span><span style="flex:1;min-width:0;padding-right:12px;box-sizing:border-box;white-space:nowrap">測試結果</span><span style="width:96px;flex-shrink:0"></span>
         </div>
         ${rows}
         ${state.servers.length === 0 ? `<div style="padding:44px 20px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">尚無伺服器<br>新增後即可組成路由</div>` : ''}
