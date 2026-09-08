@@ -1,5 +1,5 @@
 'use strict';
-/* 代理客戶端 renderer v2 — 照 Claude Design「SOCKS5 Client Redesign v2（路由模型）」一比一還原，
+/* RelayClient renderer v2 — 照 Claude Design「SOCKS5 Client Redesign v2（路由模型）」一比一還原，
    以真實 IPC 後端取代設計稿模擬。路由（route）為主概念：每條路由 = 一個本地端口 → 一串上游跳點，
    各自擁有獨立 runtime session；多條可同時執行。設計稿為 React，此處以原生 JS 重建：
    骨架 mount() 建一次，電源 SVG 常駐、以 targeted update 套用（保留元素才能觸發 CSS 過場）。 */
@@ -93,7 +93,7 @@ function mount() {
           <circle cx="128" cy="128" r="20" fill="#fff"></circle>
         </svg>
         <div style="display:flex;flex-direction:column;line-height:1.2;min-width:0">
-          <span style="font-size:13.5px;font-weight:600;letter-spacing:-.2px;white-space:nowrap">代理客戶端</span>
+          <span style="font-size:13.5px;font-weight:600;letter-spacing:-.2px;white-space:nowrap">RelayClient</span>
           <span id="status" style="font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">未執行</span>
         </div>
       </div>
@@ -863,7 +863,7 @@ async function onUpdateClick() {
 function buildSettings() {
   const swDefs = [
     { key: 'tray', label: '關閉時最小化到系統匣', desc: '保留背景執行與托盤圖示' },
-    { key: 'bootLaunch', label: '開機時自動啟動', desc: '登入 Windows 後自動啟動代理客戶端' },
+    { key: 'bootLaunch', label: '開機時自動啟動', desc: '登入 Windows 後自動啟動 RelayClient' },
     { key: 'autostart', label: '啟動時自動套用路由', desc: 'App 啟動後自動起所有已啟用的路由' },
     { key: 'killswitch', label: '斷線保護 (Kill-switch)', desc: '分流引擎異常中止時封鎖受保護程式，防止流量以真實 IP 外洩（用 TUN，不動防火牆）' },
     { key: 'scroll', label: '紀錄自動捲動', desc: '新紀錄進來時跟隨到底部' },
@@ -913,7 +913,7 @@ function buildSettings() {
         <span style="font-size:11.5px;font-weight:600;color:var(--text3);letter-spacing:.4px;padding-left:4px;white-space:nowrap">關於</span>
         <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:16px;display:flex;align-items:center;gap:14px">
           <svg width="42" height="42" viewBox="0 0 256 256" style="border-radius:11px;flex-shrink:0"><rect x="0" y="0" width="256" height="256" rx="56" fill="var(--accent)"></rect><circle cx="128" cy="128" r="76" fill="none" stroke="#fff" stroke-opacity=".28" stroke-width="15"></circle><path d="M128 52 A76 76 0 0 1 204 128" fill="none" stroke="#fff" stroke-width="15" stroke-linecap="round"></path><path d="M52 128 A76 76 0 0 0 128 204" fill="none" stroke="#7fe3bd" stroke-width="15" stroke-linecap="round"></path><circle cx="128" cy="128" r="18" fill="#fff"></circle></svg>
-          <div style="flex:1"><div style="font-size:13.5px;font-weight:600">代理客戶端</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">版本 <span id="aboutVer">…</span> · 多端口路由 · 多跳串鏈</div></div>
+          <div style="flex:1"><div style="font-size:13.5px;font-weight:600">RelayClient</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">版本 <span id="aboutVer">…</span> · 多端口路由 · 多跳串鏈</div></div>
           <button id="setUpdate" class="hvAccDim" style="height:30px;padding:0 15px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--accent);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">${updateBtnLabel()}</button>
         </div>
       </div>

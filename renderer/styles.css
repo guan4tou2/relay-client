@@ -1,4 +1,4 @@
-/* ===== 代理客戶端 — 照 Claude Design 稿還原 =====
+/* ===== RelayClient — 照 Claude Design 稿還原 =====
    設計本體大量使用 inline style；此檔只放：reset、CSS 變數、keyframes、
    scrollbar、hover 工具類（設計稿的 style-hover 在真實 HTML 需用 :hover）、
    以及 frameless 視窗拖曳所需的 -webkit-app-region。 */

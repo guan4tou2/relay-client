@@ -4,6 +4,22 @@ const fs = require('fs');
 const net = require('net');
 const tls = require('tls');
 const { connectViaProxy } = require('./src/proxy/connect');
+// 一次性搬遷：舊 userData（開發代號 socks5-client）→ 現在的 app 名 RelayClient，
+// 讓更名後不遺失既有 config（servers / routes / settings）。只在新位置尚無 config 時搬。
+(function migrateLegacyUserData() {
+  try {
+    const newDir = app.getPath('userData');
+    const oldDir = path.join(app.getPath('appData'), 'socks5-client');
+    if (path.resolve(newDir) === path.resolve(oldDir)) return; // 名字沒變就免搬
+    const newCfg = path.join(newDir, 'config.json');
+    const oldCfg = path.join(oldDir, 'config.json');
+    if (!fs.existsSync(newCfg) && fs.existsSync(oldCfg)) {
+      fs.mkdirSync(newDir, { recursive: true });
+      fs.copyFileSync(oldCfg, newCfg);
+    }
+  } catch (e) { /* 搬遷失敗就沿用預設，不影響啟動 */ }
+})();
+
 const config = require('./src/store/config');
 const SocksRelay = require('./src/proxy/socks-relay');
 const HttpBridge = require('./src/proxy/http-bridge');
@@ -145,7 +161,7 @@ function createTray() {
   const icon = createTrayIcon(false);
   tray = new Tray(icon);
   updateTrayMenu();
-  tray.setToolTip('代理客戶端');
+  tray.setToolTip('RelayClient');
   tray.on('double-click', () => {
     mainWindow.show();
     mainWindow.focus();
@@ -155,7 +171,7 @@ function createTray() {
 function updateTrayMenu() {
   if (tray) tray.setImage(createTrayIcon(proxyRunning));
   const menu = Menu.buildFromTemplate([
-    { label: '代理客戶端', enabled: false },
+    { label: 'RelayClient', enabled: false },
     { type: 'separator' },
     {
       label: proxyRunning ? '⬤ 已連線' : '○ 未連線',
@@ -717,7 +733,7 @@ ipcMain.handle('killswitch-clear', async () => {
 
 function engineParams() {
   const split = config.getSplit();
-  const self = require('path').basename(process.execPath); // dev: electron.exe；打包: 代理客戶端.exe
+  const self = require('path').basename(process.execPath); // dev: electron.exe；打包: RelayClient.exe
   return { rules: split.rules, defaultTarget: split.defaultTarget, udp: split.udp, routes: config.getRoutes(), selfNames: [self] };
 }
 

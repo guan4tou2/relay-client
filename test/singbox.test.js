@@ -96,10 +96,10 @@ describe('SingBoxEngine.generateConfig — 防迴圈 self bypass', () => {
   test('selfNames + sing-box.exe 一律 bypass，且排在 app 規則之前', () => {
     const cfg = mk().generateConfig({
       rules: [{ on: true, exe: 'chrome.exe', target: 'r1' }],
-      routes: ROUTES, selfNames: ['代理客戶端.exe'],
+      routes: ROUTES, selfNames: ['RelayClient.exe'],
     });
     expect(cfg.route.rules[0]).toMatchObject({ outbound: 'direct' });
-    expect(cfg.route.rules[0].process_name).toEqual(expect.arrayContaining(['代理客戶端.exe', 'sing-box.exe']));
+    expect(cfg.route.rules[0].process_name).toEqual(expect.arrayContaining(['RelayClient.exe', 'sing-box.exe']));
     expect(cfg.route.rules[1].process_name).toContain('chrome.exe'); // app 規則在後
   });
 
@@ -134,10 +134,10 @@ describe('SingBoxEngine.generateBlockConfig — 斷線保護 fail-closed', () =>
         { on: true, exe: 'safe.exe', target: 'direct' }, // 原本直連 → 不擋
         { on: false, exe: 'off.exe', target: 'r1' },      // 關閉 → 不擋
       ],
-      selfNames: ['代理客戶端.exe'],
+      selfNames: ['RelayClient.exe'],
     });
     expect(cfg.route.rules[0].outbound).toBe('direct'); // self bypass 第一條
-    expect(cfg.route.rules[0].process_name).toEqual(expect.arrayContaining(['代理客戶端.exe', 'sing-box.exe']));
+    expect(cfg.route.rules[0].process_name).toEqual(expect.arrayContaining(['RelayClient.exe', 'sing-box.exe']));
     expect(cfg.route.rules).toContainEqual({ process_name: ['chrome.exe'], action: 'reject' });
     expect(cfg.route.rules).toContainEqual({ process_path: ['C:\\x\\y.exe'], action: 'reject' });
     expect(cfg.route.rules.find(r => r.process_name && r.process_name.includes('safe.exe'))).toBeUndefined();
