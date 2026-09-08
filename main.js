@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const net = require('net');
 const tls = require('tls');
 const { connectViaProxy } = require('./src/proxy/connect');
@@ -21,9 +22,48 @@ let proxyRunning = false;
 let systemProxyEnabled = false;
 let startTime = null;
 
-// Debug log buffer
+// Debug log buffer（記憶體，供「紀錄」分頁即時顯示）
 const LOG_MAX = 500;
 const logBuffer = [];
+
+// 持久化紀錄：每筆 log 同時落地到 userData/logs/app.log（自動輪替；只存本機、不外流）
+const LOG_FILE_MAX = 1024 * 1024; // 單檔上限 1 MB
+const LOG_FILE_KEEP = 2;          // 保留 app.log + app.1.log
+let logDir = null;
+let logFilePath = null;
+
+function initFileLog() {
+  try {
+    logDir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    logFilePath = path.join(logDir, 'app.log');
+    fileLog({ time: new Date().toISOString(), level: 'info', source: 'system',
+      message: `===== 紀錄開始 v${app.getVersion()} · ${process.platform} =====` });
+  } catch (e) { logFilePath = null; }
+}
+
+function rotateLogIfNeeded() {
+  try {
+    if (!logFilePath || !fs.existsSync(logFilePath)) return;
+    if (fs.statSync(logFilePath).size < LOG_FILE_MAX) return;
+    for (let i = LOG_FILE_KEEP - 1; i >= 1; i--) {
+      const src = i === 1 ? logFilePath : path.join(logDir, `app.${i - 1}.log`);
+      const dst = path.join(logDir, `app.${i}.log`);
+      if (fs.existsSync(src)) { try { fs.renameSync(src, dst); } catch (e) {} }
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function fileLog(entry) {
+  if (!logFilePath) return; // 尚未初始化（如測試環境）→ 不落地
+  try {
+    rotateLogIfNeeded();
+    const lvl = String(entry.level || 'info').toUpperCase().padEnd(5);
+    const line = `${entry.time} ${lvl} ${entry.source}: ${entry.message}` +
+      `${entry.detail ? ' | ' + entry.detail : ''}\n`;
+    fs.appendFileSync(logFilePath, line);
+  } catch (e) { /* 落地失敗不影響 app 運作 */ }
+}
 
 function addLog(level, source, message, detail) {
   const entry = {
@@ -35,6 +75,7 @@ function addLog(level, source, message, detail) {
   };
   logBuffer.push(entry);
   if (logBuffer.length > LOG_MAX) logBuffer.shift();
+  fileLog(entry);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('log-entry', entry);
   }
@@ -414,6 +455,13 @@ ipcMain.handle('test-server', async (_e, serverId, testTarget) => {
 
 ipcMain.handle('get-logs', () => logBuffer);
 ipcMain.handle('clear-logs', () => { logBuffer.length = 0; return true; });
+ipcMain.handle('open-logs-folder', async () => {
+  try {
+    if (!logDir) return { ok: false, error: '紀錄檔尚未初始化' };
+    const err = await shell.openPath(logDir);
+    return err ? { ok: false, error: err } : { ok: true, path: logDir };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 
 ipcMain.handle('get-settings', () => config.getSettings());
 ipcMain.handle('update-settings', (_e, updates) => config.updateSettings(updates));
@@ -772,6 +820,7 @@ ipcMain.handle('window-maximize', () => {
 ipcMain.handle('window-close', () => mainWindow.close());
 
 app.whenReady().then(() => {
+  initFileLog();
   createWindow();
   createTray();
 
@@ -782,7 +831,12 @@ app.whenReady().then(() => {
   }
 
   // 啟動 config 中定義的多端口路由（各自綁定 proxy/串鏈，獨立於主連線）
-  applyRoutes().catch(err => addLog('error', 'route', err.message));
+  // 受「啟動時自動套用路由」開關控制（settings.autoStartRoutes，預設開）
+  if (settings.autoStartRoutes !== false) {
+    applyRoutes().catch(err => addLog('error', 'route', err.message));
+  } else {
+    addLog('info', 'route', '「啟動時自動套用路由」已關閉，略過自動啟動（可到「總覽」手動啟用）');
+  }
 
   // 若是「用到才提權」重啟進來的（帶 --engine-autostart），提權後自動把分流引擎帶起來
   if (process.argv.includes('--engine-autostart')) {

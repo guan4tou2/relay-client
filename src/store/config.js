@@ -9,6 +9,7 @@ const store = new Store({
       socksPort: 10809,
       autoStart: false,
       autoConnect: false,
+      autoStartRoutes: true,
       minimizeToTray: true,
       killSwitch: false,
       testTarget: null

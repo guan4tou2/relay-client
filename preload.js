@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('api', {
   // Logs
   getLogs: () => ipcRenderer.invoke('get-logs'),
   clearLogs: () => ipcRenderer.invoke('clear-logs'),
+  openLogsFolder: () => ipcRenderer.invoke('open-logs-folder'),
   onLogEntry: (callback) => {
     const listener = (_event, entry) => callback(entry);
     ipcRenderer.on('log-entry', listener);

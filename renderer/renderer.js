@@ -43,7 +43,7 @@ const state = {
   pendingRouteDel: null, pendingSrvDel: null, bootLaunch: false, alert: null,
   killswitch: { tripped: false, reason: '', blocking: false },
   update: { status: 'idle', version: '', percent: 0 },
-  settings: { httpPort: 10808, socksPort: 10809, minimizeToTray: true, autoConnect: false, testTarget: null },
+  settings: { httpPort: 10808, socksPort: 10809, minimizeToTray: true, autoConnect: false, autoStartRoutes: true, testTarget: null },
   // ---- 分流（split routing）狀態 ----
   splitRules: [], splitDefaultTarget: 'direct', splitUdp: false,
   splitEngine: 'off', splitElevated: false, splitTun: null, splitApps: 0, splitHealth: [], splitLive: [],
@@ -158,6 +158,7 @@ function mount() {
 
   // 讀取實際 OS 開機自啟狀態，反映到設定頁開關
   window.api.getLoginItem().then(v => { state.bootLaunch = !!v; refreshSettings(); }).catch(() => {});
+  window.api.getAppInfo().then(i => { const el = document.getElementById('aboutVer'); if (el && i && i.version) el.textContent = i.version; }).catch(() => {});
 
   $('btnTheme').onclick = () => setTheme(state.theme === 'dark' ? '淺色' : '深色');
   $('btnAdd').onclick = () => state.tab === 'split' ? openSplitSheet() : openRoute();
@@ -694,6 +695,7 @@ function buildLogs() {
         <div id="levelSeg" style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px;flex-shrink:0"></div>
         <div style="margin-left:auto;display:flex;align-items:center;gap:7px;min-width:0">
           <input id="logSearch" placeholder="搜尋…" style="width:132px;min-width:80px;height:30px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-size:12.5px;outline:none">
+          <button id="logOpen" class="hvFill2" title="開啟紀錄檔資料夾" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">紀錄檔</button>
           <button id="logCopy" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">複製</button>
           <button id="logClear" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--red);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">清除</button>
         </div>
@@ -701,6 +703,7 @@ function buildLogs() {
       <div id="logList" style="flex:1;background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow-y:auto;user-select:text"></div>
     </div>`;
   $('logSearch').addEventListener('input', e => { state.search = e.target.value; renderLogList(); });
+  $('logOpen').onclick = async () => { const r = await window.api.openLogsFolder(); if (!(r && r.ok)) flash('開啟紀錄檔失敗：' + ((r && r.error) || '未知'), 'var(--red)'); };
   $('logCopy').onclick = () => copyLogs();
   $('logClear').onclick = async () => { await window.api.clearLogs(); state.logs = []; renderLogList(); flash('已清除紀錄'); };
   renderLevelSeg();
@@ -910,7 +913,7 @@ function buildSettings() {
         <span style="font-size:11.5px;font-weight:600;color:var(--text3);letter-spacing:.4px;padding-left:4px;white-space:nowrap">關於</span>
         <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:16px;display:flex;align-items:center;gap:14px">
           <svg width="42" height="42" viewBox="0 0 256 256" style="border-radius:11px;flex-shrink:0"><rect x="0" y="0" width="256" height="256" rx="56" fill="var(--accent)"></rect><circle cx="128" cy="128" r="76" fill="none" stroke="#fff" stroke-opacity=".28" stroke-width="15"></circle><path d="M128 52 A76 76 0 0 1 204 128" fill="none" stroke="#fff" stroke-width="15" stroke-linecap="round"></path><path d="M52 128 A76 76 0 0 0 128 204" fill="none" stroke="#7fe3bd" stroke-width="15" stroke-linecap="round"></path><circle cx="128" cy="128" r="18" fill="#fff"></circle></svg>
-          <div style="flex:1"><div style="font-size:13.5px;font-weight:600">代理客戶端</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">版本 1.1.0 · 多端口路由 · 多跳串鏈</div></div>
+          <div style="flex:1"><div style="font-size:13.5px;font-weight:600">代理客戶端</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">版本 <span id="aboutVer">…</span> · 多端口路由 · 多跳串鏈</div></div>
           <button id="setUpdate" class="hvAccDim" style="height:30px;padding:0 15px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--accent);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">${updateBtnLabel()}</button>
         </div>
       </div>
@@ -952,7 +955,7 @@ function toggleSwitch(key) {
     return;
   }
   if (key === 'tray') state.settings.minimizeToTray = !(state.settings.minimizeToTray !== false);
-  else if (key === 'autostart') state.settings.autoConnect = !state.settings.autoConnect;
+  else if (key === 'autostart') state.settings.autoStartRoutes = !(state.settings.autoStartRoutes !== false);
   else if (key === 'killswitch') state.settings.killSwitch = !state.settings.killSwitch;
   else localStorage.setItem('sw_' + key, localStorage.getItem('sw_' + key) === '1' ? '0' : '1');
   saveSettings(); refreshSettings();
@@ -960,7 +963,7 @@ function toggleSwitch(key) {
 function swOn(key) {
   if (key === 'tray') return state.settings.minimizeToTray !== false;
   if (key === 'bootLaunch') return !!state.bootLaunch;
-  if (key === 'autostart') return !!state.settings.autoConnect;
+  if (key === 'autostart') return state.settings.autoStartRoutes !== false;
   if (key === 'killswitch') return !!state.settings.killSwitch;
   if (key === 'scroll') return localStorage.getItem('sw_scroll') !== '0';
   return localStorage.getItem('sw_nodebug') === '1';
@@ -977,7 +980,7 @@ function refreshSettings() {
   });
   renderThemeSeg();
 }
-function saveSettings() { window.api.updateSettings({ minimizeToTray: state.settings.minimizeToTray, autoConnect: state.settings.autoConnect, killSwitch: state.settings.killSwitch, testTarget: state.settings.testTarget }); }
+function saveSettings() { window.api.updateSettings({ minimizeToTray: state.settings.minimizeToTray, autoStartRoutes: state.settings.autoStartRoutes, killSwitch: state.settings.killSwitch, testTarget: state.settings.testTarget }); }
 
 // =====================================================================================
 // 路由編輯面板（右側滑入 470px）

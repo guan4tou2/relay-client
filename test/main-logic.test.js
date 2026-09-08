@@ -74,7 +74,7 @@ describe('main.js — IPC handler registration', () => {
       'get-servers', 'add-server', 'update-server', 'delete-server', 'reorder-servers',
       'start-proxy', 'stop-proxy', 'get-proxy-status',
       'toggle-system-proxy', 'get-system-proxy-state',
-      'test-server', 'get-logs', 'clear-logs',
+      'test-server', 'get-logs', 'clear-logs', 'open-logs-folder',
       'get-settings', 'update-settings',
       'window-minimize', 'window-maximize', 'window-close'
     ];
