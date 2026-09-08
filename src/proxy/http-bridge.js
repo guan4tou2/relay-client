@@ -24,6 +24,8 @@ class HttpBridge extends EventEmitter {
 
       this.server.on('error', err => {
         this.emit('error', err);
+        try { if (this.server) this.server.close(); } catch (e) {}
+        this.server = null; // 綁定失敗（如 EADDRINUSE）→ 釋出，避免殘留非監聽中的 server handle
         reject(err);
       });
 
@@ -152,9 +154,11 @@ class HttpBridge extends EventEmitter {
       this.bytesUp += Buffer.byteLength(rawReq);
 
       req.on('data', chunk => {
-        remoteSocket.write(chunk);
         this.bytesUp += chunk.length;
+        if (!remoteSocket.write(chunk)) req.pause(); // 背壓：上游寫不動就暫停讀，避免大上傳把記憶體堆爆
       });
+      remoteSocket.on('drain', () => req.resume());
+      req.on('error', () => { if (remoteSocket && !remoteSocket.destroyed) remoteSocket.destroy(); });
 
       remoteSocket.on('data', chunk => {
         this.bytesDown += chunk.length;

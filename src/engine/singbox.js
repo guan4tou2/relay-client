@@ -1,5 +1,7 @@
 const { EventEmitter } = require('events');
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileP = promisify(execFile);
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -123,11 +125,11 @@ class SingBoxEngine extends EventEmitter {
   }
 
   // 只驗證設定是否合法（sing-box check），不啟動 TUN，不需提權
-  validate(cfgObj) {
+  async validate(cfgObj) {
     const tmp = path.join(os.tmpdir(), 'proxyclient-singbox-check.json');
     const clean = this._forEngine(cfgObj);
     fs.writeFileSync(tmp, JSON.stringify(clean, null, 2));
-    try { execSync(`"${this.binPath}" check -c "${tmp}"`, { stdio: 'pipe', windowsHide: true }); return { ok: true }; }
+    try { await execFileP(this.binPath, ['check', '-c', tmp], { windowsHide: true }); return { ok: true }; }
     catch (e) { return { ok: false, error: (e.stderr || e.stdout || e.message || '').toString().trim() }; }
   }
 
@@ -146,7 +148,7 @@ class SingBoxEngine extends EventEmitter {
     if (this.state === 'running' || this.state === 'starting') return { ok: true };
     if (!fs.existsSync(this.binPath)) return { ok: false, error: 'sing-box 未安裝（找不到執行檔）' };
 
-    const check = this.validate(cfg);
+    const check = await this.validate(cfg);
     if (!check.ok) { this.lastError = check.error; return { ok: false, error: '設定無效：' + check.error }; }
 
     if (!this.isElevated()) {
@@ -155,6 +157,7 @@ class SingBoxEngine extends EventEmitter {
     }
 
     this._userStopping = false;
+    this.lastError = ''; // 清掉上次啟動殘留的 FATAL，避免這次啟動被誤判失敗
     // 清掉可能殘留、占用同名 TUN 介面的舊 sing-box（上次崩潰未清乾淨 → "file already exists"）
     if (process.platform === 'win32' && !this.proc) {
       // 只清掉「從本 app 這支 sing-box.exe 啟動、且殘留占住同名 TUN」的行程；
@@ -162,7 +165,7 @@ class SingBoxEngine extends EventEmitter {
       try {
         const self = String(this.binPath).replace(/'/g, "''");
         const ps = `Get-CimInstance Win32_Process -Filter "Name='sing-box.exe'" | Where-Object { $_.ExecutablePath -eq '${self}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
-        execSync(`powershell -NoProfile -WindowStyle Hidden -Command "${ps}"`, { stdio: 'ignore', windowsHide: true, timeout: 4000 });
+        await execFileP('powershell', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', ps], { windowsHide: true, timeout: 4000 });
       } catch (e) {}
       await new Promise(r => setTimeout(r, 300));
     }
@@ -187,6 +190,7 @@ class SingBoxEngine extends EventEmitter {
         }
         if (/FATAL|panic|permission denied|access is denied/i.test(s)) {
           this.lastError = s.trim();
+          done({ ok: false, error: s.trim() }); // FATAL → 立刻回報失敗，別讓 2.5s 計時器誤判成功（kill-switch 誤報「已保護」）
         }
       };
       this.proc.stdout && this.proc.stdout.on('data', onData);
@@ -199,7 +203,12 @@ class SingBoxEngine extends EventEmitter {
         else if (wasRunning && !this._userStopping) this.emit('exit', code); // 非使用者主動停止 = 異常中止
       });
       // 保險：TUN 啟動後 sing-box 通常持續執行且不一定印明確 "started"；2.5s 內沒 exit 就當成功
-      setTimeout(() => { if (this.proc && !settled) { this.tun = 'proxyclient-tun'; this._setState('running'); done({ ok: true }); } }, 2500);
+      setTimeout(() => {
+        if (this.proc && !settled) {
+          if (this.lastError && /FATAL|panic/i.test(this.lastError)) { done({ ok: false, error: this.lastError }); return; } // 已見 FATAL → 別假設成功
+          this.tun = 'proxyclient-tun'; this._setState('running'); done({ ok: true });
+        }
+      }, 2500);
     });
   }
 
@@ -208,10 +217,10 @@ class SingBoxEngine extends EventEmitter {
     if (this.proc) {
       const pid = this.proc.pid;
       // 先嘗試優雅終止（讓 sing-box 有機會移除 TUN 網卡與系統路由），逾時再強制，避免殘留把網路卡住。
-      try { execSync(`taskkill /PID ${pid} /T`, { windowsHide: true, stdio: 'ignore', timeout: 3000 }); } catch (e) {}
+      try { await execFileP('taskkill', ['/PID', String(pid), '/T'], { windowsHide: true, timeout: 3000 }); } catch (e) {}
       await new Promise(r => setTimeout(r, 1200));
       try { if (this.proc) this.proc.kill(); } catch (e) {}
-      try { execSync(`taskkill /PID ${pid} /T /F`, { windowsHide: true, stdio: 'ignore', timeout: 3000 }); } catch (e) {}
+      try { await execFileP('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 3000 }); } catch (e) {}
       this.proc = null;
     }
     this.tun = null;

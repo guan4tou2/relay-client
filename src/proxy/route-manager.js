@@ -21,7 +21,7 @@ class RouteManager extends EventEmitter {
     const relay = new Relay();
     relay.on('stats', (s) => this.emit('stats', route.id, s));
     relay.on('log', (level, msg, detail) => this.emit('log', route.id, level, msg, detail));
-    relay.on('error', (err) => this.emit('error', route.id, err));
+    relay.on('error', (err) => { if (this.listenerCount('error')) this.emit('error', route.id, err); }); // 無 listener 時別讓 EventEmitter 拋未處理 error
 
     const upstream = route.hops.length === 1 ? route.hops[0] : route.hops;
     await relay.start(route.localPort, upstream);

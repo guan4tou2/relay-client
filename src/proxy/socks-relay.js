@@ -101,65 +101,71 @@ class SocksRelay extends EventEmitter {
 
   _readGreeting(socket) {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        socket.removeAllListeners('data');
-        reject(new Error('Greeting timeout'));
-        socket.destroy();
-      }, 30000);
+      let buf = Buffer.alloc(0);
+      const cleanup = () => { clearTimeout(timer); socket.removeListener('data', onData); socket.removeListener('error', onErr); socket.removeListener('close', onClose); };
+      const timer = setTimeout(() => { cleanup(); socket.destroy(); reject(new Error('Greeting timeout')); }, 30000);
       if (timer.unref) timer.unref(); // 逾時計時器不應獨自卡住事件迴圈
-      const onData = (data) => {
-        clearTimeout(timer);
-        if (data[0] !== 0x05) return reject(new Error('Not SOCKS5'));
-        const nMethods = data[1];
-        const methods = Array.from(data.slice(2, 2 + nMethods));
+      const onData = (chunk) => {
+        buf = Buffer.concat([buf, chunk]);
+        if (buf.length < 2) return;                          // 版本 + method 數還沒到
+        if (buf[0] !== 0x05) { cleanup(); return reject(new Error('Not SOCKS5')); }
+        const nMethods = buf[1];
+        if (buf.length < 2 + nMethods) return;               // methods 還沒收齊 → 等下一段（分段封包）
+        const methods = Array.from(buf.slice(2, 2 + nMethods));
+        const leftover = buf.slice(2 + nMethods);
+        cleanup();
+        if (leftover.length && socket.unshift) socket.unshift(leftover); // 一起送來的 request 位元組退回，供下一次讀取
         resolve(methods);
       };
-      socket.once('data', onData);
-      socket.once('error', (err) => { clearTimeout(timer); reject(err); });
-      socket.once('close', () => { clearTimeout(timer); reject(new Error('client closed before greeting')); }); // 對端關閉即清掉逾時，避免計時器殘留
+      const onErr = (err) => { cleanup(); reject(err); };
+      const onClose = () => { cleanup(); reject(new Error('client closed before greeting')); };
+      socket.on('data', onData);   // on（非 once）→ 跨多個封包累積，避免分段時讀短
+      socket.once('error', onErr);
+      socket.once('close', onClose);
     });
   }
 
   _readRequest(socket) {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        socket.removeAllListeners('data');
-        reject(new Error('Request timeout'));
-        socket.destroy();
-      }, 30000);
+      let buf = Buffer.alloc(0);
+      const cleanup = () => { clearTimeout(timer); socket.removeListener('data', onData); socket.removeListener('error', onErr); socket.removeListener('close', onClose); };
+      const timer = setTimeout(() => { cleanup(); socket.destroy(); reject(new Error('Request timeout')); }, 30000);
       if (timer.unref) timer.unref(); // 逾時計時器不應獨自卡住事件迴圈
-      const onData = (data) => {
-        clearTimeout(timer);
-        if (data[0] !== 0x05 || data[1] !== 0x01) {
-          return reject(new Error('Unsupported SOCKS command'));
-        }
-        const addrType = data[3];
-        let host, port, offset;
-
+      const onData = (chunk) => {
+        buf = Buffer.concat([buf, chunk]);
+        if (buf.length < 4) return;                          // 版本/命令/保留/位址型別還沒到
+        if (buf[0] !== 0x05 || buf[1] !== 0x01) { cleanup(); return reject(new Error('Unsupported SOCKS command')); }
+        const addrType = buf[3];
+        let host, offset;
         if (addrType === 0x01) {
-          host = `${data[4]}.${data[5]}.${data[6]}.${data[7]}`;
+          if (buf.length < 10) return;                       // IPv4(4) + port(2) → 需 10 bytes
+          host = `${buf[4]}.${buf[5]}.${buf[6]}.${buf[7]}`;
           offset = 8;
         } else if (addrType === 0x03) {
-          const len = data[4];
-          host = data.slice(5, 5 + len).toString();
+          if (buf.length < 5) return;
+          const len = buf[4];
+          if (buf.length < 5 + len + 2) return;              // 網域(len) + port(2)
+          host = buf.slice(5, 5 + len).toString();
           offset = 5 + len;
         } else if (addrType === 0x04) {
+          if (buf.length < 22) return;                       // IPv6(16) + port(2)
           const parts = [];
-          for (let i = 4; i < 20; i += 2) {
-            parts.push(data.readUInt16BE(i).toString(16));
-          }
+          for (let i = 4; i < 20; i += 2) parts.push(buf.readUInt16BE(i).toString(16));
           host = parts.join(':');
           offset = 20;
         } else {
+          cleanup();
           return reject(new Error('Unknown address type'));
         }
-
-        port = data.readUInt16BE(offset);
+        const port = buf.readUInt16BE(offset);
+        cleanup();
         resolve({ host, port });
       };
-      socket.once('data', onData);
-      socket.once('error', (err) => { clearTimeout(timer); reject(err); });
-      socket.once('close', () => { clearTimeout(timer); reject(new Error('client closed before request')); }); // 對端關閉即清掉逾時，避免計時器殘留
+      const onErr = (err) => { cleanup(); reject(err); };
+      const onClose = () => { cleanup(); reject(new Error('client closed before request')); };
+      socket.on('data', onData);   // on（非 once）→ 跨多個封包累積
+      socket.once('error', onErr);
+      socket.once('close', onClose);
     });
   }
 

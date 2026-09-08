@@ -120,19 +120,23 @@ async function httpConnectOverSocket(socket, destination, proxy) {
 function readHttpStatus(socket) {
   return new Promise((resolve, reject) => {
     let buf = Buffer.alloc(0);
+    const cleanup = () => { clearTimeout(timer); socket.removeListener('data', onData); socket.removeListener('error', onErr); };
+    const timer = setTimeout(() => { cleanup(); reject(new Error('HTTP proxy CONNECT timeout')); }, 15000); // proxy 收了連線卻不回 CONNECT → 不要無限等
+    if (timer.unref) timer.unref();
     const onData = (chunk) => {
       buf = Buffer.concat([buf, chunk]);
       const str = buf.toString();
       const end = str.indexOf('\r\n\r\n');
       if (end === -1) return;
-      socket.removeListener('data', onData);
+      cleanup();
       const line = str.substring(0, str.indexOf('\r\n'));
       const m = line.match(/^HTTP\/\d\.\d (\d{3})/);
       if (!m) return reject(new Error('Invalid HTTP response from proxy'));
       resolve({ statusCode: parseInt(m[1], 10), remaining: buf.slice(end + 4) });
     };
+    const onErr = (err) => { cleanup(); reject(err); };
     socket.on('data', onData);
-    socket.once('error', (err) => { socket.removeListener('data', onData); reject(err); });
+    socket.once('error', onErr);
   });
 }
 

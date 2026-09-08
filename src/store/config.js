@@ -1,19 +1,21 @@
 const Store = require('electron-store');
 
+const DEFAULT_SETTINGS = {
+  httpPort: 10808,
+  socksPort: 10809,
+  autoStart: false,
+  autoConnect: false,
+  autoStartRoutes: true,
+  minimizeToTray: true,
+  killSwitch: false,
+  testTarget: null
+};
+
 const store = new Store({
   defaults: {
     servers: [],
     activeServerId: null,
-    settings: {
-      httpPort: 10808,
-      socksPort: 10809,
-      autoStart: false,
-      autoConnect: false,
-      autoStartRoutes: true,
-      minimizeToTray: true,
-      killSwitch: false,
-      testTarget: null
-    }
+    settings: { ...DEFAULT_SETTINGS }
   }
 });
 
@@ -61,7 +63,8 @@ function setActiveServerId(id) {
 }
 
 function getSettings() {
-  return store.get('settings');
+  // 合併預設：升級後新增的 settings 子鍵（舊 config 沒有）會被補上，避免讀到 undefined
+  return { ...DEFAULT_SETTINGS, ...(store.get('settings') || {}) };
 }
 
 function updateSettings(updates) {
@@ -98,6 +101,7 @@ function reorderServers(orderedIds) {
   const servers = getServers();
   const map = new Map(servers.map(s => [s.id, s]));
   const reordered = orderedIds.map(id => map.get(id)).filter(Boolean);
+  for (const s of servers) if (!orderedIds.includes(s.id)) reordered.push(s); // 不在排序清單的補回，避免遺失
   store.set('servers', reordered);
   return reordered;
 }

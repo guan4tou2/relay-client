@@ -291,7 +291,7 @@ function deleteRoute(id) {
     state.routes = routes || [];
     if (state.sel === id) state.sel = state.routes[0] ? state.routes[0].id : null;
     renderSidebar(); showTab(state.tab); flash('已刪除路由');
-  });
+  }).catch(e => flash('刪除路由失敗：' + (e && e.message || e), 'var(--red)'));
 }
 
 // =====================================================================================
@@ -489,7 +489,7 @@ function updateTraffic() {
   const S = ses(state.sel);
   const pts = S.series || [];
   const max = Math.max(3000000, ...pts.map(p => Math.max(p.down, p.up)));
-  const div = state.range === '60 秒' ? 59 : 299;
+  const div = Math.max(1, pts.length - 1); // 折線永遠鋪滿寬度（否則 5 分鐘檔只擠在左邊約 20%）
   const xy = key => pts.map((p, i) => `${(i / div) * 560},${88 - (p[key] / max) * 78}`).join(' ');
   const ld = xy('down'), lu = xy('up');
   $('lineDown').setAttribute('points', ld);
@@ -682,7 +682,7 @@ function deleteServerRow(id) {
     }
     state.routes = await window.api.getRoutes();
     renderServers(); renderSidebar(); flash('已刪除伺服器');
-  });
+  }).catch(e => flash('刪除伺服器失敗：' + (e && e.message || e), 'var(--red)'));
 }
 
 // =====================================================================================
@@ -1123,7 +1123,9 @@ async function saveRouteSheet() {
   if (dupPort) { state.alert = { kind: 'conflict', title: '本地端口衝突', body: '端口 ' + d.localPort + ' 已被其他路由使用。同一個端口無法同時服務兩條路由，請改用其他端口。' }; renderAlert(); return; }
   const id = state.routeEditing || 'r-' + Date.now();
   const rec = { id, label: d.label.trim() || '未命名路由', localPort: +d.localPort || 0, kind: d.kind, hops: [...d.hops], enabled: d.enabled };
-  const routes = await window.api.saveRoute(rec);
+  let routes;
+  try { routes = await window.api.saveRoute(rec); }
+  catch (e) { flash('儲存路由失敗：' + (e && e.message || e), 'var(--red)'); return; }
   state.routes = routes || (await window.api.getRoutes());
   state.sel = id;
   closeRouteSheet();

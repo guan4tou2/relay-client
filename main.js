@@ -846,7 +846,7 @@ ipcMain.handle('window-maximize', () => {
 });
 ipcMain.handle('window-close', () => mainWindow.close());
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   initFileLog();
   createWindow();
   createTray();
@@ -854,7 +854,7 @@ app.whenReady().then(() => {
   const settings = config.getSettings();
   if (settings.autoConnect) {
     const activeId = config.getActiveServerId();
-    if (activeId) startProxyServers(activeId).catch(() => {});
+    if (activeId) { try { await startProxyServers(activeId); } catch (e) {} } // 先把主連線起好，applyRoutes 的埠衝突檢查才看得到 primaryPorts
   }
 
   // 啟動 config 中定義的多端口路由（各自綁定 proxy/串鏈，獨立於主連線）
