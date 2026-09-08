@@ -37,6 +37,9 @@ class HttpBridge extends EventEmitter {
   async _handleConnect(req, clientSocket, head) {
     this.connections++;
     this.emit('stats', this._getStats());
+    // 提早掛 error handler：await 上游期間 client 若中斷、或稍後對已關閉 socket 寫入，
+    // 都不會變成未處理的 'error' 事件把整個行程帶崩。
+    clientSocket.on('error', () => {});
 
     try {
       const [host, portStr] = req.url.split(':');
@@ -90,7 +93,7 @@ class HttpBridge extends EventEmitter {
       this.connections = Math.max(0, this.connections - 1); // 計數永不為負（防重複遞減顯示 -1）
       this.emit('stats', this._getStats());
       this.emit('log', 'error', `CONNECT FAILED ${req.url} — ${err.message}`);
-      clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+      if (!clientSocket.destroyed) clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
       clientSocket.destroy();
     }
   }

@@ -63,16 +63,16 @@ function openSocketToProxy(proxy, useTls) {
     const onError = (err) => { socket.destroy(); reject(err); };
     const onTimeout = () => { socket.destroy(); reject(new Error('Proxy connection timeout')); };
 
+    const onConnect = () => {
+      socket.setTimeout(0);                     // 連上後清掉逾時，否則它會變成「閒置 15s 就砍活連線」
+      socket.removeListener('error', onError);
+      socket.removeListener('timeout', onTimeout);
+      resolve(socket);
+    };
     if (useTls) {
-      socket = tls.connect(proxy.port, proxy.host, { rejectUnauthorized: false }, () => {
-        socket.removeListener('error', onError);
-        resolve(socket);
-      });
+      socket = tls.connect(proxy.port, proxy.host, { rejectUnauthorized: false }, onConnect);
     } else {
-      socket = net.connect(proxy.port, proxy.host, () => {
-        socket.removeListener('error', onError);
-        resolve(socket);
-      });
+      socket = net.connect(proxy.port, proxy.host, onConnect);
     }
     socket.setTimeout(15000);
     socket.once('error', onError);
@@ -84,6 +84,7 @@ function openSocketToProxy(proxy, useTls) {
 function tlsHandshake(socket, servername) {
   return new Promise((resolve, reject) => {
     const t = tls.connect({ socket, servername, rejectUnauthorized: false }, () => {
+      t.setTimeout(0);                          // 握手完成 → 清掉逾時，避免砍掉活的 TLS 通道
       t.removeListener('error', reject);
       resolve(t);
     });

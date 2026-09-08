@@ -210,11 +210,7 @@ function updateTrayMenu() {
     },
     {
       label: '結束',
-      click: async () => {
-        await stopProxyServers();
-        if (systemProxyEnabled) winProxy.disableProxy();
-        app.exit(0);
-      }
+      click: () => app.quit() // 走 before-quit 做完整清理（引擎 / 路由 / 系統代理），別用 app.exit 跳過
     }
   ]);
   tray.setContextMenu(menu);
@@ -885,9 +881,18 @@ app.on('window-all-closed', () => {
   // Keep running in tray
 });
 
-app.on('before-quit', async () => {
-  if (proxyRunning) await stopProxyServers();
-  if (routeManager) await routeManager.stopAll();
-  if (engine) await engine.stop();
-  if (systemProxyEnabled) winProxy.disableProxy();
+// Electron 不會 await before-quit 的 async handler，所以先擋下結束、把清理做完再真正退出。
+// 特別是要讓 engine.stop() 有時間移除 TUN、winProxy.disableProxy() 一定要跑到（否則結束後上不了網）。
+let _quitting = false;
+app.on('before-quit', (e) => {
+  if (_quitting) return;                              // 第二次進來（清理已完成）→ 放行結束
+  _quitting = true;
+  e.preventDefault();
+  const force = setTimeout(() => app.exit(0), 5000);  // 保險：清理逾時也一定結束
+  (async () => {
+    try { if (engine) await engine.stop(); } catch (err) {}          // 先關引擎 → 讓 sing-box 移除 TUN
+    try { if (routeManager) await routeManager.stopAll(); } catch (err) {}
+    try { if (proxyRunning) await stopProxyServers(); } catch (err) {}
+    try { if (systemProxyEnabled) winProxy.disableProxy(); } catch (err) {}
+  })().finally(() => { clearTimeout(force); app.exit(0); });
 });

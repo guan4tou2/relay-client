@@ -157,7 +157,13 @@ class SingBoxEngine extends EventEmitter {
     this._userStopping = false;
     // 清掉可能殘留、占用同名 TUN 介面的舊 sing-box（上次崩潰未清乾淨 → "file already exists"）
     if (process.platform === 'win32' && !this.proc) {
-      try { execSync('taskkill /IM sing-box.exe /F /T', { stdio: 'ignore', windowsHide: true, timeout: 3000 }); } catch (e) {}
+      // 只清掉「從本 app 這支 sing-box.exe 啟動、且殘留占住同名 TUN」的行程；
+      // 不用 taskkill /IM sing-box.exe（那會把別的 sing-box 系 app 一起殺）。
+      try {
+        const self = String(this.binPath).replace(/'/g, "''");
+        const ps = `Get-CimInstance Win32_Process -Filter "Name='sing-box.exe'" | Where-Object { $_.ExecutablePath -eq '${self}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+        execSync(`powershell -NoProfile -WindowStyle Hidden -Command "${ps}"`, { stdio: 'ignore', windowsHide: true, timeout: 4000 });
+      } catch (e) {}
       await new Promise(r => setTimeout(r, 300));
     }
     const clean = this._forEngine(cfg);
