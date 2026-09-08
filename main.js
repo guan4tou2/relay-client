@@ -682,11 +682,21 @@ ipcMain.handle('delete-route', async (_e, id) => {
 });
 
 // ===== Per-app 分流引擎（sing-box TUN）=====
+// sing-box 的良性噪音：http/socks 上游本就不帶 UDP，QUIC/UDP 會被拒並記 ERROR，但不影響功能 → 不進紀錄。
+const ENGINE_LOG_NOISE = /UDP is not supported by outbound/i;
+
 function setupEngine() {
   if (engine) return;
   engine = new SingBoxEngine();
   engine.on('status', (s) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('engine-status', s); });
-  engine.on('log', (line) => addLog('debug', 'engine', String(line).replace(/\x1b\[[0-9;]*m/g, '').trim().slice(0, 400)));
+  engine.on('log', (chunk) => {
+    // sing-box 一個 data 事件常含多行；逐行處理並濾掉已知的良性噪音（見 ENGINE_LOG_NOISE）。
+    for (const raw of String(chunk).split(/\r?\n/)) {
+      const line = raw.replace(/\x1b\[[0-9;]*m/g, '').trim();
+      if (!line || ENGINE_LOG_NOISE.test(line)) continue;
+      addLog('debug', 'engine', line.slice(0, 400));
+    }
+  });
   engine.on('exit', (code) => {
     // block（斷線保護）模式自己中止 → 不遞迴再觸發，只記錄並回報
     if (engine._blocking) { addLog('error', 'killswitch', `斷線保護(block)模式也中止了（code ${code}）——受保護程式已無 TUN`); killSwitchState.blocking = false; sendKillSwitch(); sendEngineStatus(); return; }
