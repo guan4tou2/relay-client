@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const net = require('net');
 const tls = require('tls');
-const { connectViaProxy } = require('./src/proxy/connect');
+const { connectViaProxy, connectViaChain } = require('./src/proxy/connect');
 // 一次性搬遷：舊 userData（開發代號 socks5-client）→ 現在的 app 名 RelayClient，
 // 讓更名後不遺失既有 config（servers / routes / settings）。只在新位置尚無 config 時搬。
 (function migrateLegacyUserData() {
@@ -25,7 +25,9 @@ const SocksRelay = require('./src/proxy/socks-relay');
 const HttpBridge = require('./src/proxy/http-bridge');
 const RouteManager = require('./src/proxy/route-manager');
 const SingBoxEngine = require('./src/engine/singbox');
-const winProxy = require('./src/system/win-proxy');
+const { RuleSetStore } = require('./src/engine/ruleset');
+const platform = require('./src/platform').current;  // 平台差異一律走 adapter，main.js 不做 process.platform 判斷
+const systemProxy = platform.systemProxy;            // 系統代理開關（Windows 登錄檔 / macOS networksetup / Linux gsettings）
 const { execSync, spawn } = require('child_process');
 
 let mainWindow = null;
@@ -34,6 +36,7 @@ let socksRelay = null;
 let httpBridge = null;
 let routeManager = null;
 let engine = null;
+let ruleSets = null;
 let proxyRunning = false;
 let systemProxyEnabled = false;
 let startTime = null;
@@ -189,11 +192,11 @@ function updateTrayMenu() {
       label: systemProxyEnabled ? '關閉系統代理' : '啟用系統代理',
       click: () => {
         if (systemProxyEnabled) {
-          winProxy.disableProxy();
+          systemProxy.disable();
           systemProxyEnabled = false;
         } else {
           const settings = config.getSettings();
-          winProxy.enableProxy(settings.httpPort);
+          systemProxy.enable(settings.httpPort);
           systemProxyEnabled = true;
         }
         updateTrayMenu();
@@ -404,7 +407,7 @@ ipcMain.handle('start-proxy', async (_e, serverId) => {
 ipcMain.handle('stop-proxy', async () => {
   await stopProxyServers();
   if (systemProxyEnabled) {
-    winProxy.disableProxy();
+    systemProxy.disable();
     systemProxyEnabled = false;
   }
   return { success: true };
@@ -419,17 +422,17 @@ ipcMain.handle('get-proxy-status', () => ({
 ipcMain.handle('toggle-system-proxy', (_e, enable, port) => {
   const settings = config.getSettings();
   if (enable) {
-    winProxy.enableProxy(port || settings.httpPort);
+    systemProxy.enable(port || settings.httpPort);
     systemProxyEnabled = true;
   } else {
-    winProxy.disableProxy();
+    systemProxy.disable();
     systemProxyEnabled = false;
   }
   updateTrayMenu();
   return { systemProxyEnabled };
 });
 
-ipcMain.handle('get-system-proxy-state', () => winProxy.getProxyState());
+ipcMain.handle('get-system-proxy-state', () => systemProxy.get());
 
 ipcMain.handle('test-server', async (_e, serverId, testTarget) => {
   const server = config.getServer(serverId);
@@ -485,13 +488,18 @@ ipcMain.handle('get-app-info', () => ({
 
 // 開機自動啟動（Windows 登入項目）。可攜版須指回外層 exe（PORTABLE_EXECUTABLE_FILE），
 // 否則會登記到 %TEMP% 的解壓路徑，重開機後失效。
-function appLaunchPath() { return process.env.PORTABLE_EXECUTABLE_FILE || process.execPath; }
+function appLaunchPath() { return platform.autostart.launchPath(); }
 ipcMain.handle('get-login-item', () => {
-  try { return app.getLoginItemSettings({ path: appLaunchPath() }).openAtLogin; }
-  catch (e) { return false; }
+  try {
+    return platform.autostart.usesElectronLoginItem
+      ? app.getLoginItemSettings({ path: appLaunchPath() }).openAtLogin
+      : platform.autostart.get();
+  } catch (e) { return false; }
 });
 ipcMain.handle('set-login-item', (_e, enable) => {
   try {
+    // Electron 的 setLoginItemSettings 在 Linux 沒有實作 → adapter 自己寫 XDG autostart .desktop
+    if (!platform.autostart.usesElectronLoginItem) return platform.autostart.set(!!enable);
     app.setLoginItemSettings({ openAtLogin: !!enable, path: appLaunchPath(), args: [] });
     return { ok: true, enabled: !!enable };
   } catch (e) { addLog('error', 'system', `set-login-item failed: ${e.message}`); return { ok: false, error: e.message }; }
@@ -625,6 +633,48 @@ ipcMain.handle('save-routes', async (_e, routes) => {
 });
 ipcMain.handle('get-route-status', () => (routeManager ? routeManager.status() : []));
 
+// 找已安裝的 Chromium 系瀏覽器（Chrome 優先、再 Edge），供「用路由開瀏覽器」用
+function findBrowser() {
+  for (const c of platform.browserCandidates()) { try { if (fs.existsSync(c.path)) return c; } catch (e) {} }
+  return null;
+}
+
+// 用某條路由開一個「隔離 profile + 指向該路由本地埠」的瀏覽器實例：
+// 只有這個視窗走代理，其餘系統瀏覽照常。免 TUN、免提權——TUN 分流的替代做法。
+ipcMain.handle('launch-browser', async (_e, routeId) => {
+  try {
+    const def = config.getRoutes().find(r => r.id === routeId);
+    if (!def) return { ok: false, error: '找不到該路由' };
+    const r = resolveRoute(def);
+    if (!r.hops || r.hops.length === 0) return { ok: false, error: '此路由沒有有效跳點（先在路由裡加伺服器）' };
+
+    // 確保路由在跑（本地埠有在聽），瀏覽器才連得上
+    setupRouteManager();
+    if (!routeManager.isRunning(routeId)) {
+      if (!(await checkPortFree(r.localPort))) return { ok: false, error: `本地埠 ${r.localPort} 已被占用，無法啟動路由` };
+      try { await routeManager.start(r); sendRouteStatus(); }
+      catch (e) { return { ok: false, error: '路由啟動失敗：' + e.message }; }
+    }
+
+    const browser = findBrowser();
+    if (!browser) return { ok: false, error: '找不到 Chrome / Edge，請確認已安裝' };
+
+    const scheme = def.kind === 'http' ? 'http' : 'socks5';
+    const profileDir = path.join(app.getPath('userData'), 'browser-profiles', String(routeId).replace(/[^\w.-]/g, '_'));
+    try { fs.mkdirSync(profileDir, { recursive: true }); } catch (e) {}
+    const args = [
+      `--proxy-server=${scheme}://127.0.0.1:${r.localPort}`,
+      `--user-data-dir=${profileDir}`,
+      '--no-first-run', '--no-default-browser-check', 'about:blank',
+    ];
+    const child = spawn(browser.path, args, { detached: true, stdio: 'ignore', windowsHide: false });
+    child.on('error', () => {}); // spawn 失敗別變成未處理錯誤
+    child.unref();
+    addLog('info', 'launch', `用路由「${def.label || routeId}」開啟 ${browser.name}`, `${scheme}://127.0.0.1:${r.localPort}`);
+    return { ok: true, browser: browser.name };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 // 啟動單一路由（runtime）；衝突時回傳 {ok:false, conflict:{title,body}} 讓 renderer 顯示 in-app alert
 ipcMain.handle('route-start', async (_e, id) => {
   setupRouteManager();
@@ -734,10 +784,47 @@ ipcMain.handle('killswitch-clear', async () => {
   return { ok: true };
 });
 
+// ===== 規則庫（依網域 / 地區(GeoIP) 分流的資料來源）=====
+// 存在 userData/rulesets/；預設不連網，使用者按「下載」才會抓，且可指定經由某條路由下載。
+function setupRuleSets() {
+  if (ruleSets) return ruleSets;
+  ruleSets = new RuleSetStore({
+    dir: path.join(app.getPath('userData'), 'rulesets'),
+    connectChain: (hops, dest) => connectViaChain(hops, dest),
+  });
+  return ruleSets;
+}
+
+// 規則庫下載的出口：設定裡指定的路由 → 取它的 hops（串鏈）；沒指定就直連
+function rulesetDetourHops() {
+  const id = config.getSettings().rulesetDetourRouteId;
+  if (!id) return [];
+  const def = config.getRoutes().find(r => r.id === id);
+  return def ? resolveRoute(def).hops : [];
+}
+
+// 目前規則實際引用到的規則庫 tag（只有這些會寫進 sing-box 設定）
+function referencedSetTags(rules) {
+  const tags = new Set();
+  for (const r of rules || []) {
+    const dest = r && r.on !== false && r.when && r.when.dest;
+    if (!dest || dest.match !== 'ruleset') continue;
+    const vals = Array.isArray(dest.value) ? dest.value : String(dest.value == null ? '' : dest.value).split(/[\n,;]+/);
+    for (const v of vals.map(x => String(x).trim()).filter(Boolean)) tags.add(v);
+  }
+  return Array.from(tags);
+}
+
 function engineParams() {
   const split = config.getSplit();
   const self = require('path').basename(process.execPath); // dev: electron.exe；打包: RelayClient.exe
-  return { rules: split.rules, defaultTarget: split.defaultTarget, udp: split.udp, routes: config.getRoutes(), selfNames: [self] };
+  return {
+    rules: split.rules,
+    ruleSets: setupRuleSets().resolveForEngine(referencedSetTags(split.rules)),
+    defaultTarget: split.defaultTarget, udp: split.udp,
+    mode: split.mode, globalTarget: split.globalTarget, lanDirect: split.lanDirect,
+    routes: config.getRoutes(), selfNames: [self],
+  };
 }
 
 function sendEngineStatus() {
@@ -745,33 +832,103 @@ function sendEngineStatus() {
 }
 
 // 列舉執行中的程式（含完整路徑），供規則挑選器用
-function listProcesses() {
-  try {
-    const out = execSync('powershell -NoProfile -Command "Get-Process | Where-Object {$_.Path} | Select-Object Name,Id,Path | ConvertTo-Json -Compress"', { windowsHide: true, maxBuffer: 32 * 1024 * 1024 }).toString();
-    let arr = JSON.parse(out); if (!Array.isArray(arr)) arr = [arr];
-    const seen = new Set(); const res = [];
-    for (const p of arr) {
-      if (!p.Path || seen.has(p.Path.toLowerCase())) continue;
-      seen.add(p.Path.toLowerCase());
-      res.push({ pid: p.Id, name: p.Name, path: p.Path, exe: require('path').basename(p.Path) });
-    }
-    return res.sort((a, b) => a.name.localeCompare(b.name));
-  } catch (e) { return []; }
-}
-
 ipcMain.handle('get-split', () => config.getSplit());
 ipcMain.handle('save-split', async (_e, patch) => {
   const s = config.saveSplit(patch);
   if (engine && engine.state === 'running') { await engine.stop(); await ensureSplitRoutesStarted(); await engine.start(engineParams()); sendEngineStatus(); } // 立即套用（先帶起規則要用的路由）
   return s;
 });
-ipcMain.handle('list-processes', () => listProcesses());
+ipcMain.handle('list-processes', () => platform.listProcesses());
 ipcMain.handle('browse-exe', async () => {
-  const r = await dialog.showOpenDialog(mainWindow, { title: '選擇程式', filters: [{ name: '程式', extensions: ['exe'] }], properties: ['openFile'] });
+  const r = await dialog.showOpenDialog(mainWindow, { title: '選擇程式', filters: platform.exeFilters, properties: ['openFile'] });
   if (r.canceled || !r.filePaths[0]) return null;
-  const p = r.filePaths[0]; const base = require('path').basename(p);
-  return { name: base.replace(/\.exe$/i, ''), exe: base, path: p };
+  // 執行檔名的正規化（是否小寫、是否去 .exe、.app bundle 怎麼取名）由 adapter 決定
+  const picked = platform.normalizeApp(r.filePaths[0]);
+  return { name: picked.label, exe: picked.name, path: picked.path };
 });
+// ---- 規則庫（rule-set）管理 ----
+ipcMain.handle('ruleset-catalog', () => setupRuleSets().catalog());
+ipcMain.handle('ruleset-list', () => setupRuleSets().list());
+
+ipcMain.handle('ruleset-install', async (_e, tag) => {
+  const r = await setupRuleSets().install(tag, { hops: rulesetDetourHops() });
+  addLog(r.ok ? 'info' : 'error', 'ruleset', r.ok ? `規則庫已下載：${tag}（${r.entry.bytes} bytes）` : `規則庫下載失敗：${tag} — ${r.error}`);
+  if (r.ok) await reloadEngineIfRunning();
+  return r;
+});
+
+ipcMain.handle('ruleset-update', async (_e, tag) => {
+  const r = await setupRuleSets().update(tag, { hops: rulesetDetourHops() });
+  addLog(r.ok ? 'info' : 'warn', 'ruleset', r.ok ? `規則庫已更新：${tag}` : `規則庫更新失敗：${tag} — ${r.error}`);
+  if (r.ok) await reloadEngineIfRunning();
+  return r;
+});
+
+ipcMain.handle('ruleset-update-all', async () => {
+  const results = await setupRuleSets().updateAll({ hops: rulesetDetourHops() });
+  config.updateSettings({ rulesetLastCheck: Date.now() });
+  const bad = results.filter(r => !r.ok);
+  addLog(bad.length ? 'warn' : 'info', 'ruleset', `規則庫更新完成：成功 ${results.length - bad.length} / ${results.length}`);
+  if (results.some(r => r.ok)) await reloadEngineIfRunning();
+  return results;
+});
+
+ipcMain.handle('ruleset-import', async () => {
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: '匯入規則庫',
+    filters: [{ name: '規則庫', extensions: ['srs', 'json'] }],
+    properties: ['openFile'],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  const res = setupRuleSets().importFile(r.filePaths[0]);
+  addLog(res.ok ? 'info' : 'error', 'ruleset', res.ok ? `規則庫已匯入：${res.entry.tag}` : `規則庫匯入失敗：${res.error}`);
+  if (res.ok) await reloadEngineIfRunning();
+  return res;
+});
+
+ipcMain.handle('ruleset-remove', async (_e, tag) => {
+  const res = setupRuleSets().remove(tag);
+  addLog('info', 'ruleset', `規則庫已移除：${tag}`);
+  await reloadEngineIfRunning();
+  return res;
+});
+
+// 規則模擬器：「這個網址／IP（可選：這支程式）會走哪一條？」——不需啟動引擎
+ipcMain.handle('rule-match', async (_e, { host, exe, port, network } = {}) => {
+  setupEngine();
+  const split = config.getSplit();
+  const res = await engine.matchTarget({
+    host, exe, port, network,
+    rules: split.rules,
+    ruleSets: setupRuleSets().resolveForEngine(referencedSetTags(split.rules)),
+    defaultTarget: split.defaultTarget,
+  });
+  const rt = config.getRoutes().find(r => r.id === res.target);
+  return { ...res, targetLabel: res.target === 'direct' ? '直接連線' : res.target === 'block' ? '封鎖' : (rt ? rt.label || rt.id : '（路由已刪除）') };
+});
+
+// 規則庫變動 → 引擎在跑就重載設定（等同 save-split 的即時套用）
+async function reloadEngineIfRunning() {
+  if (!(engine && engine.state === 'running')) return;
+  await engine.stop();
+  await ensureSplitRoutesStarted();
+  await engine.start(engineParams());
+  sendEngineStatus();
+}
+
+// 開機後的規則庫自動更新（預設關閉；開啟才會連網，且照設定的間隔天數）
+async function maybeAutoUpdateRuleSets() {
+  const s = config.getSettings();
+  if (!s.rulesetAutoUpdate) return;
+  const days = Math.max(1, Number(s.rulesetUpdateDays) || 7);
+  if (Date.now() - (Number(s.rulesetLastCheck) || 0) < days * 86400000) return;
+  if (!setupRuleSets().list().length) return;
+  const results = await setupRuleSets().updateAll({ hops: rulesetDetourHops() });
+  config.updateSettings({ rulesetLastCheck: Date.now() });
+  addLog('info', 'ruleset', `規則庫自動更新：${results.filter(r => r.ok).length}/${results.length} 成功`);
+  if (results.some(r => r.ok)) await reloadEngineIfRunning();
+}
+
 ipcMain.handle('engine-start', async () => {
   setupEngine();
   await ensureSplitRoutesStarted(); // 引擎要用的路由先帶起來，避免 TUN 往死掉的本地埠送流量
@@ -786,9 +943,17 @@ ipcMain.handle('engine-stop', async () => {
 });
 ipcMain.handle('get-engine-status', () => { setupEngine(); return engine.status(); });
 
-// 用到才提權：以系統管理員重啟自己（帶旗標讓新實例自動啟動引擎與其上游路由）。
-// app 本身用 asInvoker 正常啟動，只有分流引擎（建 TUN）需要提權。
+// 用到才提權。提權方式因平台而異（adapter 的 engineElevation.strategy）：
+//   relaunch-app（Windows）：以系統管理員重啟自己，帶旗標讓新實例自動啟動引擎與上游路由
+//   setcap（Linux）：對 sing-box 授一次 CAP_NET_ADMIN 即可，不必用 root 跑 app
+//   unsupported（macOS）：需要簽章的特權助手，本版未提供 → 回報說明而不是假裝成功
 function relaunchElevated() {
+  const el = platform.engineElevation;
+  if (el.strategy === 'setcap') {
+    const bin = engine ? engine.binPath : '';
+    return Promise.resolve(el.isSatisfied(bin) ? { ok: true } : { ok: false, error: el.instructions(bin) });
+  }
+  if (el.strategy !== 'relaunch-app') return Promise.resolve({ ok: false, error: el.instructions() });
   // 用 powershell 的 Start-Process -Verb RunAs 觸發 UAC，並「等它結束」判斷結果：
   //   exit 0 = 使用者同意、提權實例已啟動 → 才收掉目前這個（避免埠衝突、避免像 crash）
   //   非 0 / error = 被拒或被公司政策封鎖 → 不關閉，回報錯誤，其餘功能照常
@@ -798,9 +963,8 @@ function relaunchElevated() {
     try {
       // Portable 會解壓到 temp 再跑；舊實例結束會刪那個 temp → 必須重啟「原始 portable exe」
       // （PORTABLE_EXECUTABLE_FILE，會重新解壓到新 temp），否則新提權實例的檔案被刪會 crash。
-      const exe = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
-      const psCmd = `Start-Process -FilePath '${exe.replace(/'/g, "''")}' -ArgumentList '--engine-autostart' -Verb RunAs`;
-      const cp = spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', psCmd], { windowsHide: true });
+      const { cmd, args } = el.relaunchCommand(platform.autostart.launchPath(), ['--engine-autostart']);
+      const cp = spawn(cmd, args, { windowsHide: true });
       cp.on('exit', (code) => {
         if (code === 0) { finish({ ok: true }); setTimeout(() => app.exit(0), 700); }
         else { finish({ ok: false, error: '提權被拒或被公司政策封鎖，分流引擎無法啟動（app 其餘功能不受影響）。' }); }
@@ -818,7 +982,13 @@ ipcMain.handle('is-elevated', () => { setupEngine(); return engine.isElevated();
 async function ensureSplitRoutesStarted() {
   setupRouteManager();
   const split = config.getSplit();
-  const wanted = new Set([split.defaultTarget, ...split.rules.filter(r => r.on).map(r => r.target)].filter(t => t && t !== 'direct'));
+  // 規則模式要帶起規則表與預設走向用到的路由；全域模式只需要那一條
+  const wanted = new Set((split.mode === 'global'
+    ? [split.globalTarget]
+    : split.mode === 'direct'
+    ? []
+    : [split.defaultTarget, ...split.rules.filter(r => r.on !== false).map(r => r.target)]
+  ).filter(t => t && t !== 'direct' && t !== 'block'));
   for (const rid of wanted) {
     const def = config.getRoutes().find(r => r.id === rid);
     if (def && !routeManager.isRunning(rid)) {
@@ -872,6 +1042,8 @@ app.whenReady().then(async () => {
   }
 
   checkUpdatesOnStartup(); // 啟動後靜默檢查更新（僅安裝版）
+  // 規則庫自動更新（預設關閉；開啟時才連網，延後執行避免拖慢啟動）
+  setTimeout(() => maybeAutoUpdateRuleSets().catch(err => addLog('warn', 'ruleset', err.message)), 8000);
 });
 
 // 顯示主視窗：若視窗已被銷毀（minimizeToTray 關閉時關窗會銷毀它）就重建，避免 show() 一個已銷毀物件而拋錯。
@@ -887,7 +1059,7 @@ app.on('window-all-closed', () => {
 });
 
 // Electron 不會 await before-quit 的 async handler，所以先擋下結束、把清理做完再真正退出。
-// 特別是要讓 engine.stop() 有時間移除 TUN、winProxy.disableProxy() 一定要跑到（否則結束後上不了網）。
+// 特別是要讓 engine.stop() 有時間移除 TUN、systemProxy.disable() 一定要跑到（否則結束後上不了網）。
 let _quitting = false;
 app.on('before-quit', (e) => {
   if (_quitting) return;                              // 第二次進來（清理已完成）→ 放行結束
@@ -898,6 +1070,6 @@ app.on('before-quit', (e) => {
     try { if (engine) await engine.stop(); } catch (err) {}          // 先關引擎 → 讓 sing-box 移除 TUN
     try { if (routeManager) await routeManager.stopAll(); } catch (err) {}
     try { if (proxyRunning) await stopProxyServers(); } catch (err) {}
-    try { if (systemProxyEnabled) winProxy.disableProxy(); } catch (err) {}
+    try { if (systemProxyEnabled) systemProxy.disable(); } catch (err) {}
   })().finally(() => { clearTimeout(force); app.exit(0); });
 });

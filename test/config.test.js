@@ -173,3 +173,104 @@ describe('config — settings', () => {
     expect(config.getSettings().autoConnect).toBe(true);
   });
 });
+
+describe('config — 分流設定（schema 2：單一規則表 + 可組合條件）', () => {
+  test('全新設定：空規則表、預設直連、規則模式、內網保護預設開', () => {
+    expect(config.getSplit()).toEqual({
+      schema: 2, rules: [], defaultTarget: 'direct', udp: false,
+      mode: 'rule', globalTarget: null, lanDirect: true,
+    });
+  });
+
+  test('mode 只接受 rule / global / direct，其他值退回 rule', () => {
+    config.saveSplit({ mode: 'global', globalTarget: 'r-jp' });
+    expect(config.getSplit()).toMatchObject({ mode: 'global', globalTarget: 'r-jp' });
+    config.saveSplit({ mode: 'nonsense' });
+    expect(config.getSplit().mode).toBe('rule');
+  });
+
+  test('lanDirect 可停用，但舊設定沒有這欄位時預設開啟', () => {
+    config.saveSplit({ lanDirect: false });
+    expect(config.getSplit().lanDirect).toBe(false);
+    config.updateSettings({ split: { schema: 2, rules: [], defaultTarget: 'direct' } });
+    expect(config.getSplit().lanDirect).toBe(true);
+  });
+
+  test('saveSplit 只覆寫傳入的欄位，其餘保留', () => {
+    config.saveSplit({ rules: [{ id: 'a', name: 'Chrome', on: true, target: 'r1', when: { app: { match: 'name', value: 'chrome.exe' } } }] });
+    const s = config.saveSplit({ udp: true });
+    expect(s.rules).toHaveLength(1);
+    expect(s.udp).toBe(true);
+    expect(config.getSplit().rules[0].when.app.value).toBe('chrome.exe');
+  });
+
+  test('一條規則可同時帶多種條件（AND）', () => {
+    const rule = { id: 'c', name: '複合', on: true, target: 'r-jp',
+      when: { app: { match: 'name', value: 'chrome.exe' }, dest: { match: 'suffix', value: 'netflix.com' }, port: '443', network: 'tcp' } };
+    config.saveSplit({ rules: [rule] });
+    expect(config.getSplit().rules[0].when).toEqual(rule.when);
+  });
+
+  test('規則庫相關設定有預設值（預設不自動連網更新）', () => {
+    const s = config.getSettings();
+    expect(s.rulesetAutoUpdate).toBe(false);
+    expect(s.rulesetUpdateDays).toBe(7);
+    expect(s.rulesetDetourRouteId).toBeNull();
+  });
+});
+
+describe('config — schema 1 → 2 遷移', () => {
+  // 舊設定：兩張分開的表（程式規則 / 網域規則）+ ruleOrder 開關
+  const legacy = (extra = {}) => ({
+    rules: [
+      { id: 'a1', name: 'Chrome', exe: 'chrome.exe', match: 'name', target: 'r1', on: true },
+      { id: 'a2', name: 'Steam', path: 'C:\S\steam.exe', match: 'path', target: 'direct', on: false },
+    ],
+    netRules: [{ id: 'n1', name: '台灣', match: 'ruleset', value: 'geoip-tw', target: 'direct', on: true }],
+    defaultTarget: 'r1', udp: true, ...extra,
+  });
+
+  test('舊的兩張表無損合併成一張，程式規則在前（對應舊的 app-first 預設）', () => {
+    config.updateSettings({ split: legacy() });
+    const s = config.getSplit();
+    expect(s.schema).toBe(2);
+    expect(s.rules.map(r => r.id)).toEqual(['a1', 'a2', 'n1']);
+    expect(s.rules[0].when).toEqual({ app: { match: 'name', value: 'chrome.exe' } });
+    expect(s.rules[1].when).toEqual({ app: { match: 'path', value: 'C:\S\steam.exe' } });
+    expect(s.rules[2].when).toEqual({ dest: { match: 'ruleset', value: 'geoip-tw' } });
+    // 其餘欄位照搬
+    expect(s.defaultTarget).toBe('r1');
+    expect(s.udp).toBe(true);
+    expect(s.rules[1].on).toBe(false);   // 停用狀態要保住
+    expect(s.rules[0].target).toBe('r1');
+  });
+
+  test('ruleOrder=net-first 的舊設定：網域規則排到前面', () => {
+    config.updateSettings({ split: legacy({ ruleOrder: 'net-first' }) });
+    expect(config.getSplit().rules.map(r => r.id)).toEqual(['n1', 'a1', 'a2']);
+  });
+
+  test('遷移會寫回設定檔，且不重複遷移（第二次讀是同一份）', () => {
+    config.updateSettings({ split: legacy() });
+    const first = config.getSplit();
+    const second = config.getSplit();
+    expect(second).toEqual(first);
+    expect(config.getSettings().split.schema).toBe(2);
+  });
+
+  test('遷移後不再留下舊欄位', () => {
+    config.updateSettings({ split: legacy() });
+    config.getSplit();
+    config.saveSplit({ udp: false });
+    const stored = config.getSettings().split;
+    expect(stored.netRules).toBeUndefined();
+    expect(stored.ruleOrder).toBeUndefined();
+  });
+
+  test('只有程式規則的舊設定（沒碰過網域功能）也能遷移', () => {
+    config.updateSettings({ split: { rules: [{ id: 'a1', exe: 'chrome.exe', match: 'name', target: 'r1', on: true }], defaultTarget: 'direct' } });
+    const s = config.getSplit();
+    expect(s.rules).toHaveLength(1);
+    expect(s.rules[0].name).toBe('chrome.exe'); // 舊資料沒有 name → 用 exe 補
+  });
+});
