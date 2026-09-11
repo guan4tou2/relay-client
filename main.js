@@ -84,13 +84,14 @@ function fileLog(entry) {
   } catch (e) { /* 落地失敗不影響 app 運作 */ }
 }
 
-function addLog(level, source, message, detail) {
+function addLog(level, source, message, detail, meta) {
   const entry = {
     time: new Date().toISOString(),
     level,
     source,
     message,
-    detail: detail || null
+    detail: detail || null,
+    ...(meta ? { meta } : {})   // 結構化附加資料（例如命中了哪一條規則）
   };
   logBuffer.push(entry);
   if (logBuffer.length > LOG_MAX) logBuffer.shift();
@@ -740,6 +741,77 @@ ipcMain.handle('delete-route', async (_e, id) => {
 // ===== Per-app 分流引擎（sing-box TUN）=====
 // sing-box 的良性噪音：http/socks 上游本就不帶 UDP，QUIC/UDP 會被拒並記 ERROR，但不影響功能 → 不進紀錄。
 const ENGINE_LOG_NOISE = /UDP is not supported by outbound/i;
+// ===== 命中追蹤 =====
+// 引擎跑在 log.level=debug，每條連線會印：
+//   [ID] inbound/tun[tun-in]: inbound connection to HOST:PORT
+//   [ID] router: sniffed protocol: tls, domain: HOST      （有嗅探時才有，網域比 inbound 那行準）
+//   [ID] router: match[N] <條件> => route(TAG) | reject    （沒命中就完全沒有這行）
+//   [ID] outbound/xxx: outbound connection to ...         （連線定案）
+// match[N] 的 N 就是我們自己產的 route.rules 索引 → engine.ruleIndex 還原成使用者的規則。
+// 這些行只解析、不寫進 app.log（debug 很吵，會把紀錄灌爆）。
+const ENGINE_LOG_PARSED = /router: (match\[|sniffed protocol)|inbound connection to|outbound connection to|connection closed/;
+const hitCounts = new Map();      // ruleId | '__default__' | '__lan__' → 次數
+const pendingConns = new Map();   // 連線 ID → { host, info }
+let hitsDirty = false;
+
+function resetHits() { hitCounts.clear(); pendingConns.clear(); hitsDirty = true; }
+
+// 餵一條 sing-box debug 行進來；回傳 true 代表「已消化，不要寫進紀錄」
+function consumeEngineLine(line) {
+  if (!ENGINE_LOG_PARSED.test(line)) return false;
+  const id = (line.match(/\[(\d{4,}) /) || [])[1];
+  if (!id) return true;
+
+  let m = line.match(/inbound connection to (\S+)/);
+  if (m) { pendingConns.set(id, { host: m[1], info: null }); return true; }
+
+  m = line.match(/sniffed protocol: [^,]+, domain: (\S+)/);
+  if (m) {
+    const c = pendingConns.get(id);
+    if (c) { const port = c.host.includes(':') ? ':' + c.host.split(':').pop() : ''; c.host = m[1] + port; }
+    return true;
+  }
+
+  m = line.match(/router: match\[(\d+)\]/);
+  if (m) {
+    const c = pendingConns.get(id);
+    const info = engine && engine.ruleIndex && engine.ruleIndex[Number(m[1])];
+    if (c && info && info.kind !== 'sniff') c.info = info;   // sniff 不是使用者規則
+    return true;
+  }
+
+  if (line.includes('outbound connection to') || line.includes('connection closed')) {
+    const c = pendingConns.get(id);
+    if (c) { pendingConns.delete(id); recordHit(c); }
+    return true;
+  }
+  return true;
+}
+
+function recordHit(conn) {
+  const info = conn.info;
+  if (info && info.kind === 'self') return;   // app 自己的流量不算進統計
+  const key = !info ? '__default__' : info.kind === 'lan' ? '__lan__' : info.id;
+  hitCounts.set(key, (hitCounts.get(key) || 0) + 1);
+  hitsDirty = true;
+
+  const split = config.getSplit();
+  const rule = info && info.kind === 'rule' ? split.rules.find(r => r.id === info.id) : null;
+  addLog('info', 'split', `連線 ${conn.host}`, null, {
+    matched: !!info,
+    ruleId: rule ? rule.id : null,
+    ruleName: !info ? '預設' : info.kind === 'lan' ? '本機與內網' : (rule && rule.name) || '未命名規則',
+    ruleIndex: rule ? split.rules.indexOf(rule) + 1 : 0,
+    target: info ? (info.kind === 'lan' ? 'direct' : info.target) : split.defaultTarget,
+  });
+}
+
+// 命中次數每秒推一次給 UI（避免每條連線都發一次 IPC）
+setInterval(() => {
+  if (!hitsDirty || !mainWindow || mainWindow.isDestroyed()) return;
+  hitsDirty = false;
+  mainWindow.webContents.send('engine-hits', Object.fromEntries(hitCounts));
+}, 1000).unref();
 
 function setupEngine() {
   if (engine) return;
@@ -750,6 +822,7 @@ function setupEngine() {
     for (const raw of String(chunk).split(/\r?\n/)) {
       const line = raw.replace(/\x1b\[[0-9;]*m/g, '').trim();
       if (!line || ENGINE_LOG_NOISE.test(line)) continue;
+      if (consumeEngineLine(line)) continue;   // 命中 / 連線相關 → 只統計，不進紀錄
       addLog('debug', 'engine', line.slice(0, 400));
     }
   });
@@ -945,16 +1018,19 @@ async function maybeAutoUpdateRuleSets() {
 ipcMain.handle('engine-start', async () => {
   setupEngine();
   await ensureSplitRoutesStarted(); // 引擎要用的路由先帶起來，避免 TUN 往死掉的本地埠送流量
+  resetHits();
   const r = await engine.start(engineParams());
   sendEngineStatus();
   return r;
 });
 ipcMain.handle('engine-stop', async () => {
+  resetHits();
   if (engine) await engine.stop();
   sendEngineStatus();
   return { ok: true };
 });
 ipcMain.handle('get-engine-status', () => { setupEngine(); return engine.status(); });
+ipcMain.handle('get-engine-hits', () => Object.fromEntries(hitCounts));
 
 // 用到才提權。提權方式因平台而異（adapter 的 engineElevation.strategy）：
 //   relaunch-app（Windows）：以系統管理員重啟自己，帶旗標讓新實例自動啟動引擎與上游路由

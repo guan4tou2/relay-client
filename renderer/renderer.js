@@ -15,10 +15,10 @@ const sUser = s => (s && s.username) || '';
 const sPass = s => (s && s.password) || '';
 
 const PROTO = {
-  socks5: { label: 'SOCKS5', name: '帳密認證 (RFC 1929)', port: 1080, auth: 'userpass', hint: '透過 socks 套件握手，支援 RFC 1929 帳密認證。', authTitle: '帳密認證', authDesc: 'RFC 1929 Username / Password' },
-  socks4: { label: 'SOCKS4', name: '無認證機制', port: 1080, auth: 'none', hint: 'SOCKS4 協定沒有認證機制，僅能附帶 User ID 供伺服器辨識。', authTitle: 'User ID', authDesc: '協定無認證，僅辨識用字串' },
-  http: { label: 'HTTP', name: 'Basic 認證', port: 8080, auth: 'basic', hint: '以 CONNECT 建立通道，帶入 Proxy-Authorization: Basic。', authTitle: 'Basic 認證', authDesc: 'Proxy-Authorization: Basic' },
-  https: { label: 'HTTPS', name: 'Basic 認證（TLS）', port: 8443, auth: 'basic', hint: '先完成 TLS 握手再送出 CONNECT，認證方式同 HTTP Basic。', authTitle: 'Basic 認證', authDesc: 'Proxy-Authorization: Basic（TLS）' },
+  socks5: { label: 'SOCKS5', name: '帳號密碼認證', port: 1080, auth: 'userpass', hint: '支援帳號密碼認證。', authTitle: '帳號密碼', authDesc: '帳號與密碼' },
+  socks4: { label: 'SOCKS4', name: '無認證機制', port: 1080, auth: 'none', hint: '沒有密碼機制，只能附帶一個識別字串。', authTitle: 'User ID', authDesc: '沒有密碼，只有識別字串' },
+  http: { label: 'HTTP', name: '帳號密碼認證', port: 8080, auth: 'basic', hint: '支援帳號密碼認證。', authTitle: '帳號密碼', authDesc: '帳號與密碼' },
+  https: { label: 'HTTPS', name: '帳號密碼認證（加密）', port: 8443, auth: 'basic', hint: '先建立加密連線再送出帳密。', authTitle: '帳號密碼', authDesc: '帳號密碼（加密傳輸）' },
 };
 const LEVELS = { info: '#4470c4', warn: '#d98b1f', error: '#d9534a', debug: '#9a9aa2' };
 const SRC_TITLE = { system: '系統', test: '連線測試', route: '路由', 'socks-relay': 'SOCKS 中繼', 'http-bridge': 'HTTP 橋接', 'win-proxy': '系統代理' };
@@ -53,7 +53,7 @@ const state = {
   splitSimHost: '', splitSimExe: '', splitSim: null, splitHitId: null,
   splitDraft: { name: '', when: {}, target: 'direct', error: '' }, splitOpenConds: {},
   splitPendingDel: null, splitDrag: null, splitUac: false, splitUacSeen: false,
-  splitSub: 'rules', setsSearch: '', setsBusy: null, setsPendingDel: null,
+  splitSub: 'rules', setsSearch: '', setsBusy: null, setsPendingDel: null, splitHits: {},
 };
 
 // ------- session 小工具 -------
@@ -172,6 +172,13 @@ function mount() {
 
   document.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); if (state.tab === 'split') openSplitSheet(); else openRoute(); }
+    // Ctrl+1–6 切分頁；Ctrl+L 用選取的路由開瀏覽器
+    if ((e.metaKey || e.ctrlKey) && /^[1-6]$/.test(e.key)) {
+      e.preventDefault();
+      const order = ['dashboard', 'split', 'servers', 'logs', 'creds', 'settings'];
+      showTab(order[Number(e.key) - 1]);
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'l') { e.preventDefault(); launchBrowserFor(state.sel); }
     if (e.code === 'Space' && state.tab !== 'split' && !state.routeSheet && !state.srvSheet && !state.alert && e.target === document.body) { e.preventDefault(); togglePower(); }
     if (e.key === 'Escape') { closeMenu(); if (state.splitUac) closeSplitUac(); else if (state.splitSheet) closeSplitSheet(); else if (state.alert) closeAlert(); else if (state.srvSheet) closeSrvSheet(); else if (state.routeSheet) closeRouteSheet(); }
   });
@@ -194,12 +201,24 @@ function renderTabs() {
 function syncTitlebar() {
   if (state.tab === 'split') { syncSplitTitlebar(); renderTabs(); return; }
   const runIds = runningRouteIds(), actIds = activeRouteIds();
-  const st = $('status');
-  if (runIds.length > 1) { st.textContent = `${runIds.length} 條路由執行中`; st.style.color = 'var(--good)'; }
-  else if (runIds.length === 1) { st.textContent = `執行中 · ${(state.routes.find(r => r.id === runIds[0]) || {}).label || ''}`; st.style.color = 'var(--good)'; }
-  else if (actIds.length) { st.textContent = '正在啟動…'; st.style.color = 'var(--amber)'; }
-  else { st.textContent = '未執行'; st.style.color = 'var(--text3)'; }
+  const st = $('status'); if (!st) return;
+  // 三段狀態句：路由 · 系統代理 · 斷線保護。各段自己著色、可點跳分頁。
+  const segs = [
+    { label: runIds.length ? `${runIds.length} 條路由執行中` : actIds.length ? '路由連線中' : '沒有路由執行',
+      color: runIds.length ? 'var(--good)' : actIds.length ? 'var(--amber)' : 'var(--text2)', tab: 'dashboard' },
+    { label: runIds.length ? '系統代理' + (state.sysProxy ? '已開' : '關閉') : '系統代理關閉',
+      color: state.sysProxy && runIds.length ? 'var(--good)' : 'var(--text2)', tab: 'dashboard' },
+    state.killswitch && state.killswitch.tripped
+      ? { label: '斷線保護已觸發', color: 'var(--red)', tab: 'split' }
+      : { label: state.settings.killSwitch ? '斷線保護就緒' : '斷線保護停用',
+          color: state.settings.killSwitch && splitRunning() ? 'var(--good)' : 'var(--text2)', tab: 'settings' },
+  ];
+  st.innerHTML = segs.map((g, i) =>
+    `${i ? '<span style="color:var(--text3);margin:0 6px">·</span>' : ''}<button data-stseg="${g.tab}" style="border:none;background:transparent;padding:0;cursor:pointer;font:inherit;color:${g.color}">${esc(g.label)}</button>`).join('');
+  st.style.color = 'var(--text2)';
+  st.querySelectorAll('[data-stseg]').forEach(b => b.onclick = () => showTab(b.dataset.stseg));
   $('markArc').setAttribute('stroke', runIds.length ? '#7fe3bd' : 'rgba(255,255,255,.55)');
+  syncAddButton();
   renderTabs();
 }
 
@@ -227,13 +246,19 @@ function showTab(tab) {
 // =====================================================================================
 // 側邊欄：路由清單
 // =====================================================================================
+// 這條路由被幾條分流規則指到（MERGE §3-3）。刪除時要提醒影響範圍。
+function routeRefLabel(routeId) {
+  const n = state.splitRules.filter(r => r.on !== false && r.target === routeId).length;
+  return n ? `${n} 條規則` : '';
+}
+
 function renderSidebar() {
   const runIds = runningRouteIds();
   $('sideCount').textContent = `路由 · ${state.routes.length}`;
   $('sideRunning').textContent = runIds.length ? runIds.length + ' 執行中' : '';
   const list = $('routeList');
   if (state.routes.length === 0) {
-    list.innerHTML = `<div style="padding:20px 10px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">尚無路由<br>從右側開始新增</div>`;
+    list.innerHTML = `<div style="padding:20px 10px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">還沒有路由<br>從右側開始新增</div>`;
     return;
   }
   list.innerHTML = state.routes.map(r => {
@@ -242,6 +267,7 @@ function renderSidebar() {
     const dot = conn ? 'var(--good)' : busy ? 'var(--amber)' : fail ? 'var(--red)' : 'var(--text3)';
     const chained = r.hops.length > 1;
     const exitName = r.hops.length ? srvName(r.hops[r.hops.length - 1]) : '未設跳點';
+    const refs = routeRefLabel(r.id);   // 「2 條規則」——被分流規則引用時取代出口名顯示
     const powerBg = conn ? 'var(--good)' : busy ? 'var(--amber)' : 'var(--fill2)';
     const powerColor = (conn || busy) ? '#fff' : 'var(--text2)';
     const powerTip = conn ? '停止這條路由' : busy ? '正在啟動…' : '啟動這條路由';
@@ -257,13 +283,13 @@ function renderSidebar() {
       <div style="display:flex;align-items:center;gap:6px">
         <span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 5px;border-radius:5px;background:var(--fill2);color:var(--text2);flex-shrink:0">${r.kind === 'http' ? 'HTTP' : 'SOCKS5'}</span>
         <span style="font-size:11.5px;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">127.0.0.1:${esc(String(r.localPort))}</span>
-        <span style="margin-left:auto;font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:96px">${esc(exitName)}</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:96px">${esc(refs || exitName)}</span>
       </div>
       ${active ? `<div style="display:flex;gap:6px;padding-top:2px">
         <button class="hvBright" data-act="power" title="${powerTip}" style="flex:1;height:26px;border:none;border-radius:7px;background:${powerBg};color:${powerColor};cursor:pointer;display:flex;align-items:center;justify-content:center">${POWER_ICON}</button>
-        <button class="hvAcc" data-act="browser" title="用這條路由開啟瀏覽器（只有這個視窗走代理，免 TUN／免提權）" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><line x1="3" y1="12" x2="21" y2="12"></line><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"></path></svg></button>
         <button class="hvAcc" data-act="edit" title="編輯路由" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
-        <button class="hvRed" data-act="del" title="${pend ? '再按一次確認刪除' : '刪除路由'}" style="flex:1;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
+        <button class="hvAcc" data-act="browser" title="以此路由開啟瀏覽器（Ctrl+L）" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></button>
+        <button class="hvRed" data-act="del" title="${pend ? '再按一次確認刪除' + (refs ? '（' + refs + '將失效）' : '') : '刪除路由'}" style="flex:1;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
       </div>` : ''}
     </div>`;
   }).join('');
@@ -326,7 +352,7 @@ function renderGuide() {
       </div>
       <div style="display:flex;gap:10px">
         <button id="guideAdd" class="hvBright" style="height:38px;padding:0 20px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:13.5px;font-weight:600;cursor:pointer">新增路由</button>
-        <button id="guideImport" class="hvFill2" style="height:38px;padding:0 20px;border:1px solid var(--sep);border-radius:10px;background:var(--card);color:var(--text);font-size:13.5px;font-weight:600;cursor:pointer">匯入設定</button>
+        <button id="guideImport" class="hvFill2" style="height:38px;padding:0 20px;border:1px solid var(--sep);border-radius:10px;background:var(--card);color:var(--text);font-size:13.5px;font-weight:600;cursor:pointer">匯入</button>
       </div>
       <span style="font-size:11.5px;color:var(--text3)">⌘/Ctrl + N 新增 · 空白鍵啟動選取的路由</span>
     </div>`;
@@ -654,7 +680,7 @@ function renderServers() {
       <div style="display:flex;align-items:flex-end;gap:12px">
         <div style="display:flex;flex-direction:column;gap:3px">
           <span style="font-size:16px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">伺服器</span>
-          <span style="font-size:12px;color:var(--text2)">上游節點清單；路由再從這裡挑跳點組成鏈路</span>
+          <span style="font-size:12px;color:var(--text2)">你的上游代理。路由會從這裡挑跳點組成鏈路。</span>
         </div>
         <button id="srvAdd" class="hvBright" style="margin-left:auto;height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增伺服器</button>
       </div>
@@ -663,7 +689,7 @@ function renderServers() {
           <span style="width:150px;flex-shrink:0;white-space:nowrap">名稱</span><span style="width:158px;flex-shrink:0;white-space:nowrap">位址</span><span style="width:78px;flex-shrink:0;white-space:nowrap">協定</span><span style="width:74px;flex-shrink:0;white-space:nowrap">認證</span><span style="flex:1;min-width:0;padding-right:12px;box-sizing:border-box;white-space:nowrap">測試結果</span><span style="width:96px;flex-shrink:0"></span>
         </div>
         ${rows}
-        ${state.servers.length === 0 ? `<div style="padding:44px 20px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">尚無伺服器<br>新增後即可組成路由</div>` : ''}
+        ${state.servers.length === 0 ? `<div style="padding:44px 20px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">還沒有伺服器<br>新增後即可組成路由</div>` : ''}
       </div>
     </div>`;
 
@@ -743,6 +769,16 @@ function logGroupTitle(source) {
   return { title: SRC_TITLE[source] || source, meta: '' };
 }
 
+// 命中徽章：命中規則＝藍底「命中：第 N 條 名稱」、未命中＝灰底「預設」、封鎖＝紅底
+function logHitBadge(l) {
+  const m = l.meta; if (!m) return '';
+  const block = m.target === 'block';
+  const bg = block ? 'rgba(217,83,74,.14)' : m.matched ? 'var(--accent-dim)' : 'var(--fill2)';
+  const color = block ? 'var(--red)' : m.matched ? 'var(--accent)' : 'var(--text3)';
+  const label = !m.matched ? '預設' : m.ruleIndex ? `命中：第 ${m.ruleIndex} 條 ${m.ruleName}` : m.ruleName;
+  return `<button data-loghit="${esc(m.ruleId || '')}" title="跳到分流規則" style="flex-shrink:0;max-width:220px;border:none;border-radius:5px;padding:2px 7px;background:${bg};color:${color};font-size:10.5px;font-weight:600;cursor:${m.ruleId ? 'pointer' : 'default'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">${esc(label)}</button>`;
+}
+
 function renderLogList() {
   const S = state;
   const shown = S.logs.filter(l => (S.level === 'all' || l.level === S.level) && (!S.search || `${l.message} ${l.detail || ''} ${l.source}`.toLowerCase().includes(S.search.toLowerCase())));
@@ -766,11 +802,21 @@ function renderLogList() {
           <span title="${l.level}" style="width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:6px;background:${LEVELS[l.level] || LEVELS.info}"></span>
           <span style="width:88px;flex-shrink:0;color:var(--purple);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;padding-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.source)}</span>
           <span style="flex:1;min-width:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;word-break:break-word">${esc(l.message)}<span style="color:var(--text2)">${l.detail && exp ? '  ' + esc(l.detail) : ''}</span></span>
+          ${logHitBadge(l)}
           <span style="flex-shrink:0;color:var(--text3);font-size:10px;padding-top:2px">${l.detail ? (exp ? '▾' : '▸') : ''}</span>
         </div>`;
       }).join('')}
     </div>`;
   }).join('');
+  list.querySelectorAll('[data-loghit]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const id = b.dataset.loghit;
+    showTab('split');
+    if (!id) return;
+    state.splitHitId = id; renderSplitRules();
+    clearTimeout(state._splitHitT);
+    state._splitHitT = setTimeout(() => { state.splitHitId = null; renderSplitRules(); }, 2000);
+  });
   list.querySelectorAll('[data-log]').forEach(row => {
     const id = row.dataset.log;
     const l = S.logs.find(x => String(x.id) === id);
@@ -824,7 +870,7 @@ function renderCreds() {
   $('view-creds').innerHTML = `
     <div style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;align-items:flex-end;gap:12px">
-        <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:16px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">憑證庫</span><span style="font-size:12px;color:var(--text2)">儲存帳密後可在伺服器表單直接選用</span></div>
+        <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:16px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">憑證庫</span><span style="font-size:12px;color:var(--text2)">存好帳密，新增伺服器時可直接選用</span></div>
         <button id="credAdd" class="hvBright" style="margin-left:auto;height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增憑證</button>
       </div>
       <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden">
@@ -832,11 +878,11 @@ function renderCreds() {
           <span style="width:150px;flex-shrink:0;white-space:nowrap">名稱</span><span style="width:130px;flex-shrink:0;white-space:nowrap">帳號</span><span style="width:120px;flex-shrink:0;white-space:nowrap">密碼</span><span style="flex:1;min-width:0;white-space:nowrap">備註</span><span style="width:60px;flex-shrink:0"></span>
         </div>
         ${rows}
-        ${S.creds.length === 0 ? `<div style="padding:44px 20px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">尚無儲存的憑證<br>新增後可在表單一鍵帶入</div>` : ''}
+        ${S.creds.length === 0 ? `<div style="padding:44px 20px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">還沒有儲存的憑證<br>新增後即可在伺服器表單選用</div>` : ''}
       </div>
       <div style="display:flex;gap:9px;padding:12px 15px;background:var(--accent-dim);border-radius:12px;font-size:11.5px;color:var(--text2);line-height:1.65">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent);flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 8h.01M11 12h1v5h1"></path></svg>
-        <span style="text-wrap:pretty">SOCKS5 使用 RFC 1929 帳密認證；HTTP / HTTPS 使用 Basic（<span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">Proxy-Authorization</span>）。SOCKS4 協定本身不支援認證，僅有 userId 欄位。</span>
+        <span style="text-wrap:pretty">SOCKS5、HTTP 與 HTTPS 都支援帳號密碼認證。SOCKS4 沒有密碼機制，只能附帶一個識別字串給伺服器辨識。</span>
       </div>
     </div>`;
 
@@ -879,12 +925,12 @@ async function onUpdateClick() {
 
 function buildSettings() {
   const swDefs = [
-    { key: 'tray', label: '關閉時最小化到系統匣', desc: '保留背景執行與托盤圖示' },
+    { key: 'tray', label: '關閉時最小化到系統匣', desc: '保留背景執行與系統匣圖示' },
     { key: 'bootLaunch', label: '開機時自動啟動', desc: '登入 Windows 後自動啟動 RelayClient' },
-    { key: 'autostart', label: '啟動時自動套用路由', desc: 'App 啟動後自動起所有已啟用的路由' },
-    { key: 'killswitch', label: '斷線保護 (Kill-switch)', desc: '分流引擎異常中止時封鎖受保護程式，防止流量以真實 IP 外洩（用 TUN，不動防火牆）' },
+    { key: 'autostart', label: '啟動時自動套用路由', desc: 'RelayClient 啟動後自動啟動已啟用的路由' },
+    { key: 'killswitch', label: '斷線保護 (Kill-switch)', desc: '引擎異常中止時，原本走代理的程式會被封鎖，不會回退成直連' },
     { key: 'scroll', label: '紀錄自動捲動', desc: '新紀錄進來時跟隨到底部' },
-    { key: 'nodebug', label: '隱藏除錯層級', desc: '紀錄預設隔絕 debug 訊息' },
+    { key: 'nodebug', label: '隱藏除錯訊息', desc: '紀錄只顯示一般訊息與錯誤' },
   ];
   const swHtml = swDefs.map(w => `
     <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--sep)">
@@ -1436,6 +1482,7 @@ function renderAlert() {
   const a = state.alert;
   if (!a) { $('alertMount').innerHTML = ''; return; }
   const primary = a.primary || (a.kind === 'nohop' ? '編輯路由' : '知道了');
+  const secondary = a.secondary || '取消';
   const warn = a.tone !== 'info';
   $('alertMount').innerHTML = `
     <div id="alertOverlay" style="position:absolute;inset:0;background:rgba(0,0,0,.34);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:140">
@@ -1446,13 +1493,13 @@ function renderAlert() {
         <span style="font-size:15.5px;font-weight:700;letter-spacing:-.2px">${esc(a.title)}</span>
         <span style="font-size:12.5px;color:var(--text2);line-height:1.7;text-wrap:pretty">${esc(a.body)}</span>
         <div style="display:flex;gap:9px;width:100%;padding-top:4px">
-          <button id="alertCancel" class="hvFill2" style="flex:1;height:34px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>
+          <button id="alertCancel" class="hvFill2" style="flex:1;height:34px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">${esc(secondary)}</button>
           <button id="alertPrimary" class="hvBright" style="flex:1;height:34px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">${primary}</button>
         </div>
       </div>
     </div>`;
   $('alertOverlay').onclick = e => { if (e.target === $('alertOverlay')) closeAlert(); };
-  $('alertCancel').onclick = () => closeAlert();
+  $('alertCancel').onclick = () => (a.onSecondary ? a.onSecondary() : closeAlert());
   $('alertPrimary').onclick = () => alertAction();
 }
 function closeAlert() { state.alert = null; $('alertMount').innerHTML = ''; }
@@ -1476,7 +1523,7 @@ function renderKillswitch() {
         <div style="width:46px;height:46px;border-radius:50%;background:rgba(217,83,74,.16);display:flex;align-items:center;justify-content:center;color:var(--red)">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3.5 2.8 19.5h18.4L12 3.5z"></path><path d="M12 9.5v4.5M12 17h.01"></path></svg>
         </div>
-        <span style="font-size:15.5px;font-weight:700;letter-spacing:-.2px">🛑 斷線保護已啟動</span>
+        <span style="display:flex;align-items:center;gap:8px;font-size:15.5px;font-weight:700;letter-spacing:-.2px"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--red);flex-shrink:0"><path d="M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z"></path><path d="M12 9v4M12 16h.01"></path></svg>斷線保護已啟動</span>
         <span style="font-size:12.5px;color:var(--text2);line-height:1.7;text-wrap:pretty">${esc(k.reason || '分流引擎中止')}。<br>${blockLine}</span>
         <div style="display:flex;gap:9px;width:100%;padding-top:4px">
           <button id="ksClear" class="hvFill2" style="flex:1;height:34px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">停用保護（恢復直連）</button>
@@ -1501,13 +1548,33 @@ async function exportData() {
   const servers = await window.api.getServers();
   const routes = await window.api.getRoutes();
   if (!servers.length && !routes.length) { flash('沒有可匯出的設定', 'var(--amber)'); return; }
-  const slim = { servers: servers.map(({ name, host, port, type, note }) => ({ name, host, port, type, note })), routes };
-  const blob = new Blob([JSON.stringify(slim, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = 'proxy-config.json'; a.click();
-  URL.revokeObjectURL(url);
-  flash(`已匯出 ${servers.length} 台伺服器 · ${routes.length} 條路由`);
+  // 密碼預設不匯出——匯出檔常常會被丟進聊天室或雲端硬碟。要帶的話必須明確選擇。
+  state.alert = {
+    tone: 'info', title: '匯出設定',
+    body: `將匯出 ${servers.length} 台伺服器與 ${routes.length} 條路由。代理密碼預設不包含在檔案裡。`,
+    primary: '包含密碼一起匯出', secondary: '不含密碼',
+    go: () => { closeAlert(); doExport(servers, routes, true); },
+    onSecondary: () => { closeAlert(); doExport(servers, routes, false); },
+  };
+  renderAlert();
 }
+
+function doExport(servers, routes, withPass) {
+  const pick = s => withPass
+    ? { name: s.name, host: s.host, port: s.port, type: s.type, note: s.note, username: s.username, password: s.password }
+    : { name: s.name, host: s.host, port: s.port, type: s.type, note: s.note };
+  const payload = { servers: servers.map(pick), routes, exportedAt: new Date().toISOString(), includesPasswords: !!withPass };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = withPass ? 'relayclient-config-with-passwords.json' : 'relayclient-config.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  flash(withPass
+    ? `已匯出 ${servers.length} 台伺服器（含密碼，請妥善保管）`
+    : `已匯出 ${servers.length} 台伺服器 · ${routes.length} 條路由`, withPass ? 'var(--amber)' : undefined);
+}
+
 function importData() {
   const input = document.createElement('input');
   input.type = 'file'; input.accept = '.json';
@@ -1515,19 +1582,61 @@ function importData() {
     const file = e.target.files[0]; if (!file) return;
     try {
       const data = JSON.parse(await file.text());
-      const servers = Array.isArray(data) ? data : (data.servers || []);
+      const servers = (Array.isArray(data) ? data : (data.servers || [])).filter(s => s && s.host && s.port);
       const routes = Array.isArray(data) ? [] : (data.routes || []);
-      let ns = 0;
-      for (const s of servers) { if (!s.host || !s.port) continue; await window.api.addServer({ name: s.name || s.host, host: s.host, port: s.port, type: s.type || 'socks5', username: s.username || '', password: s.password || '', note: s.note || '' }); ns++; }
-      for (const r of routes) { if (r && r.id) await window.api.saveRoute(r); }
-      state.servers = await window.api.getServers();
-      state.routes = await window.api.getRoutes();
-      if (!state.sel && state.routes[0]) state.sel = state.routes[0].id;
-      renderSidebar(); showTab(state.tab);
-      flash(`已匯入 ${ns} 台伺服器 · ${routes.length} 條路由`);
+      if (!servers.length && !routes.length) { flash('檔案裡沒有可匯入的設定', 'var(--amber)'); return; }
+
+      // 衝突偵測：同名同位址的伺服器、或同 id／同本地埠的路由
+      const curServers = await window.api.getServers();
+      const curRoutes = await window.api.getRoutes();
+      const dupServers = servers.filter(s => curServers.some(c => c.host === s.host && String(c.port) === String(s.port)));
+      const dupRoutes = routes.filter(r => curRoutes.some(c => c.id === r.id || String(c.localPort) === String(r.localPort)));
+
+      if (dupServers.length || dupRoutes.length) {
+        const parts = [];
+        if (dupServers.length) parts.push(`${dupServers.length} 台伺服器位址重複`);
+        if (dupRoutes.length) parts.push(`${dupRoutes.length} 條路由的 id 或本地埠重複`);
+        state.alert = {
+          tone: 'info', title: '匯入設定有衝突',
+          body: `${parts.join('、')}。「略過重複」會保留你現有的設定；「覆蓋」會用檔案裡的版本取代。`,
+          primary: '覆蓋現有設定', secondary: '略過重複',
+          go: () => { closeAlert(); doImport(servers, routes, true); },
+          onSecondary: () => { closeAlert(); doImport(servers, routes, false); },
+        };
+        renderAlert();
+        return;
+      }
+      doImport(servers, routes, false);
     } catch (err) { flash('匯入失敗：' + err.message, 'var(--red)'); }
   };
   input.click();
+}
+
+async function doImport(servers, routes, overwrite) {
+  try {
+    const curServers = await window.api.getServers();
+    const curRoutes = await window.api.getRoutes();
+    let ns = 0, skipped = 0;
+    for (const s of servers) {
+      const dup = curServers.find(c => c.host === s.host && String(c.port) === String(s.port));
+      if (dup && !overwrite) { skipped++; continue; }
+      const rec = { name: s.name || s.host, host: s.host, port: s.port, type: s.type || 'socks5', username: s.username || '', password: s.password || '', note: s.note || '' };
+      if (dup) await window.api.updateServer(dup.id, rec); else await window.api.addServer(rec);
+      ns++;
+    }
+    let nr = 0;
+    for (const r of routes) {
+      if (!r || !r.id) continue;
+      const dup = curRoutes.find(c => c.id === r.id || String(c.localPort) === String(r.localPort));
+      if (dup && !overwrite) { skipped++; continue; }
+      await window.api.saveRoute(r); nr++;
+    }
+    state.servers = await window.api.getServers();
+    state.routes = await window.api.getRoutes();
+    if (!state.sel && state.routes[0]) state.sel = state.routes[0].id;
+    renderSidebar(); showTab(state.tab);
+    flash(`已匯入 ${ns} 台伺服器 · ${nr} 條路由` + (skipped ? `（略過 ${skipped} 筆重複）` : ''));
+  } catch (err) { flash('匯入失敗：' + err.message, 'var(--red)'); }
 }
 
 // =====================================================================================
@@ -1635,7 +1744,11 @@ async function boot() {
   window.api.onRouteStatus(list => reconcileStatus(list));
 
   if (window.api.onEngineStatus) window.api.onEngineStatus(st => { if (st) applyEngineStatus(st); });
-  if (window.api.onKillswitch) window.api.onKillswitch(k => { if (k) { state.killswitch = k; renderKillswitch(); if (k.tripped) flash('🛑 斷線保護啟動：受保護程式已封鎖', 'var(--red)'); } });
+  if (window.api.onEngineHits) window.api.onEngineHits(h => {
+    state.splitHits = h || {};
+    if (state.tab === 'split' && state.splitSub === 'rules') renderSplitRules();
+  });
+  if (window.api.onKillswitch) window.api.onKillswitch(k => { if (k) { state.killswitch = k; renderKillswitch(); if (k.tripped) flash('斷線保護啟動：受保護程式已封鎖', 'var(--red)'); } });
   if (window.api.onUpdateStatus) window.api.onUpdateStatus(s => {
     if (!s) return;
     state.update = { status: s.status, version: s.version || state.update.version, percent: s.percent || 0 };
@@ -1827,7 +1940,7 @@ function buildSplit() {
           <span style="display:flex;color:var(--text3);flex-shrink:0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg></span>
           <input id="spSimHost" placeholder="輸入網域、IP 或 IP:埠，例如 www.netflix.com 或 10.0.0.5:3389" style="flex:1;min-width:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
           <button id="spSimExeBtn" class="hvFill2" title="只測某支程式" style="display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><span id="spSimExeLabel">不限程式</span><span style="color:var(--text3);font-size:9px">▾</span></button>
-          <button id="spSimRun" class="hvBright" style="height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">測試</button>
+          <button id="spSimRun" class="hvBright" style="height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">模擬</button>
         </div>
         <div id="spSimResult"></div>
       </div>
@@ -2009,7 +2122,7 @@ function renderSplitRules() {
     <span style="width:104px;flex-shrink:0"></span>
   </div>`;
 
-  const lanOn = state.splitLanDirect;
+  const lanOn = state.splitLanDirect, lanHits = state.splitHits.__lan__ || 0;
   const builtin = `<div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${lanOn ? 'transparent' : 'var(--fill2)'};color:${lanOn ? 'var(--text)' : 'var(--text3)'}">
     <span title="內建規則：固定在最前面，可停用、不可刪除" style="width:26px;flex-shrink:0;display:flex;align-items:center;color:var(--text3)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg></span>
     <span style="width:26px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3)">0</span>
@@ -2018,7 +2131,7 @@ function renderSplitRules() {
       <span title="${esc(LAN_CIDRS)}" style="font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">目的地 loopback · 私有網段 · link-local · mDNS（離線清單，無需下載）</span>
     </span>
     <span style="flex:1;min-width:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--text2)"></span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">直接連線（不經代理）</span></span>
-    <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3);white-space:nowrap">—</span>
+    <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:${lanHits ? 'var(--text2)' : 'var(--text3)'};white-space:nowrap">${lanHits || '—'}</span>
     <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
       <button data-lan="1" title="${lanOn ? '停用內建的本機與內網保護' : '啟用內建的本機與內網保護'}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${lanOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s"><span style="position:absolute;top:3px;left:${lanOn ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
       <span style="width:58px"></span>
@@ -2036,6 +2149,7 @@ function renderSplitRules() {
     const dot = splitTargetDot(r.target, on);
     const dotAnim = on && active && !isBlock && r.target !== 'direct' ? 'dotBeat 2.2s ease-in-out infinite' : 'none';
     const rowBg = state.splitHitId === r.id ? 'var(--accent-dim)' : on ? 'transparent' : 'var(--fill2)';
+    const hits = state.splitHits[r.id] || 0;
     return `<div data-srid="${esc(r.id)}" draggable="true" class="hvFill2" style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${rowBg};box-shadow:${miss.length ? 'inset 3px 0 0 var(--amber)' : 'none'};cursor:grab;color:${on ? 'var(--text)' : 'var(--text3)'};transition:background .3s">
       <span style="width:26px;flex-shrink:0;display:flex;align-items:center;color:var(--text3)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7h.01M8 12h.01M8 17h.01M16 7h.01M16 12h.01M16 17h.01"></path></svg></span>
       <span style="width:26px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3)">${idx}</span>
@@ -2051,7 +2165,7 @@ function renderSplitRules() {
         <span title="${esc(targetLabel)}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:${targetColor}">${esc(targetLabel)}</span>
         ${miss.length ? `<button data-sact="dl" class="hvBright" style="flex-shrink:0;height:22px;padding:0 9px;border:none;border-radius:6px;background:var(--amber);color:#fff;font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap">下載規則庫</button>` : ''}
       </span>
-      <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3);white-space:nowrap">—</span>
+      <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:${hits ? 'var(--text2)' : 'var(--text3)'};white-space:nowrap">${hits || '—'}</span>
       <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
         <button data-sact="toggle" title="${on ? '停用規則：' : '啟用規則：'}${esc(name)}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${on ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${on ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
         <button data-sact="edit" class="hvAcc" title="編輯規則" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
@@ -2075,7 +2189,7 @@ function renderSplitRules() {
       <span style="width:7px;height:7px;border-radius:50%;background:${splitTargetDot(state.splitDefaultTarget)};flex-shrink:0"></span>
       <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(splitTargetLabel(state.splitDefaultTarget))}</span>
     </span>
-    <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3);white-space:nowrap">—</span>
+    <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:${state.splitHits.__default__ ? 'var(--text2)' : 'var(--text3)'};white-space:nowrap">${state.splitHits.__default__ || '—'}</span>
     <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end"><button id="spDefaultChange" class="hvAccDim" style="height:26px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--accent);font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap">變更</button></span>
   </div>`;
 

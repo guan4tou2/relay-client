@@ -75,12 +75,6 @@
       "!.gitignore",
       "!package-lock.json"
     ],
-    "extraResources": [
-      {
-        "from": "engine/sing-box.exe",
-        "to": "engine/sing-box.exe"
-      }
-    ],
     "win": {
       "target": [
         {
@@ -97,7 +91,13 @@
         }
       ],
       "icon": "assets/icon.ico",
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "extraResources": [
+        {
+          "from": "engine/sing-box.exe",
+          "to": "engine/sing-box.exe"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -110,6 +110,36 @@
     },
     "portable": {
       "artifactName": "RelayClient-Portable-${version}.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Network",
+      "icon": "assets/icon.png",
+      "artifactName": "RelayClient-${version}-${arch}.${ext}",
+      "desktop": {
+        "Name": "RelayClient",
+        "Comment": "SOCKS/HTTP 代理串接與分流",
+        "Categories": "Network;"
+      },
+      "extraResources": [
+        {
+          "from": "engine/sing-box",
+          "to": "engine/sing-box"
+        }
+      ]
     }
   }
 }

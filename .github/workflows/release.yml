@@ -15,6 +15,7 @@ env:
 
 jobs:
   build:
+    name: Windows
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -67,3 +68,49 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: gh release edit "${{ github.ref_name }}" --draft=false --latest
+
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Sync app version to tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          npm version "$v" --no-git-tag-version --allow-same-version
+          echo "Building version $v"
+
+      - name: Fetch sing-box engine (TUN / gVisor)
+        run: |
+          set -euo pipefail
+          v="${{ env.SING_BOX_VERSION }}"
+          name="sing-box-$v-linux-amd64"
+          curl -fsSL -o sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v$v/$name.tar.gz"
+          tar -xzf sb.tar.gz
+          mkdir -p engine
+          cp "$name/sing-box" engine/sing-box
+          chmod +x engine/sing-box
+          engine/sing-box version
+          # sanity：app 用 stack "gvisor"，確認這顆 binary 吃得下
+          cat > sbcheck.json <<'JSON'
+          {"log":{"level":"warn"},"inbounds":[{"type":"tun","tag":"t","interface_name":"proxyclient-tun","address":["172.19.0.1/30"],"mtu":9000,"auto_route":true,"strict_route":false,"stack":"gvisor"}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct","auto_detect_interface":true}}
+          JSON
+          engine/sing-box check -c sbcheck.json
+
+      - name: Build & publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --linux --publish always
