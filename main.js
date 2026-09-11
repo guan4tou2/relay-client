@@ -665,6 +665,14 @@ ipcMain.handle('launch-browser', async (_e, routeId) => {
     const args = [
       `--proxy-server=${scheme}://127.0.0.1:${r.localPort}`,
       `--user-data-dir=${profileDir}`,
+      // 防洩漏（這兩個是安全性，不是體感功能）：
+      //   host-resolver-rules：不讓瀏覽器自己用系統 DNS 解析，全部交給代理解析。
+      //     少了它，即使連線走代理，DNS 查詢仍會從真實 IP 發出，等於暴露你在看哪些網站。
+      //     EXCLUDE 127.0.0.1 是必要的——否則連本地中繼自己都解析不到。
+      //   force-webrtc-ip-handling-policy：擋掉 WebRTC 的非代理 UDP 通道，
+      //     那是繞過 proxy 直接洩漏真實 IP 最經典的一條路。
+      '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1',
+      '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
       '--no-first-run', '--no-default-browser-check', 'about:blank',
     ];
     const child = spawn(browser.path, args, { detached: true, stdio: 'ignore', windowsHide: false });
@@ -720,6 +728,11 @@ ipcMain.handle('save-route', (_e, route) => {
 ipcMain.handle('delete-route', async (_e, id) => {
   if (routeManager) await routeManager.stop(id);
   config.setRoutes(config.getRoutes().filter(r => r.id !== id));
+  // 這條路由的瀏覽器 profile（cookie / 登入狀態）也一併清掉，避免遺留可識別的資料
+  try {
+    const dir = path.join(app.getPath('userData'), 'browser-profiles', String(id).replace(/[^\w.-]/g, '_'));
+    if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); addLog('info', 'launch', `已清除路由 ${id} 的瀏覽器 profile`); }
+  } catch (e) { addLog('warn', 'launch', `清除瀏覽器 profile 失敗：${e.message}`); }
   sendRouteStatus();
   return config.getRoutes();
 });
