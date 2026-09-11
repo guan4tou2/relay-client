@@ -53,6 +53,7 @@ const state = {
   splitSimHost: '', splitSimExe: '', splitSim: null, splitHitId: null,
   splitDraft: { name: '', when: {}, target: 'direct', error: '' }, splitOpenConds: {},
   splitPendingDel: null, splitDrag: null, splitUac: false, splitUacSeen: false,
+  splitSub: 'rules', setsSearch: '', setsBusy: null, setsPendingDel: null,
 };
 
 // ------- session 小工具 -------
@@ -181,7 +182,8 @@ function mount() {
 // 標題列分頁 + 狀態
 // =====================================================================================
 function renderTabs() {
-  const tabs = [['dashboard', '總覽'], ['servers', '伺服器'], ['logs', '紀錄'], ['creds', '憑證'], ['settings', '設定'], ['split', '分流']];
+  // v7 定案的順序：先選出口（路由）→ 再定規則（分流）→ 再看結果（紀錄）
+  const tabs = [['dashboard', '路由'], ['split', '分流'], ['servers', '伺服器'], ['logs', '紀錄'], ['creds', '憑證'], ['settings', '設定']];
   $('tabseg').setAttribute('role', 'tablist');
   $('tabseg').innerHTML = tabs.map(([k, label]) =>
     `<button data-tab="${k}" role="tab" aria-selected="${state.tab === k}" aria-label="${label}" style="border:none;cursor:pointer;padding:6px 13px;border-radius:7px;font-size:12.5px;${segCss(state.tab === k)};transition:background .18s,color .18s;white-space:nowrap;flex-shrink:0">${label}</button>`
@@ -914,6 +916,30 @@ function buildSettings() {
       </div>
 
       <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="font-size:11.5px;font-weight:600;color:var(--text3);letter-spacing:.4px;padding-left:4px;white-space:nowrap">規則庫</span>
+        <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden">
+          <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--sep)">
+            <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">自動更新規則庫</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px;text-wrap:pretty">開啟後會定期連網下載最新的地區與分類資料。關閉時本程式完全不連外。</div></div>
+            <button data-sw="rsauto" role="switch" aria-checked="false" aria-label="自動更新規則庫" style="width:46px;height:28px;border-radius:14px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s;flex-shrink:0">
+              <span style="position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
+            </button>
+          </div>
+          <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--sep)">
+            <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">更新頻率</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">兩次檢查之間最少間隔</div></div>
+            <div id="setRsDaysSeg" style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px"></div>
+          </div>
+          <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--sep)">
+            <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">下載時經由</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px;text-wrap:pretty">GitHub 連不上時，可讓規則庫改走某條路由下載。</div></div>
+            <button id="setRsDetour" class="hvFill2" style="display:flex;align-items:center;gap:7px;height:30px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><span id="setRsDetourLabel">直連</span><span style="color:var(--text3);font-size:9px">▾</span></button>
+          </div>
+          <div style="padding:13px 16px;display:flex;align-items:center;gap:14px">
+            <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">上次檢查</div><div id="setRsLast" style="font-size:11.5px;color:var(--text2);margin-top:2px">尚未檢查</div></div>
+            <button id="setRsCheck" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0">立即檢查</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:8px">
         <span style="font-size:11.5px;font-weight:600;color:var(--text3);letter-spacing:.4px;padding-left:4px;white-space:nowrap">資料</span>
         <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:13px 16px;display:flex;align-items:center;gap:14px">
           <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">匯入 / 匯出設定</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">以 JSON 備份伺服器與路由（不含密碼）</div></div>
@@ -939,6 +965,18 @@ function buildSettings() {
   $('setExport').onclick = () => exportData();
   $('setImport').onclick = () => importData();
   $('setUpdate').onclick = onUpdateClick;
+  $('setRsDetour').onclick = e => { e.stopPropagation(); openMenu('rs-detour', $('setRsDetour')); };
+  $('setRsCheck').onclick = async () => {
+    $('setRsCheck').textContent = '檢查中…';
+    try {
+      const res = await window.api.rulesetUpdateAll();
+      const ok = (res || []).filter(r => r.ok).length;
+      flash((res || []).length ? `規則庫更新：${ok} / ${res.length} 成功` : '沒有已安裝的規則庫');
+      const st = await window.api.getSettings(); if (st) state.settings = st;
+    } catch (e) { flash('檢查失敗：' + e.message, 'var(--red)'); }
+    $('setRsCheck').textContent = '立即檢查';
+    refreshSettings();
+  };
   $('view-settings').querySelectorAll('[data-sw]').forEach(b => b.onclick = () => toggleSwitch(b.dataset.sw));
   renderThemeSeg();
 }
@@ -969,7 +1007,8 @@ function toggleSwitch(key) {
     }).catch(e => { flash('設定開機啟動失敗：' + e.message, 'var(--red)'); });
     return;
   }
-  if (key === 'tray') state.settings.minimizeToTray = !(state.settings.minimizeToTray !== false);
+  if (key === 'rsauto') { state.settings.rulesetAutoUpdate = !state.settings.rulesetAutoUpdate; }
+  else if (key === 'tray') state.settings.minimizeToTray = !(state.settings.minimizeToTray !== false);
   else if (key === 'autostart') state.settings.autoStartRoutes = !(state.settings.autoStartRoutes !== false);
   else if (key === 'killswitch') state.settings.killSwitch = !state.settings.killSwitch;
   else localStorage.setItem('sw_' + key, localStorage.getItem('sw_' + key) === '1' ? '0' : '1');
@@ -980,6 +1019,7 @@ function swOn(key) {
   if (key === 'bootLaunch') return !!state.bootLaunch;
   if (key === 'autostart') return state.settings.autoStartRoutes !== false;
   if (key === 'killswitch') return !!state.settings.killSwitch;
+  if (key === 'rsauto') return !!state.settings.rulesetAutoUpdate;
   if (key === 'scroll') return localStorage.getItem('sw_scroll') !== '0';
   return localStorage.getItem('sw_nodebug') === '1';
 }
@@ -994,8 +1034,33 @@ function refreshSettings() {
     b.setAttribute('aria-checked', on ? 'true' : 'false'); // 無障礙：反映開關狀態
   });
   renderThemeSeg();
+  renderRsDaysSeg();
+  const det = state.settings.rulesetDetourRouteId;
+  const detRoute = det ? state.routes.find(r => r.id === det) : null;
+  if ($('setRsDetourLabel')) $('setRsDetourLabel').textContent = detRoute ? (detRoute.label || det) : '直連';
+  if ($('setRsLast')) {
+    const t = state.settings.rulesetLastCheck;
+    $('setRsLast').textContent = t ? new Date(t).toLocaleString() : '尚未檢查';
+  }
 }
-function saveSettings() { window.api.updateSettings({ minimizeToTray: state.settings.minimizeToTray, autoStartRoutes: state.settings.autoStartRoutes, killSwitch: state.settings.killSwitch, testTarget: state.settings.testTarget }); }
+
+function renderRsDaysSeg() {
+  const el = $('setRsDaysSeg'); if (!el) return;
+  const cur = Number(state.settings.rulesetUpdateDays) || 7;
+  const on = !!state.settings.rulesetAutoUpdate;
+  el.style.opacity = on ? '1' : '.45';
+  el.innerHTML = [1, 3, 7, 30].map(d =>
+    `<button data-rsd="${d}" ${on ? '' : 'disabled'} style="border:none;cursor:${on ? 'pointer' : 'not-allowed'};height:26px;padding:0 10px;border-radius:6px;font-size:12px;white-space:nowrap;${segCss(cur === d)}">${d} 天</button>`).join('');
+  if (on) el.querySelectorAll('[data-rsd]').forEach(b => b.onclick = () => { state.settings.rulesetUpdateDays = +b.dataset.rsd; saveSettings(); refreshSettings(); });
+}
+function saveSettings() {
+  window.api.updateSettings({
+    minimizeToTray: state.settings.minimizeToTray, autoStartRoutes: state.settings.autoStartRoutes,
+    killSwitch: state.settings.killSwitch, testTarget: state.settings.testTarget,
+    rulesetAutoUpdate: state.settings.rulesetAutoUpdate, rulesetUpdateDays: state.settings.rulesetUpdateDays,
+    rulesetDetourRouteId: state.settings.rulesetDetourRouteId,
+  });
+}
 
 // =====================================================================================
 // 路由編輯面板（右側滑入 470px）
@@ -1321,7 +1386,11 @@ async function saveSrvSheet() {
 function openMenu(kind, anchor) {
   if (state.menu && state.menu.kind === kind) { closeMenu(); return; }
   let items;
-  if (kind.startsWith('split-')) {
+  if (kind === 'rs-detour') {
+    items = [{ id: null, label: '直連（不繞路由）' }, ...state.routes.map(r => ({ id: r.id, label: r.label || r.id }))]
+      .map(o => ({ label: o.label, dot: o.id ? 'var(--accent)' : 'var(--text3)', check: (state.settings.rulesetDetourRouteId || null) === o.id,
+        pick: () => { state.settings.rulesetDetourRouteId = o.id; closeMenu(); saveSettings(); refreshSettings(); flash(o.id ? `規則庫將經由「${o.label}」下載` : '規則庫改為直連下載'); } }));
+  } else if (kind.startsWith('split-')) {
     items = splitMenuItems(kind);
   } else if (kind === 'hop') {
     items = state.servers.map(s => ({ badge: PROTO[sProto(s)].label, label: s.name || '未命名', check: false,
@@ -1366,11 +1435,12 @@ function closeMenu() { if (state.menu) { state.menu = null; $('menuMount').inner
 function renderAlert() {
   const a = state.alert;
   if (!a) { $('alertMount').innerHTML = ''; return; }
-  const primary = a.kind === 'nohop' ? '編輯路由' : '知道了';
+  const primary = a.primary || (a.kind === 'nohop' ? '編輯路由' : '知道了');
+  const warn = a.tone !== 'info';
   $('alertMount').innerHTML = `
     <div id="alertOverlay" style="position:absolute;inset:0;background:rgba(0,0,0,.34);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:140">
       <div id="alertBox" style="width:356px;background:var(--panel);border:1px solid var(--sep);border-radius:16px;box-shadow:0 20px 50px rgba(0,0,0,.3);padding:22px;display:flex;flex-direction:column;align-items:center;gap:13px;text-align:center;animation:fadeUp .2s ease-out">
-        <div style="width:44px;height:44px;border-radius:50%;background:rgba(217,83,74,.14);display:flex;align-items:center;justify-content:center;color:var(--red)">
+        <div style="width:44px;height:44px;border-radius:50%;background:${warn ? 'rgba(217,83,74,.14)' : 'var(--accent-dim)'};display:flex;align-items:center;justify-content:center;color:${warn ? 'var(--red)' : 'var(--accent)'}">
           <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3.5 2.8 19.5h18.4L12 3.5z"></path><path d="M12 9.5v4.5M12 17h.01"></path></svg>
         </div>
         <span style="font-size:15.5px;font-weight:700;letter-spacing:-.2px">${esc(a.title)}</span>
@@ -1387,7 +1457,8 @@ function renderAlert() {
 }
 function closeAlert() { state.alert = null; $('alertMount').innerHTML = ''; }
 function alertAction() {
-  const k = state.alert && state.alert.kind;
+  const a = state.alert, k = a && a.kind, go = a && a.go;
+  if (go) { go(); return; }   // 自訂動作自己負責關閉
   closeAlert();
   if (k === 'nohop' || k === 'conflict') openRoute(state.sel);
 }
@@ -1669,8 +1740,9 @@ function syncSplitTitlebar() {
 function syncAddButton() {
   const b = $('btnAdd'); if (!b) return;
   const isSplit = state.tab === 'split';
-  b.title = isSplit ? '新增規則 (Ctrl+N)' : '新增路由 (Ctrl+N)';
-  b.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>${isSplit ? '新增規則' : '新增路由'}`;
+  const label = !isSplit ? '新增路由' : state.splitSub === 'sets' ? '下載規則庫' : '新增規則';
+  b.title = label + ' (Ctrl+N)';
+  b.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>${label}`;
 }
 
 // ---- 進入分頁 ----
@@ -1761,6 +1833,11 @@ function buildSplit() {
       </div>
     </div>
 
+    <div id="spSubSeg" style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:9px;align-self:flex-start;flex-shrink:0"></div>
+
+    <div id="spSetsView" style="display:none"></div>
+
+    <div id="spRulesView" style="display:flex;flex-direction:column;gap:14px;align-items:stretch">
     <div id="spNotice"></div>
 
     <div id="spRulesHead" style="display:flex;align-items:center;gap:10px;flex-shrink:0">
@@ -1777,6 +1854,7 @@ function buildSplit() {
     </div>
 
     <div id="spEmpty"></div>
+    </div>
   </div>`;
 
   $('spEngineBtn').onclick = () => toggleSplitEngine();
@@ -1832,11 +1910,25 @@ function updateSplit() {
   $('spTableWrap').style.opacity = ruleMode ? '1' : '.45';
   $('spTools').style.display = state.splitRules.length >= 10 ? 'flex' : 'none';
 
+  renderSplitSubNav();
+  const onSets = state.splitSub === 'sets';
+  $('spRulesView').style.display = onSets ? 'none' : 'flex';
+  $('spSetsView').style.display = onSets ? 'block' : 'none';
+
+  if (onSets) { renderRuleSets(); return; }
   renderSplitNotice();
   renderSplitFilter();
   renderSplitRules();
   renderSplitEmpty();
   renderSplitSim();
+}
+
+function renderSplitSubNav() {
+  const el = $('spSubSeg'); if (!el) return;
+  const counts = { rules: state.splitRules.length, sets: state.splitInstalled.length };
+  el.innerHTML = [['rules', '規則'], ['sets', '規則庫']].map(([k, label]) =>
+    `<button data-ssub="${k}" style="border:none;cursor:pointer;height:28px;padding:0 13px;border-radius:7px;font-size:12.5px;white-space:nowrap;display:flex;align-items:center;gap:6px;${segCss(state.splitSub === k)}">${label}${counts[k] ? `<span style="font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">${counts[k]}</span>` : ''}</button>`).join('');
+  el.querySelectorAll('[data-ssub]').forEach(b => b.onclick = () => { state.splitSub = b.dataset.ssub; updateSplit(); syncAddButton(); });
 }
 
 function renderSplitModes() {
@@ -2034,7 +2126,15 @@ function renderSplitEmpty() {
       <button id="spEmptyAdd" class="hvBright" style="height:34px;padding:0 16px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增規則</button>
       <button id="spEmptyBrowser" class="hvFill2" style="height:34px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">用這條路由開瀏覽器</button>
     </div>
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;width:100%;max-width:640px;padding-top:8px">
+      ${splitTemplates().map((t, i) => `<button data-stpl="${i}" class="hvFill2" style="border:1px solid var(--sep);border-radius:12px;padding:13px;background:var(--bg);cursor:pointer;display:flex;flex-direction:column;gap:7px;text-align:left;color:var(--text)">
+        <span style="color:${t.color};display:flex"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="${t.icon}"></path></svg></span>
+        <span style="font-size:12.5px;font-weight:600;text-wrap:pretty">${esc(t.title)}</span>
+        <span style="font-size:11px;color:var(--text2);line-height:1.5;text-wrap:pretty">${esc(t.desc)}</span>
+      </button>`).join('')}
+    </div>
   </div>`;
+  el.querySelectorAll('[data-stpl]').forEach(b => b.onclick = () => applyTemplate(+b.dataset.stpl));
   $('spEmptyAdd').onclick = () => openSplitSheet();
   $('spEmptyBrowser').onclick = async () => {
     const rid = state.sel || (state.routes[0] || {}).id;
@@ -2421,6 +2521,209 @@ async function saveSplitRule() {
   // 規則引用了還沒下載的規則庫 → 立刻問要不要下載
   const miss = missingTags(rec);
   if (miss.length) installRuleSets(miss);
+}
+
+// =====================================================================================
+// 規則庫（rule-set）管理 — 分流分頁的第二個子分頁。
+// 上：已安裝（更新 / 移除 / 檔案遺失重新下載）；下：內建目錄（下載）。另有匯入 .srs / .json。
+// =====================================================================================
+function fmtAge(ts) {
+  if (!ts) return '未知';
+  const d = Math.floor((Date.now() - ts) / 86400000);
+  return d <= 0 ? '今天更新' : d === 1 ? '昨天更新' : d < 30 ? `${d} 天前更新` : `${Math.floor(d / 30)} 個月前更新`;
+}
+// 這個規則庫被幾條規則引用（移除時要警告）
+const setUsage = tag => state.splitRules.filter(r => {
+  const d = rWhen(r).dest;
+  return d && d.match === 'ruleset' && splitVals(d.value).includes(tag);
+}).length;
+const kindIcon = kind => kind === 'geoip'
+  ? 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18'
+  : 'M4 7h16M4 12h10M4 17h6';
+
+function renderRuleSets() {
+  const el = $('spSetsView'); if (!el) return;
+  const installed = state.splitInstalled;
+  const q = (state.setsSearch || '').toLowerCase();
+  const inCat = t => state.splitCatalog.some(c => c.tag === t);
+  const hit = c => !q || (c.label + c.tag + (c.note || '')).toLowerCase().includes(q);
+
+  const instHtml = installed.length ? installed.filter(hit).map(e => {
+    const used = setUsage(e.tag), pend = state.setsPendingDel === e.tag;
+    const canUpdate = e.source === 'catalog' && !state.setsBusy;
+    return `<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;box-shadow:${e.missing ? 'inset 3px 0 0 var(--amber)' : 'none'}">
+      <span style="width:28px;height:28px;flex-shrink:0;border-radius:8px;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="${kindIcon(e.kind)}"></path></svg></span>
+      <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+        <span style="display:flex;align-items:center;gap:7px;min-width:0">
+          <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(e.label)}</span>
+          <span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);flex-shrink:0">${e.source === 'import' ? '手動匯入' : '目錄'}</span>
+          ${used ? `<span style="font-size:11px;color:var(--text3);white-space:nowrap">${used} 條規則使用中</span>` : ''}
+        </span>
+        <span style="font-size:10.5px;color:${e.missing ? 'var(--amber)' : 'var(--text3)'};font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.missing ? '檔案遺失，需重新下載' : `${esc(e.tag)} · ${e.bytes ? fmtBytes(e.bytes) : '—'} · ${fmtAge(e.updatedAt)}`}</span>
+      </span>
+      ${e.missing
+        ? `<button data-setdl="${esc(e.tag)}" class="hvBright" style="flex-shrink:0;height:28px;padding:0 12px;border:none;border-radius:8px;background:var(--amber);color:#fff;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">重新下載</button>`
+        : `<button data-setup="${esc(e.tag)}" ${canUpdate ? '' : 'disabled'} class="${canUpdate ? 'hvFill2' : ''}" title="${e.source === 'import' ? '手動匯入的規則庫沒有更新來源，請重新匯入檔案' : '從目錄重新下載最新版'}" style="flex-shrink:0;height:28px;padding:0 12px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:${canUpdate ? 'var(--text)' : 'var(--text3)'};font-size:11.5px;cursor:${canUpdate ? 'pointer' : 'not-allowed'};white-space:nowrap">更新</button>`}
+      <button data-setdel="${esc(e.tag)}" class="hvRed" title="${pend ? '再按一次確認移除' : used ? `移除後 ${used} 條規則將失效` : '移除規則庫'}" style="flex-shrink:0;width:28px;height:28px;border:none;border-radius:8px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${pend
+        ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
+        : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>'}</button>
+    </div>`;
+  }).join('') : `<div style="padding:28px 20px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.8">還沒有下載任何規則庫<br>從下方目錄挑一個，或匯入自己的 .srs / .json</div>`;
+
+  const groups = [['geoip', '地區（GeoIP）'], ['geosite', '網站分類（GeoSite）']].map(([kind, title]) => {
+    const cards = state.splitCatalog.filter(c => c.kind === kind && hit(c)).map(c => {
+      const ok = isInstalled(c.tag), busy = state.setsBusy === c.tag;
+      return `<div style="border:1px solid var(--sep);border-radius:12px;padding:12px 13px;display:flex;flex-direction:column;gap:6px;background:var(--card);opacity:${ok ? '.6' : '1'}">
+        <span style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.label)}</span>
+        <span style="font-size:11px;color:var(--text2);line-height:1.5;min-height:32px;text-wrap:pretty">${esc(c.note || '')}</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="flex:1;min-width:0;font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.tag)}</span>
+          ${ok
+            ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--good);flex-shrink:0"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>已安裝</span>`
+            : `<button data-setdl="${esc(c.tag)}" ${busy ? 'disabled' : ''} class="${busy ? '' : 'hvAcc'}" style="flex-shrink:0;height:26px;padding:0 11px;border:1px solid var(--sep);border-radius:7px;background:var(--bg);color:${busy ? 'var(--text3)' : 'var(--accent)'};font-size:11.5px;font-weight:500;cursor:${busy ? 'wait' : 'pointer'};white-space:nowrap">${busy ? '下載中…' : '下載'}</button>`}
+        </div>
+      </div>`;
+    }).join('');
+    return cards ? `<div style="display:flex;flex-direction:column;gap:8px">
+      <span style="font-size:11.5px;font-weight:600;color:var(--text3);letter-spacing:.4px;padding-left:4px;white-space:nowrap">${title}</span>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">${cards}</div>
+    </div>` : '';
+  }).join('');
+
+  const detour = state.settings.rulesetDetourRouteId;
+  const detourRoute = detour ? splitRouteOf(detour) : null;
+
+  el.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:14px">
+      ${detourRoute ? `<div style="display:flex;align-items:center;gap:9px;padding:10px 13px;background:var(--fill2);border-radius:11px;font-size:11.5px;color:var(--text2)">
+        <span style="flex-shrink:0;color:var(--text3);display:flex"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8h.01M11 12h1v5h1"></path></svg></span>
+        <span style="flex:1">規則庫下載將經由路由「${esc(detourRoute.label || detour)}」。</span>
+      </div>` : ''}
+
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">已安裝</span>
+        <span style="font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">存在 %APPDATA%\\RelayClient\\rulesets\\，只有你按下載時才會連網</span>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <input id="spSetsSearch" value="${esc(state.setsSearch || '')}" placeholder="搜尋規則庫…" style="width:150px;height:28px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text);font-size:12px;outline:none">
+          <button id="spSetsUpdateAll" class="hvFill2" style="height:28px;padding:0 12px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap">全部更新</button>
+          <button id="spSetsImport" class="hvFill2" style="height:28px;padding:0 12px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap">匯入 .srs / .json</button>
+        </div>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden;flex-shrink:0">${instHtml}</div>
+
+      <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap;margin-top:2px">目錄</span>
+      ${groups || '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12.5px">沒有符合的規則庫</div>'}
+    </div>`;
+
+  $('spSetsSearch').addEventListener('input', e => { state.setsSearch = e.target.value; renderRuleSets(); });
+  $('spSetsUpdateAll').onclick = () => updateAllRuleSets();
+  $('spSetsImport').onclick = () => importRuleSet();
+  el.querySelectorAll('[data-setdl]').forEach(b => b.onclick = () => installRuleSets([b.dataset.setdl]));
+  el.querySelectorAll('[data-setup]').forEach(b => { if (!b.disabled) b.onclick = () => updateRuleSet(b.dataset.setup); });
+  el.querySelectorAll('[data-setdel]').forEach(b => b.onclick = () => removeRuleSet(b.dataset.setdel));
+}
+
+async function refreshRuleSets() {
+  try { const l = await window.api.rulesetList(); if (Array.isArray(l)) state.splitInstalled = l; } catch {}
+  if (state.tab === 'split') { renderRuleSets(); renderSplitRules(); renderSplitNotice(); }
+}
+
+async function updateRuleSet(tag) {
+  state.setsBusy = tag; renderRuleSets();
+  try {
+    const r = await window.api.rulesetUpdate(tag);
+    flash(r && r.ok ? `已更新 ${catLabel(tag)}` : `更新失敗：${(r && r.error) || '未知'}`, r && r.ok ? undefined : 'var(--red)');
+  } catch (e) { flash('更新失敗：' + e.message, 'var(--red)'); }
+  state.setsBusy = null;
+  await refreshRuleSets();
+}
+
+async function updateAllRuleSets() {
+  const updatable = state.splitInstalled.filter(e => e.source === 'catalog');
+  if (!updatable.length) { flash('沒有可更新的規則庫（手動匯入的需重新匯入）'); return; }
+  state.setsBusy = 'all'; renderRuleSets();
+  try {
+    const res = await window.api.rulesetUpdateAll();
+    const ok = (res || []).filter(r => r.ok).length;
+    flash(`規則庫更新完成：${ok} / ${(res || []).length} 成功`, ok === (res || []).length ? undefined : 'var(--amber)');
+  } catch (e) { flash('更新失敗：' + e.message, 'var(--red)'); }
+  state.setsBusy = null;
+  await refreshRuleSets();
+}
+
+async function importRuleSet() {
+  try {
+    const r = await window.api.rulesetImport();
+    if (!r) return; // 使用者取消
+    flash(r.ok ? `已匯入 ${r.entry.label}` : `匯入失敗：${r.error}`, r.ok ? undefined : 'var(--red)');
+  } catch (e) { flash('匯入失敗：' + e.message, 'var(--red)'); }
+  await refreshRuleSets();
+}
+
+function removeRuleSet(tag) {
+  if (state.setsPendingDel !== tag) {
+    state.setsPendingDel = tag; renderRuleSets();
+    setTimeout(() => { if (state.setsPendingDel === tag) { state.setsPendingDel = null; renderRuleSets(); } }, 2500);
+    return;
+  }
+  state.setsPendingDel = null;
+  window.api.rulesetRemove(tag).then(() => { flash(`已移除 ${catLabel(tag)}`); refreshRuleSets(); }).catch(() => {});
+}
+
+// ---- 空狀態的常用範本（v8）----
+function splitTemplates() {
+  const firstRoute = (state.routes[0] || {}).id || null;
+  return [
+    {
+      title: '台灣直連、其餘走代理', color: 'var(--accent)',
+      desc: '台灣 IP 直連，其他流量走選定路由。內建內網保護已涵蓋 LAN。',
+      icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18',
+      tags: ['geoip-tw'],
+      rules: [{ id: 't' + Date.now(), name: '台灣網站直連', on: true, target: 'direct', when: { dest: { match: 'ruleset', value: 'geoip-tw' } } }],
+      def: firstRoute,
+    },
+    {
+      title: '只有特定程式走代理', color: 'var(--purple)',
+      desc: '建立一條程式規則，挑選程式後填走向。',
+      icon: 'M4 5h16v11H4zM8 20h8M12 16v4',
+      openSheet: true,
+    },
+    {
+      title: '擋掉廣告與追蹤', color: 'var(--red)',
+      desc: '廣告與追蹤器網域直接丟棄。',
+      icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.5 5.5l13 13',
+      tags: ['geosite-category-ads-all'],
+      rules: [{ id: 't' + (Date.now() + 1), name: '擋掉廣告與追蹤', on: true, target: 'block', when: { dest: { match: 'ruleset', value: 'geosite-category-ads-all' } } }],
+    },
+  ];
+}
+
+async function applyTemplate(i) {
+  const t = splitTemplates()[i];
+  if (!t) return;
+  if (t.openSheet) { openSplitSheet(); state.splitOpenConds = { app: true, dest: false, port: false, net: false }; renderSplitSheet(); return; }
+  const need = (t.tags || []).filter(x => !isInstalled(x));
+  if (need.length) {
+    state.alert = {
+      title: '需要下載規則庫',
+      body: `此範本需要下載 ${need.length} 個規則庫（${need.map(catLabel).join('、')}），要現在下載嗎？`,
+      action: '下載並套用',
+      go: async () => { closeAlert(); await doApplyTemplate(t); },
+    };
+    renderAlert();
+    return;
+  }
+  await doApplyTemplate(t);
+}
+
+async function doApplyTemplate(t) {
+  state.splitRules = [...state.splitRules, ...t.rules];
+  if (t.def) state.splitDefaultTarget = t.def;
+  updateSplit();
+  await persistSplit({ rules: state.splitRules, ...(t.def ? { defaultTarget: t.def } : {}) });
+  const need = (t.tags || []).filter(x => !isInstalled(x));
+  if (need.length) await installRuleSets(need);
+  flash(`已套用範本「${t.title}」`);
 }
 
 function renderSplitUac() {

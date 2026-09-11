@@ -22,7 +22,7 @@ body{
 }
 body[data-theme="dark"]{
   --bg:#1c1c1e;--panel:#2c2c2e;--panelq:rgba(44,44,46,.72);--card:#2c2c2e;--fill:#7878805c;--fill2:#78788033;
-  --text:#fff;--text2:#ebebf599;--text3:#ebebf54d;--sep:#54545899;--accent:#8cb0ef;--accent-dim:#8cb0ef1f;
+  --text:#fff;--text2:#ebebf599;--text3:#ebebf566;--sep:#54545899;--accent:#8cb0ef;--accent-dim:#8cb0ef1f;
   --good:#54c69b;--amber:#e8b055;--red:#ef7a70;--purple:#a49ce6;
   --shadow:0 10px 30px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.3);
 }
