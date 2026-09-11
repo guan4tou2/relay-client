@@ -137,8 +137,19 @@ class SingBoxEngine extends EventEmitter {
     // 3) 只宣告真的被用到的規則庫；沒安裝的 tag 已在 _normalizeRule 濾掉（引用不存在的 tag 會 FATAL）
     const ruleSetDefs = this._ruleSetDefs(active, setByTag);
 
+    // 4) route.rules 的索引 → 那一條是什麼。sing-box 的 debug log 印的 match[N] 就是這個索引，
+    //    main.js 靠它把「命中第幾條」還原成使用者看得懂的規則。
+    this.ruleIndex = [];
+    let i = 0;
+    if (active.some(r => r.domainLike)) this.ruleIndex[i++] = { kind: 'sniff' };
+    if (self.length) this.ruleIndex[i++] = { kind: 'self' };
+    if (lanDirect) this.ruleIndex[i++] = { kind: 'lan' };
+    for (const r of active) this.ruleIndex[i++] = { kind: 'rule', id: r.id, target: r.target };
+
     return {
-      log: { level: 'warn', timestamp: true },
+      // debug 才會印 `router: match[N] ... => ...`——命中標記與命中次數都靠它。
+      // main.js 只解析不落地，避免把 app.log 灌爆。
+      log: { level: 'debug', timestamp: true },
       inbounds: [this._tunInbound()],
       outbounds,
       route: {
@@ -185,7 +196,7 @@ class SingBoxEngine extends EventEmitter {
     if (net === 'tcp' || net === 'udp') conds.push({ network: [net] });
 
     if (!conds.length) return null; // 沒有任何條件的規則不該存在（要「全部」請用 defaultTarget）
-    return { conds, target: r.target || 'direct', domainLike };
+    return { id: r.id, conds, target: r.target || 'direct', domainLike };
   }
 
   _appCond(app) {
@@ -275,7 +286,7 @@ class SingBoxEngine extends EventEmitter {
     const ruleSetDefs = this._ruleSetDefs(protectedRules, setByTag);
 
     return {
-      log: { level: 'warn', timestamp: true },
+      log: { level: 'warn', timestamp: true },  // 封鎖模式不需要命中資訊
       inbounds: [this._tunInbound()],
       outbounds: [{ type: 'direct', tag: 'direct' }],
       route: {

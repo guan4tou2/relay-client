@@ -82,6 +82,14 @@ contextBridge.exposeInMainWorld('api', {
   // 規則模擬器：輸入網址／IP（可加程式）→ 回傳會命中哪條規則、走哪條路由
   ruleMatch: (query) => ipcRenderer.invoke('rule-match', query),
 
+  // 命中次數（解析引擎 debug log 得到，每秒推一次）
+  getEngineHits: () => ipcRenderer.invoke('get-engine-hits'),
+  onEngineHits: (callback) => {
+    const listener = (_e, hits) => callback(hits);
+    ipcRenderer.on('engine-hits', listener);
+    return () => ipcRenderer.removeListener('engine-hits', listener);
+  },
+
   // 斷線保護（Kill-switch）
   getKillswitch: () => ipcRenderer.invoke('get-killswitch'),
   killswitchReconnect: () => ipcRenderer.invoke('killswitch-reconnect'),

@@ -172,6 +172,25 @@ C:\Users\<你的帳號>\AppData\Roaming\RelayClient\rulesets\
 | `rulesetUpdateDays` | `7` | 兩次檢查最少間隔幾天 |
 | `rulesetDetourRouteId` | `null` | 指定某條路由的 `id` → 規則庫改經由那條路由（含串鏈）下載 |
 
+## 命中標記與命中次數
+
+引擎跑在 `log.level: debug`，每條連線會印出它命中了哪一條規則：
+
+```
+[1659266229] inbound/tun[tun-in]: inbound connection to example.com:443
+[1659266229] router: match[3] domain_suffix=example.com => route(route-r-jp)
+```
+
+`match[N]` 的 N 就是產生出來的 `route.rules` 索引，app 用它還原成你的規則，於是：
+
+- **分流頁的「命中」欄**顯示每條規則的即時命中次數（含內建的內網規則與「其他所有流量」）
+- **紀錄頁**每筆連線尾端有徽章：命中時是藍底「命中：第 3 條 串流走日本」、未命中是灰底「預設」、封鎖是紅底。點徽章會跳到分流頁並高亮那一列
+
+沒命中任何規則時引擎**不會印 match 行**，app 就據此判定為「預設」。
+
+> 這些 debug 行只用來統計，**不會寫進 `app.log`**（否則每條連線兩三行會把紀錄灌爆）。
+> 斷線保護的封鎖模式維持 `warn`，不需要命中資訊。
+
 ## 斷線保護在各模式下擋什麼
 
 | `mode` | 引擎異常中止時 |
