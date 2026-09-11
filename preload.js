@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld('api', {
   routeStart: (id) => ipcRenderer.invoke('route-start', id),
   routeStop: (id) => ipcRenderer.invoke('route-stop', id),
   getRouteStatus: () => ipcRenderer.invoke('get-route-status'),
+  launchBrowser: (routeId) => ipcRenderer.invoke('launch-browser', routeId),
 
   // Per-app 分流（sing-box TUN 引擎）
   getSplit: () => ipcRenderer.invoke('get-split'),
@@ -68,6 +69,18 @@ contextBridge.exposeInMainWorld('api', {
   engineElevate: () => ipcRenderer.invoke('engine-elevate'),
   isElevated: () => ipcRenderer.invoke('is-elevated'),
   getEngineStatus: () => ipcRenderer.invoke('get-engine-status'),
+
+  // 依網域 / 地區(GeoIP) 分流的規則庫（rule-set）
+  rulesetCatalog: () => ipcRenderer.invoke('ruleset-catalog'),
+  rulesetList: () => ipcRenderer.invoke('ruleset-list'),
+  rulesetInstall: (tag) => ipcRenderer.invoke('ruleset-install', tag),
+  rulesetUpdate: (tag) => ipcRenderer.invoke('ruleset-update', tag),
+  rulesetUpdateAll: () => ipcRenderer.invoke('ruleset-update-all'),
+  rulesetImport: () => ipcRenderer.invoke('ruleset-import'),
+  rulesetRemove: (tag) => ipcRenderer.invoke('ruleset-remove', tag),
+
+  // 規則模擬器：輸入網址／IP（可加程式）→ 回傳會命中哪條規則、走哪條路由
+  ruleMatch: (query) => ipcRenderer.invoke('rule-match', query),
 
   // 斷線保護（Kill-switch）
   getKillswitch: () => ipcRenderer.invoke('get-killswitch'),

@@ -46,10 +46,12 @@ const state = {
   settings: { httpPort: 10808, socksPort: 10809, minimizeToTray: true, autoConnect: false, autoStartRoutes: true, testTarget: null },
   // ---- 分流（split routing）狀態 ----
   splitRules: [], splitDefaultTarget: 'direct', splitUdp: false,
-  splitEngine: 'off', splitElevated: false, splitTun: null, splitApps: 0, splitHealth: [], splitLive: [],
-  splitFilter: '全部', splitSheet: false, splitEditing: null,
-  splitPickMode: '執行中的程式', splitMatchMode: '程式名稱', splitProcSearch: '', splitProcs: [],
-  splitDraft: { name: '', exe: '', path: '', pattern: '', target: 'direct', match: 'name' },
+  splitMode: 'rule', splitGlobalTarget: null, splitLanDirect: true,
+  splitEngine: 'off', splitElevated: false, splitTun: null, splitHealth: [],
+  splitFilter: '全部', splitSearch: '', splitSheet: false, splitEditing: null,
+  splitProcs: [], splitCatalog: [], splitInstalled: [],
+  splitSimHost: '', splitSimExe: '', splitSim: null, splitHitId: null,
+  splitDraft: { name: '', when: {}, target: 'direct', error: '' }, splitOpenConds: {},
   splitPendingDel: null, splitDrag: null, splitUac: false, splitUacSeen: false,
 };
 
@@ -257,6 +259,7 @@ function renderSidebar() {
       </div>
       ${active ? `<div style="display:flex;gap:6px;padding-top:2px">
         <button class="hvBright" data-act="power" title="${powerTip}" style="flex:1;height:26px;border:none;border-radius:7px;background:${powerBg};color:${powerColor};cursor:pointer;display:flex;align-items:center;justify-content:center">${POWER_ICON}</button>
+        <button class="hvAcc" data-act="browser" title="用這條路由開啟瀏覽器（只有這個視窗走代理，免 TUN／免提權）" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><line x1="3" y1="12" x2="21" y2="12"></line><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"></path></svg></button>
         <button class="hvAcc" data-act="edit" title="編輯路由" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
         <button class="hvRed" data-act="del" title="${pend ? '再按一次確認刪除' : '刪除路由'}" style="flex:1;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
       </div>` : ''}
@@ -267,6 +270,7 @@ function renderSidebar() {
     const id = row.dataset.rid;
     row.addEventListener('click', e => { if (e.target.closest('[data-act]')) return; selectRoute(id); });
     row.querySelector('[data-act="power"]')?.addEventListener('click', e => { e.stopPropagation(); togglePower(id); });
+    row.querySelector('[data-act="browser"]')?.addEventListener('click', e => { e.stopPropagation(); launchBrowser(id); });
     row.querySelector('[data-act="edit"]')?.addEventListener('click', e => { e.stopPropagation(); openRoute(id); });
     row.querySelector('[data-act="del"]')?.addEventListener('click', e => { e.stopPropagation(); deleteRoute(id); });
   });
@@ -276,6 +280,17 @@ function selectRoute(id) {
   state.sel = id; state.pendingRouteDel = null;
   renderSidebar();
   if (state.tab === 'dashboard') showTab('dashboard');
+}
+
+async function launchBrowser(id) {
+  const r = state.routes.find(x => x.id === id);
+  if (r && (!r.hops || r.hops.length === 0)) { flash('這條路由還沒設跳點，先加一台伺服器', 'var(--red)'); return; }
+  flash('正在開啟瀏覽器…');
+  let res;
+  try { res = await window.api.launchBrowser(id); }
+  catch (e) { res = { ok: false, error: (e && e.message) || e }; }
+  if (res && res.ok) flash(`已用「${(r && r.label) || id}」開啟 ${res.browser || '瀏覽器'}`);
+  else flash('開啟失敗：' + ((res && res.error) || '未知'), 'var(--red)');
 }
 
 function deleteRoute(id) {
@@ -1306,7 +1321,7 @@ async function saveSrvSheet() {
 function openMenu(kind, anchor) {
   if (state.menu && state.menu.kind === kind) { closeMenu(); return; }
   let items;
-  if (kind === 'split-default' || kind === 'split-target') {
+  if (kind.startsWith('split-')) {
     items = splitMenuItems(kind);
   } else if (kind === 'hop') {
     items = state.servers.map(s => ({ badge: PROTO[sProto(s)].label, label: s.name || '未命名', check: false,
@@ -1559,31 +1574,68 @@ async function boot() {
     else if (s.status === 'error') flash('更新檢查失敗：' + (s.error || ''), 'var(--amber)');
   });
   window.api.getKillswitch && window.api.getKillswitch().then(k => { if (k && k.tripped) { state.killswitch = k; renderKillswitch(); } }).catch(() => {});
-  if (window.api.onEngineStats) window.api.onEngineStats(payload => {
-    state.splitLive = (payload && Array.isArray(payload.live)) ? payload.live : [];
-    if (state.tab === 'split') { updateSplitLive(); syncTitlebar(); }
-  });
 }
 
 // =====================================================================================
-// 分流（Split routing）分頁 — 照 Claude Design v3「Per-app 分流」一比一還原，接真實 IPC。
-// 引擎（TUN）狀態機 off→starting→running；規則 = 應用程式 → 路由/直連。
+// 分流（Split routing）分頁 — 照 Claude Design「v8 · 分流單一規則表」一比一還原，接真實 IPC。
+// 引擎（TUN）狀態機 off→starting→running；模式 規則/全域/直連；
+// 單一規則表：一條規則 = 程式 × 目的地 × 埠 × 協定（全部 AND），由上往下第一條命中即生效。
 // 骨架 buildSplit() 建一次（電源 SVG 常駐才能觸發 ring 過場）；updateSplit() 套動態值。
 // =====================================================================================
-const SPLIT_PALETTE = ['#4470c4', '#2f9e78', '#d98b1f', '#7a72cf', '#d9534a'];
-const splitInitials = n => String(n == null ? '' : n).replace(/[^A-Za-z0-9\u4e00-\u9fff]/g, '').slice(0, 2).toUpperCase();
-const splitTint = n => SPLIT_PALETTE[String(n == null ? '' : n).length % SPLIT_PALETTE.length];
 const splitRunning = () => state.splitEngine === 'running';
+const splitRuleMode = () => state.splitMode === 'rule';
+const splitActive = () => splitRunning() && splitRuleMode();
 const splitRouteOf = id => state.routes.find(r => r.id === id);
-const splitTargetLabel = id => id === 'direct' ? '直接連線（不經代理）' : (splitRouteOf(id) || {}).label || '（路由已刪除）';
-const splitTargetBadge = id => id === 'direct' ? 'DIRECT' : (splitRouteOf(id) ? (splitRouteOf(id).kind === 'http' ? 'HTTP' : 'SOCKS5') : '—');
-const splitTargetDot = id => id === 'direct' ? 'var(--text3)' : splitRunning() ? 'var(--good)' : 'var(--text3)';
-// 真實 route 無 udp 能力欄位；依任務近似：只要 UDP 開啟且目標非直連即示警（上游 SOCKS5 可能不支援 UDP）。
-const splitRouteUdpCapable = () => false;
-const splitUdpIssue = target => state.splitUdp && target !== 'direct' && !!splitRouteOf(target) && !splitRouteUdpCapable(splitRouteOf(target));
-const splitTrashIcon = pend => pend
-  ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
-  : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>';
+const splitTargetLabel = id => id === 'direct' ? '直接連線（不經代理）' : id === 'block' ? '封鎖（丟棄連線）' : (splitRouteOf(id) || {}).label || '（路由已刪除）';
+const splitTargetBadge = id => id === 'direct' ? 'DIRECT' : id === 'block' ? 'BLOCK' : (splitRouteOf(id) ? (splitRouteOf(id).kind === 'http' ? 'HTTP' : 'SOCKS5') : '—');
+const splitTargetDot = (id, on = true) => !on ? 'var(--text3)' : id === 'block' ? 'var(--red)'
+  : id === 'direct' ? 'var(--text2)' : splitActive() ? 'var(--good)' : 'var(--text3)';
+
+// 內建「本機與內網」規則的顯示用清單（與 src/engine/singbox.js 的 PRIVATE_CIDRS 對應）
+const LAN_CIDRS = '127.0.0.0/8 · 10.0.0.0/8 · 172.16.0.0/12 · 192.168.0.0/16 · 169.254.0.0/16 · 100.64.0.0/10 · 224.0.0.0/4 · ::1 · fc00::/7 · fe80::/10';
+
+// ---- schema 2 規則存取：條件放在 rule.when（app / dest / port / network，全部可選且互為 AND）----
+const rWhen = r => (r && r.when) || {};
+const splitVals = s => (Array.isArray(s) ? s : String(s == null ? '' : s).split(/[\n,;]+/)).map(x => String(x).trim()).filter(Boolean);
+const DEST_KINDS = [['suffix', '網域'], ['ip', 'IP / 網段'], ['ruleset', '地區 · 分類'], ['keyword', '關鍵字']];
+const DEST_UI = {
+  suffix: { ph: 'google.com\n=login.example.com', hint: '含所有子網域，一行一個。只想完全相符時在開頭加 =。' },
+  ip: { ph: '10.0.0.0/8\n8.8.8.8', hint: '單一 IP 或 CIDR 網段，一行一個。' },
+  keyword: { ph: 'doubleclick', hint: '網域中含這段文字就命中，最寬鬆，容易誤傷。' },
+  regex: { ph: '^ad\\d+\\.example\\.com$', hint: 'RE2 語法。寫錯只會不命中，不會讓引擎壞掉。' },
+  domain: { ph: 'example.com', hint: '完全相符才命中，一行一個。' },
+};
+const catLabel = tag => (state.splitCatalog.find(c => c.tag === tag) || {}).label || tag;
+const isInstalled = tag => state.splitInstalled.some(e => e.tag === tag && !e.missing);
+
+// 一條規則的條件摘要 → [{ k, v, full }]
+function condSummary(w) {
+  const out = [];
+  if (w.app && w.app.value) {
+    const v = w.app.match === 'path' ? String(w.app.value).split(/[\\/]/).pop() : w.app.value;
+    out.push({ k: '程式', v, full: w.app.value });
+  }
+  if (w.dest && w.dest.value) {
+    const v = splitVals(w.dest.value);
+    const show = w.dest.match === 'ruleset' ? v.map(catLabel)
+      : v.map(x => w.dest.match === 'suffix' && !x.startsWith('=') ? '*.' + x : x.replace(/^=/, ''));
+    const k = w.dest.match === 'ruleset' ? '地區' : w.dest.match === 'ip' ? 'IP'
+      : w.dest.match === 'keyword' ? '關鍵字' : w.dest.match === 'regex' ? '正則' : '網域';
+    out.push({ k, v: show.slice(0, 2).join(', ') + (show.length > 2 ? ' +' + (show.length - 2) : ''), full: show.join(', ') });
+  }
+  if (w.port) out.push({ k: '埠', v: w.port, full: w.port });
+  if (w.network) out.push({ k: '協定', v: String(w.network).toUpperCase(), full: String(w.network).toUpperCase() });
+  return out;
+}
+const condChipStyle = k => k === '程式' ? { bg: 'rgba(122,114,207,.14)', color: 'var(--purple)' }
+  : (k === '埠' || k === '協定') ? { bg: 'var(--fill2)', color: 'var(--text2)' }
+  : { bg: 'var(--accent-dim)', color: 'var(--accent)' };
+// 規則引用到、但還沒下載的規則庫
+const missingTags = r => {
+  const d = rWhen(r).dest;
+  return (d && d.match === 'ruleset') ? splitVals(d.value).filter(t => !isInstalled(t)) : [];
+};
+
 function splitDotColor(d) {
   if (!d) return 'var(--text3)';
   if (/^(var\(|#|rgb)/.test(d)) return d;
@@ -1596,11 +1648,8 @@ function applyEngineStatus(st) {
   if (st.state) state.splitEngine = st.state;
   if (typeof st.elevated === 'boolean') state.splitElevated = st.elevated;
   if ('tun' in st) state.splitTun = st.tun;
-  if (typeof st.apps === 'number') state.splitApps = st.apps;
   if (Array.isArray(st.health)) state.splitHealth = st.health;
-  if (state.splitEngine !== 'running') state.splitLive = [];
-  if (state.tab === 'split') updateSplit();
-  if (state.tab === 'split') syncTitlebar();
+  if (state.tab === 'split') { updateSplit(); syncTitlebar(); }
 }
 async function refreshEngineStatus() {
   try { const st = await window.api.getEngineStatus(); if (st) applyEngineStatus(st); } catch {}
@@ -1610,7 +1659,9 @@ async function refreshEngineStatus() {
 function syncSplitTitlebar() {
   const st = $('status'); if (!st) return;
   const running = splitRunning(), starting = state.splitEngine === 'starting';
-  if (running) { st.textContent = `分流引擎執行中 · ${state.splitLive.length} 個程式`; st.style.color = 'var(--good)'; }
+  const modeTail = state.splitMode === 'rule' ? `${state.splitRules.filter(r => r.on !== false).length} 條規則`
+    : state.splitMode === 'global' ? '全域' : '直連';
+  if (running) { st.textContent = `分流引擎執行中 · ${modeTail}`; st.style.color = 'var(--good)'; }
   else if (starting) { st.textContent = '正在啟動引擎…'; st.style.color = 'var(--amber)'; }
   else { st.textContent = '分流引擎未執行'; st.style.color = 'var(--text3)'; }
   $('markArc').setAttribute('stroke', running ? '#7fe3bd' : 'rgba(255,255,255,.55)');
@@ -1625,17 +1676,29 @@ function syncAddButton() {
 // ---- 進入分頁 ----
 function enterSplit() { updateSplit(); refreshSplit(); }
 async function refreshSplit() {
-  try { const sp = await window.api.getSplit(); if (sp) { if (Array.isArray(sp.rules)) state.splitRules = sp.rules; if (sp.defaultTarget != null) state.splitDefaultTarget = sp.defaultTarget; if (typeof sp.udp === 'boolean') state.splitUdp = sp.udp; } } catch {}
+  try {
+    const sp = await window.api.getSplit();
+    if (sp) {
+      if (Array.isArray(sp.rules)) state.splitRules = sp.rules;
+      if (sp.defaultTarget != null) state.splitDefaultTarget = sp.defaultTarget;
+      if (typeof sp.udp === 'boolean') state.splitUdp = sp.udp;
+      if (sp.mode) state.splitMode = sp.mode;
+      if ('globalTarget' in sp) state.splitGlobalTarget = sp.globalTarget;
+      if (typeof sp.lanDirect === 'boolean') state.splitLanDirect = sp.lanDirect;
+    }
+  } catch {}
+  try { const cat = await window.api.rulesetCatalog(); if (Array.isArray(cat)) state.splitCatalog = cat; } catch {}
+  try { const list = await window.api.rulesetList(); if (Array.isArray(list)) state.splitInstalled = list; } catch {}
   try { const est = await window.api.getEngineStatus(); if (est) applyEngineStatus(est); } catch {}
   if (state.tab === 'split') { updateSplit(); syncTitlebar(); }
 }
 
-// ---- 骨架（建一次；電源 SVG + 標題/徽章/描述/統計 + 規則外流量/UDP 常駐）----
+// ---- 骨架（建一次；電源 SVG 常駐才能觸發 ring 過場）----
 function buildSplit() {
   $('view-split').innerHTML = `
   <div style="display:flex;flex-direction:column;gap:14px;align-items:stretch">
 
-    <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:15px;flex-shrink:0">
+    <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:14px;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:18px">
         <button id="spEngineBtn" title="啟動分流引擎" style="width:78px;height:78px;flex-shrink:0;position:relative;border:none;background:transparent;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center">
           <svg width="78" height="78" viewBox="0 0 256 256" style="position:absolute;inset:0">
@@ -1643,8 +1706,7 @@ function buildSplit() {
             <g id="spEngineSpin" style="transform-origin:128px 128px;animation:none;opacity:0">
               <path d="M128 36 A92 92 0 0 1 220 128" fill="none" stroke="var(--accent)" stroke-width="14" stroke-linecap="round"></path>
             </g>
-            <circle id="spEngineRing" cx="128" cy="128" r="92" fill="none" stroke="var(--accent)" stroke-width="14" stroke-linecap="round" stroke-dasharray="578" stroke-dashoffset="578" style="transform-origin:128px 128px;transform:rotate(-90deg);transition:stroke-dashoffset 1.1s cubic-bezier(.25,.5,.3,1),stroke .3s;opacity:0"></circle>
-            <path id="spEngineIconLine" d="M100 118 h56 M128 96 v44 M108 150 h40" stroke="var(--text3)" stroke-width="0" fill="none"></path>
+            <circle id="spEngineRing" cx="128" cy="128" r="92" fill="none" stroke="var(--good)" stroke-width="14" stroke-linecap="round" stroke-dasharray="578" stroke-dashoffset="578" style="transform-origin:128px 128px;transform:rotate(-90deg);transition:stroke-dashoffset 1.1s cubic-bezier(.25,.5,.3,1),stroke .3s;opacity:0"></circle>
             <g id="spEngineIcon" style="color:var(--text3)">
               <path d="M92 100 h72 a8 8 0 0 1 8 8 v40 a8 8 0 0 1 -8 8 h-72 a8 8 0 0 1 -8 -8 v-40 a8 8 0 0 1 8 -8 z" fill="none" stroke="currentColor" stroke-width="11" stroke-linejoin="round"></path>
               <path d="M110 156 v14 M146 156 v14 M96 170 h64" fill="none" stroke="currentColor" stroke-width="11" stroke-linecap="round"></path>
@@ -1654,200 +1716,281 @@ function buildSplit() {
         <div style="flex:1;display:flex;flex-direction:column;gap:7px;min-width:0">
           <div style="display:flex;align-items:center;gap:9px">
             <span id="spEngineTitle" style="font-size:19px;font-weight:700;letter-spacing:-.3px;white-space:nowrap">分流引擎未執行</span>
-            <span id="spEngineBadge" style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:3px 7px;border-radius:6px;background:rgba(217,139,31,.14);color:var(--amber);white-space:nowrap">需要提權</span>
+            <span id="spEngineBadge" style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:3px 7px;border-radius:6px;background:var(--fill2);color:var(--text2);white-space:nowrap">未授權</span>
           </div>
-          <span id="spEngineDesc" style="font-size:12.5px;color:var(--text2);line-height:1.6;text-wrap:pretty">啟動後可強制指定程式走代理，無需程式本身支援 proxy 設定。</span>
+          <span id="spEngineDesc" style="font-size:12.5px;color:var(--text2);line-height:1.6;text-wrap:pretty">啟動後依規則決定每個連線走哪條路。</span>
           <div style="display:flex;align-items:center;gap:16px;font-size:11.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;flex-wrap:wrap;row-gap:4px">
             <span id="spEngineDev" style="white-space:nowrap">dev: —</span>
-            <span id="spEngineApps" style="white-space:nowrap">apps: 0</span>
-            <span id="spEngineFlow" style="white-space:nowrap">rules: 0</span>
+            <span id="spEngineFlow" style="white-space:nowrap"></span>
           </div>
         </div>
         <div style="width:1px;align-self:stretch;background:var(--sep)"></div>
-        <div style="width:196px;flex-shrink:0;display:flex;flex-direction:column;gap:11px">
+        <div style="width:236px;flex-shrink:0;display:flex;flex-direction:column;gap:11px">
           <div style="display:flex;flex-direction:column;gap:5px">
+            <span style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;white-space:nowrap">模式</span>
+            <div id="spModeSeg" style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:9px"></div>
+          </div>
+          <div id="spDefaultWrap" style="display:flex;flex-direction:column;gap:5px">
             <span style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;white-space:nowrap">規則外流量</span>
             <button id="spDefaultBtn" class="hvFill2" style="display:flex;align-items:center;gap:7px;height:30px;padding:0 10px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12px;cursor:pointer;text-align:left">
-              <span id="spDefaultDot" style="width:7px;height:7px;border-radius:50%;background:var(--text3);flex-shrink:0"></span>
-              <span id="spDefaultLabel" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">直接連線（不經代理）</span>
+              <span id="spDefaultDot" style="width:7px;height:7px;border-radius:50%;background:var(--text2);flex-shrink:0"></span>
+              <span id="spDefaultLabel" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">直接連線</span>
               <span style="color:var(--text3);font-size:9px">▾</span>
             </button>
           </div>
-          <div style="display:flex;align-items:center;gap:10px">
-            <div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;white-space:nowrap">UDP 轉發</div><div id="spUdpDesc" style="font-size:10.5px;color:var(--text2);margin-top:2px;line-height:1.4">僅轉發 TCP 流量</div></div>
-            <button id="spUdpBtn" title="切換 UDP 轉發" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s;flex-shrink:0;opacity:.55">
-              <span id="spUdpKnob" style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
+          <div id="spGlobalWrap" style="display:none;flex-direction:column;gap:5px">
+            <span style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;white-space:nowrap">全部流量走</span>
+            <button id="spGlobalBtn" class="hvFill2" style="display:flex;align-items:center;gap:7px;height:30px;padding:0 10px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12px;cursor:pointer;text-align:left">
+              <span id="spGlobalDot" style="width:7px;height:7px;border-radius:50%;background:var(--text2);flex-shrink:0"></span>
+              <span id="spGlobalLabel" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span>
+              <span style="color:var(--text3);font-size:9px">▾</span>
             </button>
           </div>
+          <span id="spDirectNote" style="display:none;font-size:11.5px;color:var(--text2);line-height:1.5;text-wrap:pretty">所有流量直連，不走任何路由。TUN 與斷線保護維持運作，切回規則不需重新提權。</span>
         </div>
       </div>
-      <div id="spNotice"></div>
-    </div>
 
-    <div style="display:flex;align-items:flex-end;gap:12px;flex-shrink:0">
-      <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
-        <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">應用程式規則</span>
-        <span style="font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">由上往下比對，第一條命中的規則生效；拖曳可調整優先序</span>
-      </div>
-      <div id="spFilterSeg" style="margin-left:auto;display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px;flex-shrink:0"></div>
-    </div>
-
-    <div id="spRulesTable" style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden;flex-shrink:0"></div>
-
-    <div style="display:flex;gap:12px;flex-shrink:0">
-      <div style="flex:1;background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:15px 17px;display:flex;flex-direction:column;gap:11px;min-width:0">
-        <div style="display:flex;align-items:center;gap:9px">
-          <span style="font-size:13.5px;font-weight:600;white-space:nowrap">攔截中的程式</span>
-          <span id="spLiveCount" style="font-size:11.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap"></span>
+      <div style="display:flex;flex-direction:column;gap:9px;padding-top:13px;border-top:1px solid var(--sep)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="display:flex;color:var(--text3);flex-shrink:0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg></span>
+          <input id="spSimHost" placeholder="輸入網域、IP 或 IP:埠，例如 www.netflix.com 或 10.0.0.5:3389" style="flex:1;min-width:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
+          <button id="spSimExeBtn" class="hvFill2" title="只測某支程式" style="display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><span id="spSimExeLabel">不限程式</span><span style="color:var(--text3);font-size:9px">▾</span></button>
+          <button id="spSimRun" class="hvBright" style="height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">測試</button>
         </div>
-        <div id="spLiveList" style="display:flex;flex-direction:column;gap:11px"></div>
-      </div>
-      <div style="width:262px;flex-shrink:0;background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:15px 17px;display:flex;flex-direction:column;gap:11px">
-        <span style="font-size:13.5px;font-weight:600;white-space:nowrap">引擎健康</span>
-        <div id="spHealthList" style="display:flex;flex-direction:column;gap:11px"></div>
+        <div id="spSimResult"></div>
       </div>
     </div>
+
+    <div id="spNotice"></div>
+
+    <div id="spRulesHead" style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">規則</span>
+      <span style="font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">由上往下比對，第一條命中即生效；一條規則可同時限定程式、目的地、埠與協定</span>
+      <div id="spTools" style="margin-left:auto;display:none;align-items:center;gap:8px;flex-shrink:0">
+        <input id="spSearch" placeholder="搜尋…" style="width:150px;height:28px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text);font-size:12px;outline:none">
+        <div id="spFilterSeg" style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px"></div>
+      </div>
+    </div>
+
+    <div id="spTableWrap" style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden;flex-shrink:0;transition:opacity .3s">
+      <div id="spRulesTable"></div>
+    </div>
+
+    <div id="spEmpty"></div>
   </div>`;
 
   $('spEngineBtn').onclick = () => toggleSplitEngine();
   $('spDefaultBtn').onclick = e => { e.stopPropagation(); openMenu('split-default', $('spDefaultBtn')); };
-  $('spUdpBtn').onclick = () => toggleSplitUdp();
+  $('spGlobalBtn').onclick = e => { e.stopPropagation(); openMenu('split-global', $('spGlobalBtn')); };
+  $('spSimExeBtn').onclick = e => { e.stopPropagation(); openMenu('split-simexe', $('spSimExeBtn')); };
+  $('spSimRun').onclick = () => runSplitSim();
+  $('spSimHost').addEventListener('input', e => { state.splitSimHost = e.target.value; });
+  $('spSimHost').addEventListener('keydown', e => { if (e.key === 'Enter') runSplitSim(); });
+  $('spSearch').addEventListener('input', e => { state.splitSearch = e.target.value; renderSplitRules(); });
 }
 
 // ---- 動態值套用 ----
 function updateSplit() {
   if (!$('spEngineBtn')) return;
-  const running = state.splitEngine === 'running', starting = state.splitEngine === 'starting', elevated = state.splitElevated;
+  const running = splitRunning(), starting = state.splitEngine === 'starting';
+  const mode = state.splitMode, ruleMode = mode === 'rule';
+
   const spin = $('spEngineSpin'); if (spin) { spin.style.animation = starting ? 'spinArc 1.1s cubic-bezier(.6,.05,.4,.95) infinite' : 'none'; spin.style.opacity = starting ? '1' : '0'; }
-  const ring = $('spEngineRing'); if (ring) { ring.setAttribute('stroke', running ? 'var(--good)' : 'var(--accent)'); ring.setAttribute('stroke-dashoffset', String(running ? 0 : 578)); ring.style.opacity = running ? '1' : '0'; }
-  const iconColor = running ? 'var(--good)' : starting ? 'var(--accent)' : 'var(--text3)';
-  const ig = $('spEngineIcon'); if (ig) ig.style.color = iconColor;
-  const il = $('spEngineIconLine'); if (il) il.setAttribute('stroke', iconColor);
-  $('spEngineBtn').title = running ? '停止分流引擎' : '啟動分流引擎';
+  const ring = $('spEngineRing'); if (ring) { ring.setAttribute('stroke-dashoffset', String(running ? 0 : 578)); ring.style.opacity = running ? '1' : '0'; }
+  const ig = $('spEngineIcon'); if (ig) ig.style.color = running ? 'var(--good)' : starting ? 'var(--accent)' : 'var(--text3)';
+  $('spEngineBtn').title = running ? '停止分流引擎' : '啟動分流引擎（需管理員權限）';
   $('spEngineTitle').textContent = running ? '分流引擎執行中' : starting ? '正在啟動…' : '分流引擎未執行';
+
   const badge = $('spEngineBadge');
-  badge.textContent = running ? 'TUN 已建立' : starting ? '建立虛擬網卡' : elevated ? '已授權' : '需要提權';
-  badge.style.background = running ? 'rgba(47,158,120,.14)' : starting ? 'rgba(217,139,31,.14)' : elevated ? 'var(--fill2)' : 'rgba(217,139,31,.14)';
-  badge.style.color = running ? 'var(--good)' : starting ? 'var(--amber)' : elevated ? 'var(--text2)' : 'var(--amber)';
-  $('spEngineDesc').textContent = running ? '已接管指定程式的連線；其餘流量不受影響。' : '啟動後可強制指定程式走代理，無需程式本身支援 proxy 設定。';
-  const onRules = state.splitRules.filter(r => r.on).length;
-  const liveN = running ? state.splitLive.length : 0;
-  $('spEngineDev').textContent = running ? 'dev: ' + (state.splitTun || 'utun-cht0') : 'dev: —';
-  $('spEngineApps').textContent = running ? 'apps: ' + liveN + '/' + onRules : 'apps: 0';
-  $('spEngineFlow').textContent = running ? 'rules: ' + state.splitRules.length + ' · default: ' + (state.splitDefaultTarget === 'direct' ? 'direct' : 'proxy') : 'rules: ' + state.splitRules.length;
+  badge.textContent = running ? 'TUN 已建立' : starting ? '建立虛擬網卡' : state.splitElevated ? '已授權' : '需要提權';
+  badge.style.background = running ? 'rgba(47,158,120,.14)' : starting ? 'rgba(217,139,31,.14)' : state.splitElevated ? 'var(--fill2)' : 'rgba(217,139,31,.14)';
+  badge.style.color = running ? 'var(--good)' : starting ? 'var(--amber)' : state.splitElevated ? 'var(--text2)' : 'var(--amber)';
+
+  $('spEngineDesc').textContent = running
+    ? (ruleMode ? '依規則表分流；規則變更約 1–2 秒生效。切換模式不需重新提權。'
+      : mode === 'global' ? `所有流量走「${splitTargetLabel(state.splitGlobalTarget)}」。`
+      : '所有流量直連，斷線保護維持。')
+    : '啟動後依規則決定每個連線走哪條路。';
+  $('spEngineDev').textContent = running ? 'dev: ' + (state.splitTun || 'tun') : 'dev: —';
+  $('spEngineFlow').textContent = `mode: ${mode} · rules: ${state.splitRules.length} · builtin: ${state.splitLanDirect ? 'on' : 'off'}`;
+
+  renderSplitModes();
+  setDisp('spDefaultWrap', false); setDisp('spGlobalWrap', false); setDisp('spDirectNote', false);
+  if (ruleMode) { $('spDefaultWrap').style.display = 'flex'; }
+  else if (mode === 'global') { $('spGlobalWrap').style.display = 'flex'; }
+  else { $('spDirectNote').style.display = 'block'; }
+
   $('spDefaultDot').style.background = splitTargetDot(state.splitDefaultTarget);
   $('spDefaultLabel').textContent = splitTargetLabel(state.splitDefaultTarget);
-  const udp = state.splitUdp, udpBtn = $('spUdpBtn');
-  udpBtn.style.background = udp ? 'var(--accent)' : 'var(--fill)';
-  udpBtn.style.opacity = (running || elevated) ? '1' : '.55';
-  $('spUdpKnob').style.left = udp ? '21px' : '3px';
-  $('spUdpDesc').textContent = udp ? '含 QUIC / 遊戲流量' : '僅轉發 TCP 流量';
+  $('spGlobalDot').style.background = splitTargetDot(state.splitGlobalTarget);
+  $('spGlobalLabel').textContent = state.splitGlobalTarget ? splitTargetLabel(state.splitGlobalTarget) : '請選擇路由';
+  $('spSimExeLabel').textContent = state.splitSimExe || '不限程式';
+
+  const has = state.splitRules.length > 0;
+  setDisp('spRulesHead', has); $('spRulesHead').style.display = has ? 'flex' : 'none';
+  $('spTableWrap').style.display = has ? 'block' : 'none';
+  $('spTableWrap').style.opacity = ruleMode ? '1' : '.45';
+  $('spTools').style.display = state.splitRules.length >= 10 ? 'flex' : 'none';
+
   renderSplitNotice();
   renderSplitFilter();
   renderSplitRules();
-  updateSplitLive();
-  renderSplitHealth();
+  renderSplitEmpty();
+  renderSplitSim();
+}
+
+function renderSplitModes() {
+  const el = $('spModeSeg'); if (!el) return;
+  const modes = [['rule', '規則', '依下方規則表分流'], ['global', '全域', '所有流量走同一條路由，規則暫停'], ['direct', '直連', '所有流量直連，TUN 與斷線保護維持']];
+  el.innerHTML = modes.map(([k, label, tip]) =>
+    `<button data-mode="${k}" title="${esc(tip)}" style="flex:1;border:none;cursor:pointer;height:28px;border-radius:7px;font-size:12px;white-space:nowrap;${segCss(state.splitMode === k)}">${label}</button>`).join('');
+  el.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setSplitMode(b.dataset.mode));
+}
+
+async function setSplitMode(mode) {
+  if (state.splitMode === mode) return;
+  if (mode === 'global' && !state.splitGlobalTarget) {
+    const first = state.routes[0];
+    if (!first) { flash('請先建立一條路由', 'var(--amber)'); return; }
+    state.splitGlobalTarget = first.id;
+  }
+  state.splitMode = mode;
+  updateSplit();
+  await persistSplit({ mode, globalTarget: state.splitGlobalTarget });
+  flash(mode === 'rule' ? '已切回規則模式'
+    : mode === 'global' ? `全域模式：所有流量走「${splitTargetLabel(state.splitGlobalTarget)}」`
+    : '直連模式：所有流量不經代理');
 }
 
 function renderSplitNotice() {
   const el = $('spNotice'); if (!el) return;
   const running = splitRunning();
-  const noUdpRoutes = state.splitRules.some(r => r.on && r.target !== 'direct' && splitRouteOf(r.target) && !splitRouteUdpCapable(splitRouteOf(r.target)));
-  const shield = 'M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z';
-  const warn = 'M12 3.5 2.8 19.5h18.4L12 3.5zM12 9.5v4.5M12 17h.01';
   const info = 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8h.01M11 12h1v5h1';
-  let notice = null;
-  if (state.routes.length === 0) notice = { text: '尚未建立任何路由，規則的目標只能選「直接連線」，因此不會有流量被導向代理。請先到「總覽」新增一條路由（指定上游 proxy 或多跳串鏈），再回此頁把程式指向它。', bg: 'rgba(217,139,31,.12)', color: 'var(--amber)', icon: warn, action: '前往新增路由', go: () => { showTab('dashboard'); } };
-  else if (!state.splitElevated && !running) notice = { text: '首次啟動需要系統管理員權限，用於建立虛擬網卡並注入路由表。整個過程只需同意一次。', bg: 'var(--accent-dim)', color: 'var(--accent)', icon: shield, action: '了解權限用途', go: () => { state.splitUac = true; renderSplitUac(); } };
-  else if (running && state.splitUdp && noUdpRoutes) notice = { text: 'UDP 轉發已開啟，但部分規則指向的上游不支援 UDP（HTTP CONNECT 與 SOCKS4 僅支援 TCP），這些程式的 UDP 流量會自動回落為直連。', bg: 'rgba(217,139,31,.12)', color: 'var(--amber)', icon: warn, action: '', go: () => {} };
-  else if (running) notice = { text: '引擎執行中：未列於規則的程式依「規則外流量」設定處理。停止引擎會立即還原系統路由表。', bg: 'var(--fill2)', color: 'var(--text3)', icon: info, action: '', go: () => {} };
-  if (!notice) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div style="display:flex;align-items:flex-start;gap:9px;padding:11px 13px;background:${notice.bg};border-radius:11px;font-size:11.5px;color:var(--text2);line-height:1.65">
-    <span style="flex-shrink:0;margin-top:1px;color:${notice.color}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${notice.icon}"></path></svg></span>
-    <span style="flex:1;text-wrap:pretty">${esc(notice.text)}</span>
-    ${notice.action ? `<button id="spNoticeGo" class="hvAccDim" style="flex-shrink:0;height:26px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--accent);font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(notice.action)}</button>` : ''}
+  const warn = 'M12 3.5 2.8 19.5h18.4L12 3.5zM12 9.5v4.5M12 17h.01';
+  const shield = 'M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z';
+  const missing = state.splitRules.filter(r => r.on !== false && missingTags(r).length);
+  let n = null;
+  if (state.splitMode === 'global') n = { text: `全域模式：所有流量走「${splitTargetLabel(state.splitGlobalTarget)}」，下方規則暫時停用（本機與內網仍直連）。`, bg: 'var(--accent-dim)', color: 'var(--accent)', icon: info, action: '切回規則', go: () => setSplitMode('rule') };
+  else if (state.splitMode === 'direct') n = { text: '直連模式：所有流量不經代理，規則暫時停用。', bg: 'var(--fill2)', color: 'var(--text3)', icon: info, action: '切回規則', go: () => setSplitMode('rule') };
+  else if (!state.splitElevated && !running) n = { text: '首次啟動需要系統管理員權限，用於建立虛擬網卡並注入路由表。整個過程只需同意一次。', bg: 'var(--accent-dim)', color: 'var(--accent)', icon: shield, action: '了解權限用途', go: () => { state.splitUac = true; renderSplitUac(); } };
+  else if (missing.length) n = { text: `有 ${missing.length} 條規則引用尚未下載的規則庫，這些規則目前不會生效。`, bg: 'rgba(217,139,31,.12)', color: 'var(--amber)', icon: warn, action: '全部下載', go: () => installRuleSets([...new Set(missing.flatMap(missingTags))]) };
+  else if (!running && state.splitRules.length) n = { text: '規則要在分流引擎執行時才會生效。', bg: 'var(--fill2)', color: 'var(--text3)', icon: info, action: '啟動引擎', go: () => toggleSplitEngine() };
+
+  if (!n) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:9px;padding:10px 13px;background:${n.bg};border-radius:11px;font-size:11.5px;color:var(--text2);line-height:1.6;flex-shrink:0;animation:fadeUp .2s ease-out">
+    <span style="flex-shrink:0;color:${n.color};display:flex"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${n.icon}"></path></svg></span>
+    <span style="flex:1;text-wrap:pretty">${esc(n.text)}</span>
+    ${n.action ? `<button id="spNoticeGo" class="hvAccDim" style="flex-shrink:0;height:26px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--accent);font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap">${esc(n.action)}</button>` : ''}
   </div>`;
-  if ($('spNoticeGo')) $('spNoticeGo').onclick = notice.go;
+  if ($('spNoticeGo')) $('spNoticeGo').onclick = n.go;
 }
 
 function renderSplitFilter() {
   const el = $('spFilterSeg'); if (!el) return;
-  el.innerHTML = ['全部', '走代理', '直連'].map(f => `<button data-sfilter="${esc(f)}" style="border:none;cursor:pointer;height:27px;padding:0 11px;border-radius:6px;font-size:12px;white-space:nowrap;flex-shrink:0;${segCss(state.splitFilter === f)}">${f}</button>`).join('');
+  el.innerHTML = ['全部', '程式', '目的地', '走代理', '直連', '封鎖'].map(f =>
+    `<button data-sfilter="${esc(f)}" style="border:none;cursor:pointer;height:26px;padding:0 10px;border-radius:6px;font-size:12px;white-space:nowrap;${segCss(state.splitFilter === f)}">${f}</button>`).join('');
   el.querySelectorAll('[data-sfilter]').forEach(b => b.onclick = () => { state.splitFilter = b.dataset.sfilter; renderSplitFilter(); renderSplitRules(); });
 }
 
 function splitVisibleRules() {
-  return state.splitRules.filter(r => state.splitFilter === '全部' || (state.splitFilter === '走代理' ? r.target !== 'direct' : r.target === 'direct'));
+  const q = (state.splitSearch || '').toLowerCase();
+  return state.splitRules.filter(r => {
+    if (q && !((r.name || '') + JSON.stringify(rWhen(r))).toLowerCase().includes(q)) return false;
+    const f = state.splitFilter, w = rWhen(r);
+    return f === '全部' || (f === '程式' ? !!w.app : f === '目的地' ? !!w.dest
+      : f === '走代理' ? r.target !== 'direct' && r.target !== 'block'
+      : f === '直連' ? r.target === 'direct' : r.target === 'block');
+  });
 }
 
 function renderSplitRules() {
   const el = $('spRulesTable'); if (!el) return;
-  const running = splitRunning();
+  if (!state.splitRules.length) { el.innerHTML = ''; return; }
+  const active = splitActive();
   const visible = splitVisibleRules();
+
   const header = `<div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px">
-    <span style="width:26px;flex-shrink:0"></span>
-    <span style="width:224px;flex-shrink:0;white-space:nowrap">應用程式</span>
-    <span style="width:92px;flex-shrink:0;white-space:nowrap">比對方式</span>
+    <span style="width:26px;flex-shrink:0"></span><span style="width:26px;flex-shrink:0">#</span>
+    <span style="flex:1.3;min-width:0;white-space:nowrap">規則 · 條件</span>
     <span style="flex:1;min-width:0;white-space:nowrap">流量走向</span>
-    <span style="width:96px;flex-shrink:0;white-space:nowrap;text-align:right">即時流量</span>
-    <span style="width:96px;flex-shrink:0"></span>
+    <span style="width:64px;flex-shrink:0;text-align:right;white-space:nowrap">命中</span>
+    <span style="width:104px;flex-shrink:0"></span>
   </div>`;
+
+  const lanOn = state.splitLanDirect;
+  const builtin = `<div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${lanOn ? 'transparent' : 'var(--fill2)'};color:${lanOn ? 'var(--text)' : 'var(--text3)'}">
+    <span title="內建規則：固定在最前面，可停用、不可刪除" style="width:26px;flex-shrink:0;display:flex;align-items:center;color:var(--text3)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg></span>
+    <span style="width:26px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3)">0</span>
+    <span style="flex:1.3;min-width:0;padding-right:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:3px">
+      <span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">本機與內網</span><span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);flex-shrink:0">內建</span></span>
+      <span title="${esc(LAN_CIDRS)}" style="font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">目的地 loopback · 私有網段 · link-local · mDNS（離線清單，無需下載）</span>
+    </span>
+    <span style="flex:1;min-width:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--text2)"></span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">直接連線（不經代理）</span></span>
+    <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3);white-space:nowrap">—</span>
+    <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
+      <button data-lan="1" title="${lanOn ? '停用內建的本機與內網保護' : '啟用內建的本機與內網保護'}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${lanOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s"><span style="position:absolute;top:3px;left:${lanOn ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+      <span style="width:58px"></span>
+    </span>
+  </div>`;
+
   const rowsHtml = visible.map(r => {
-    const pend = state.splitPendingDel === r.id, on = !!r.on;
-    const exe = r.match === 'path' ? (String(r.path || '').split('\\').slice(-2).join('\\') || r.exe) : r.exe;
-    const fullPath = r.path || r.exe;
-    const iconBg = splitTint(r.name) + '22', iconColor = splitTint(r.name);
-    const matchLabel = r.match === 'path' ? '完整路徑' : '程式名稱';
-    const targetLabel = splitTargetLabel(r.target), targetColor = on ? 'var(--text)' : 'var(--text3)';
-    const dot = !on ? 'var(--text3)' : r.target === 'direct' ? 'var(--text2)' : running ? 'var(--good)' : 'var(--text3)';
-    const dotAnim = on && running && r.target !== 'direct' ? 'dotBeat 2.2s ease-in-out infinite' : 'none';
-    const udpWarn = (on && splitUdpIssue(r.target)) ? '此路由的上游不支援 UDP，該程式的 UDP 流量會回落為直連' : '';
-    const liveMatch = running ? state.splitLive.find(l => l.name === r.name) : null;
-    const flow = (liveMatch && liveMatch.rate) ? liveMatch.rate : '—';
-    const flowColor = (liveMatch && liveMatch.rate) ? 'var(--text2)' : 'var(--text3)';
-    const rowBg = on ? 'transparent' : 'var(--fill2)';
-    const onBg = on ? 'var(--accent)' : 'var(--fill)', knob = on ? '19px' : '3px';
-    const enableTip = on ? '停用此規則' : '啟用此規則';
-    const delTip = pend ? '再按一次確認刪除' : '刪除規則', delBg = pend ? 'var(--red)' : 'var(--fill2)', delColor = pend ? '#fff' : 'var(--red)';
-    return `<div data-srid="${esc(r.id)}" draggable="true" class="hvFill2" style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${rowBg};cursor:grab">
+    const idx = state.splitRules.indexOf(r) + 1;
+    const pend = state.splitPendingDel === r.id, on = r.on !== false, isBlock = r.target === 'block';
+    const miss = missingTags(r);
+    const conds = condSummary(rWhen(r));
+    const name = r.name || conds.map(c => c.v).join(' · ') || '未命名規則';
+    const targetLabel = isBlock ? '封鎖' : splitTargetLabel(r.target);
+    const targetColor = !on ? 'var(--text3)' : isBlock ? 'var(--red)' : 'var(--text)';
+    const dot = splitTargetDot(r.target, on);
+    const dotAnim = on && active && !isBlock && r.target !== 'direct' ? 'dotBeat 2.2s ease-in-out infinite' : 'none';
+    const rowBg = state.splitHitId === r.id ? 'var(--accent-dim)' : on ? 'transparent' : 'var(--fill2)';
+    return `<div data-srid="${esc(r.id)}" draggable="true" class="hvFill2" style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${rowBg};box-shadow:${miss.length ? 'inset 3px 0 0 var(--amber)' : 'none'};cursor:grab;color:${on ? 'var(--text)' : 'var(--text3)'};transition:background .3s">
       <span style="width:26px;flex-shrink:0;display:flex;align-items:center;color:var(--text3)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7h.01M8 12h.01M8 17h.01M16 7h.01M16 12h.01M16 17h.01"></path></svg></span>
-      <span style="width:224px;flex-shrink:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:9px;min-width:0">
-        <span style="width:26px;height:26px;flex-shrink:0;border-radius:7px;background:${iconBg};color:${iconColor};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${esc(splitInitials(r.name))}</span>
-        <span style="display:flex;flex-direction:column;min-width:0;gap:1px">
-          <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</span>
-          <span title="${esc(fullPath)}" style="font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(exe)}</span>
-        </span>
+      <span style="width:26px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3)">${idx}</span>
+      <span style="flex:1.3;min-width:0;padding-right:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px">
+        <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</span>
+        <span style="display:flex;gap:5px;flex-wrap:wrap;min-width:0">${conds.map(c => {
+          const st = condChipStyle(c.k);
+          return `<span title="${esc(c.full)}" style="display:inline-flex;align-items:center;gap:4px;max-width:100%;height:18px;padding:0 6px;border-radius:5px;background:${st.bg};color:${st.color};font-size:10.5px;white-space:nowrap;overflow:hidden"><span style="font-weight:700;letter-spacing:.2px;flex-shrink:0">${esc(c.k)}</span><span style="overflow:hidden;text-overflow:ellipsis">${esc(c.v)}</span></span>`;
+        }).join('')}</span>
       </span>
-      <span style="width:92px;flex-shrink:0;padding-right:10px;box-sizing:border-box"><span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);white-space:nowrap">${matchLabel}</span></span>
       <span style="flex:1;min-width:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px">
         <span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${dot};animation:${dotAnim}"></span>
         <span title="${esc(targetLabel)}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:${targetColor}">${esc(targetLabel)}</span>
-        ${udpWarn ? `<span title="${esc(udpWarn)}" style="flex-shrink:0;display:flex;color:var(--amber)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3.5 2.8 19.5h18.4L12 3.5z"></path><path d="M12 9.5v4.5M12 17h.01"></path></svg></span>` : ''}
+        ${miss.length ? `<button data-sact="dl" class="hvBright" style="flex-shrink:0;height:22px;padding:0 9px;border:none;border-radius:6px;background:var(--amber);color:#fff;font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap">下載規則庫</button>` : ''}
       </span>
-      <span style="width:96px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:${flowColor};white-space:nowrap">${esc(flow)}</span>
-      <span style="width:96px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
-        <button data-sact="toggle" title="${enableTip}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${onBg};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${knob};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+      <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3);white-space:nowrap">—</span>
+      <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
+        <button data-sact="toggle" title="${on ? '停用規則：' : '啟用規則：'}${esc(name)}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${on ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${on ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
         <button data-sact="edit" class="hvAcc" title="編輯規則" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
-        <button data-sact="del" class="hvRed" title="${delTip}" style="width:26px;height:26px;border:none;border-radius:7px;background:${delBg};color:${delColor};cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">${splitTrashIcon(pend)}</button>
+        <button data-sact="del" class="hvRed" title="${pend ? '再按一次確認刪除' : '刪除規則'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">${pend
+          ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
+          : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>'}</button>
       </span>
     </div>`;
   }).join('');
+
+  const noVisible = visible.length === 0
+    ? `<div style="padding:26px 20px;text-align:center;color:var(--text3);font-size:12.5px;border-bottom:1px solid var(--sep)">沒有符合篩選條件的規則</div>` : '';
+
   const defaultRow = `<div style="display:flex;align-items:center;padding:10px 16px;font-size:12.5px;background:var(--fill2)">
-    <span style="width:26px;flex-shrink:0"></span>
-    <span style="width:224px;flex-shrink:0;display:flex;align-items:center;gap:9px;color:var(--text2)">
-      <span style="width:26px;height:26px;flex-shrink:0;border-radius:7px;background:var(--fill2);color:var(--text3);display:flex;align-items:center;justify-content:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12h16M12 4v16"></path></svg></span>
-      <span style="font-weight:600;white-space:nowrap">其他所有程式</span>
+    <span style="width:26px;flex-shrink:0"></span><span style="width:26px;flex-shrink:0;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px">∞</span>
+    <span style="flex:1.3;min-width:0;padding-right:12px;box-sizing:border-box;display:flex;align-items:center;gap:7px;color:var(--text2)">
+      <span style="font-weight:600;white-space:nowrap">其他所有流量</span>
+      <span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:var(--fill);color:var(--text2);white-space:nowrap">預設</span>
     </span>
-    <span style="width:92px;flex-shrink:0"><span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:var(--fill);color:var(--text2);white-space:nowrap">預設</span></span>
-    <span style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;color:var(--text2)">
+    <span style="flex:1;min-width:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px;color:var(--text2)">
       <span style="width:7px;height:7px;border-radius:50%;background:${splitTargetDot(state.splitDefaultTarget)};flex-shrink:0"></span>
       <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(splitTargetLabel(state.splitDefaultTarget))}</span>
     </span>
-    <span style="width:96px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3);white-space:nowrap">—</span>
-    <span style="width:96px;flex-shrink:0;display:flex;justify-content:flex-end"><button id="spDefaultChange" class="hvAccDim" style="height:26px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--accent);font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap">變更</button></span>
+    <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3);white-space:nowrap">—</span>
+    <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end"><button id="spDefaultChange" class="hvAccDim" style="height:26px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--accent);font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap">變更</button></span>
   </div>`;
-  const empty = visible.length === 0 ? `<div style="padding:40px 20px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.8">尚無應用程式規則<br>所有流量都依「其他所有程式」的預設走向處理</div>` : '';
-  el.innerHTML = header + rowsHtml + defaultRow + empty;
+
+  el.innerHTML = header + builtin + rowsHtml + noVisible + defaultRow;
+
+  const lanBtn = el.querySelector('[data-lan]');
+  if (lanBtn) lanBtn.onclick = () => toggleLanDirect();
   el.querySelectorAll('[data-srid]').forEach(row => {
     const rid = row.dataset.srid;
     row.addEventListener('dragstart', () => { state.splitDrag = rid; });
@@ -1863,11 +2006,88 @@ function renderSplitRules() {
       state.splitRules = arr;
       renderSplitRules(); persistSplit({ rules: state.splitRules });
     });
-    row.querySelector('[data-sact="toggle"]').onclick = e => { e.stopPropagation(); state.splitRules = state.splitRules.map(x => x.id === rid ? { ...x, on: !x.on } : x); updateSplit(); persistSplit({ rules: state.splitRules }); };
+    row.querySelector('[data-sact="toggle"]').onclick = e => { e.stopPropagation(); state.splitRules = state.splitRules.map(x => x.id === rid ? { ...x, on: x.on === false } : x); updateSplit(); persistSplit({ rules: state.splitRules }); };
     row.querySelector('[data-sact="edit"]').onclick = e => { e.stopPropagation(); openSplitSheet(rid); };
     row.querySelector('[data-sact="del"]').onclick = e => { e.stopPropagation(); splitDeleteRule(rid); };
+    const dl = row.querySelector('[data-sact="dl"]');
+    if (dl) dl.onclick = e => { e.stopPropagation(); installRuleSets(missingTags(state.splitRules.find(x => x.id === rid))); };
   });
   if ($('spDefaultChange')) $('spDefaultChange').onclick = e => { e.stopPropagation(); openMenu('split-default', $('spDefaultChange')); };
+}
+
+async function toggleLanDirect() {
+  state.splitLanDirect = !state.splitLanDirect;
+  updateSplit();
+  await persistSplit({ lanDirect: state.splitLanDirect });
+  flash(state.splitLanDirect ? '已啟用本機與內網保護' : '已停用本機與內網保護——內網流量將依下方規則處理',
+    state.splitLanDirect ? undefined : 'var(--amber)');
+}
+
+function renderSplitEmpty() {
+  const el = $('spEmpty'); if (!el) return;
+  if (state.splitRules.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:40px 24px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center">
+    <span style="width:46px;height:46px;border-radius:13px;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h6"></path></svg></span>
+    <span style="font-size:16px;font-weight:700;letter-spacing:-.2px">還沒有規則</span>
+    <span style="font-size:12.5px;color:var(--text2);line-height:1.7;max-width:420px;text-wrap:pretty">一條規則＝「誰／連去哪／哪個埠」的組合 → 走哪條路。內建的「本機與內網直連」已在保護你。</span>
+    <div style="display:flex;gap:9px;margin-top:2px">
+      <button id="spEmptyAdd" class="hvBright" style="height:34px;padding:0 16px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增規則</button>
+      <button id="spEmptyBrowser" class="hvFill2" style="height:34px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">用這條路由開瀏覽器</button>
+    </div>
+  </div>`;
+  $('spEmptyAdd').onclick = () => openSplitSheet();
+  $('spEmptyBrowser').onclick = async () => {
+    const rid = state.sel || (state.routes[0] || {}).id;
+    if (!rid) { flash('請先建立一條路由', 'var(--amber)'); return; }
+    try { const r = await window.api.launchBrowser(rid); flash(r && r.ok ? '已用該路由開啟瀏覽器' : (r && r.error) || '啟動失敗', r && r.ok ? undefined : 'var(--red)'); } catch { flash('啟動失敗', 'var(--red)'); }
+  };
+}
+
+// ---- 規則模擬器 ----
+async function runSplitSim() {
+  const raw = (state.splitSimHost || '').trim();
+  if (!raw) return;
+  const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
+  const [host, portStr] = clean.split(':');
+  const port = portStr && /^\d+$/.test(portStr) ? Number(portStr) : 0;
+  try {
+    const res = await window.api.ruleMatch({ host, exe: state.splitSimExe || '', port, network: 'tcp' });
+    state.splitSim = { host: raw, res };
+    state.splitHitId = res && res.ruleId ? res.ruleId : null;
+    renderSplitSim(); renderSplitRules();
+    clearTimeout(state._splitHitT);
+    state._splitHitT = setTimeout(() => { state.splitHitId = null; renderSplitRules(); }, 2000);
+  } catch { flash('模擬失敗', 'var(--red)'); }
+}
+
+function renderSplitSim() {
+  const el = $('spSimResult'); if (!el) return;
+  const sim = state.splitSim;
+  if (!sim) { el.innerHTML = ''; return; }
+  const r = sim.res || {};
+  const hit = r.matched;
+  const rule = hit ? state.splitRules.find(x => x.id === r.ruleId) : null;
+  const idx = rule ? state.splitRules.indexOf(rule) + 1 : 0;
+  const isBlock = r.target === 'block';
+  const miss = rule ? missingTags(rule) : [];
+  const bg = isBlock ? 'rgba(217,83,74,.10)' : hit ? 'var(--accent-dim)' : 'var(--fill2)';
+  const color = isBlock ? 'var(--red)' : hit ? 'var(--accent)' : 'var(--text3)';
+  const icon = isBlock ? 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.5 5.5l13 13'
+    : hit ? 'M5 13l4 4L19 7' : 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8h.01M11 12h1v5h1';
+  const title = hit ? `命中第 ${idx} 條「${rule ? (rule.name || condSummary(rWhen(rule)).map(c => c.v).join(' · ')) : r.ruleName}」` : '未命中任何規則 → 依預設走向';
+  const sub = `走向：${r.targetLabel || splitTargetLabel(r.target)}` + (isBlock ? '，這個連線會被丟棄' : '');
+  el.innerHTML = `<div style="display:flex;align-items:flex-start;gap:10px;padding:11px 13px;background:${bg};border-radius:11px;font-size:12px;line-height:1.65;animation:fadeUp .2s ease-out">
+    <span style="flex-shrink:0;margin-top:1px;color:${color};display:flex"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${icon}"></path></svg></span>
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+      <span style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+        <span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-weight:600;white-space:nowrap">${esc(sim.host)}</span>
+        <span style="color:var(--text3)">→</span>
+        <span style="text-wrap:pretty">${esc(title)}</span>
+      </span>
+      <span style="color:var(--text2);text-wrap:pretty">${esc(sub)}</span>
+      ${miss.length ? `<span style="color:var(--amber);text-wrap:pretty">此規則目前不會生效（規則庫未下載）</span>` : ''}
+    </div>
+  </div>`;
 }
 
 function splitDeleteRule(rid) {
@@ -1881,117 +2101,52 @@ function splitDeleteRule(rid) {
   updateSplit(); persistSplit({ rules: state.splitRules });
 }
 
-function updateSplitLive() {
-  const running = splitRunning();
-  const live = running ? state.splitLive : [];
-  if ($('spLiveCount')) $('spLiveCount').textContent = running ? live.length + ' 個程式' : '';
-  const listEl = $('spLiveList'); if (!listEl) return;
-  if (!running || live.length === 0) {
-    listEl.innerHTML = `<div style="padding:16px 0;text-align:center;color:var(--text3);font-size:11.5px">引擎未執行 · 尚無攔截中的程式</div>`;
-    return;
+// ---- 規則庫下載 ----
+async function installRuleSets(tags) {
+  const list = (tags || []).filter(Boolean);
+  if (!list.length) return;
+  flash(`下載中… ${list.map(catLabel).join('、')}`);
+  let ok = 0;
+  for (const t of list) {
+    try { const r = await window.api.rulesetInstall(t); if (r && r.ok) ok++; else flash(`下載失敗：${catLabel(t)}${r && r.error ? ' — ' + r.error : ''}`, 'var(--red)'); }
+    catch { flash(`下載失敗：${catLabel(t)}`, 'var(--red)'); }
   }
-  const maxBytes = Math.max(1, ...live.map(l => Number(l.bytes) || 0));
-  listEl.innerHTML = live.map((l, i) => {
-    const name = l.name || '';
-    const initials = l.initials || splitInitials(name);
-    const iconBg = splitTint(name) + '22', iconColor = splitTint(name);
-    const pct = Math.max(6, Math.min(100, Math.round(((Number(l.bytes) || 0) / maxBytes) * 100)));
-    const barColor = i % 2 ? 'var(--purple)' : 'var(--good)';
-    return `<div style="display:flex;align-items:center;gap:10px;font-size:12px">
-      <span style="width:22px;height:22px;flex-shrink:0;border-radius:6px;background:${iconBg};color:${iconColor};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${esc(initials)}</span>
-      <span style="width:104px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500">${esc(name)}</span>
-      <span style="flex:1;min-width:0;height:6px;border-radius:3px;background:var(--fill2);position:relative;overflow:hidden">
-        <span style="position:absolute;inset:0 auto 0 0;width:${pct}%;background:${barColor};border-radius:3px;transition:width .3s linear"></span>
-      </span>
-      <span style="width:74px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);white-space:nowrap">${esc(l.rate || '')}</span>
-    </div>`;
-  }).join('');
+  try { const l = await window.api.rulesetList(); if (Array.isArray(l)) state.splitInstalled = l; } catch {}
+  updateSplit();
+  if (ok) flash(`已下載 ${ok} 個規則庫`);
 }
 
-function splitHealthData() {
-  if (Array.isArray(state.splitHealth) && state.splitHealth.length) return state.splitHealth;
-  const running = splitRunning(), udp = state.splitUdp, elevated = state.splitElevated;
-  return running ? [
-    { label: '虛擬網卡 (TUN)', value: state.splitTun || 'utun-cht0', dot: 'var(--good)', color: 'var(--text2)' },
-    { label: '路由表注入', value: '正常', dot: 'var(--good)', color: 'var(--good)' },
-    { label: '規則命中率', value: '—', dot: 'var(--good)', color: 'var(--text2)' },
-    { label: 'UDP 轉發', value: udp ? '啟用' : '停用', dot: udp ? 'var(--good)' : 'var(--text3)', color: 'var(--text2)' },
-    { label: 'DNS 攔截', value: '127.0.0.1:53', dot: 'var(--good)', color: 'var(--text2)' },
-  ] : [
-    { label: '虛擬網卡 (TUN)', value: '未建立', dot: 'var(--text3)', color: 'var(--text3)' },
-    { label: '路由表注入', value: '—', dot: 'var(--text3)', color: 'var(--text3)' },
-    { label: '提權狀態', value: elevated ? '已授權' : '未授權', dot: elevated ? 'var(--good)' : 'var(--amber)', color: elevated ? 'var(--good)' : 'var(--amber)' },
-    { label: 'UDP 轉發', value: udp ? '啟用' : '停用', dot: 'var(--text3)', color: 'var(--text3)' },
-  ];
-}
-
-function renderSplitHealth() {
-  const el = $('spHealthList'); if (!el) return;
-  el.innerHTML = splitHealthData().map(h => `<div style="display:flex;align-items:center;gap:9px;font-size:12px">
-    <span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${splitDotColor(h.dot)}"></span>
-    <span style="flex:1;min-width:0;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(h.label)}</span>
-    <span style="flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:${h.color || 'var(--text2)'};white-space:nowrap">${esc(h.value)}</span>
-  </div>`).join('');
-}
-
-// ---- 引擎電源狀態機（engineStart / engineStop / needElevation → UAC）----
+// ---- 引擎啟停 ----
 async function toggleSplitEngine() {
-  if (state.splitEngine === 'running' || state.splitEngine === 'starting') {
-    try { await window.api.engineStop(); } catch {}
-    state.splitEngine = 'off'; state.splitLive = [];
+  if (splitRunning() || state.splitEngine === 'starting') {
+    await window.api.engineStop();
+    state.splitEngine = 'off'; state.splitTun = null;
     updateSplit(); syncTitlebar();
     flash('引擎已停止，系統路由表已還原');
-    refreshEngineStatus();
     return;
   }
-  attemptSplitEngineStart();
+  await attemptSplitEngineStart();
 }
+
 async function attemptSplitEngineStart() {
-  state.splitEngine = 'starting';
-  updateSplit(); syncTitlebar();
-  let res;
-  try { res = await window.api.engineStart(); }
-  catch (e) { res = { ok: false, error: (e && e.message) || String(e) }; }
-  if (res && res.ok) {
-    state.splitEngine = 'running';
-    await refreshEngineStatus();
-    if (state.splitEngine !== 'running') state.splitEngine = 'running';
-    updateSplit(); syncTitlebar();
-    flash('分流引擎已啟動');
-  } else if (res && res.needElevation) {
-    state.splitEngine = 'off';
-    state.splitUac = true;
-    updateSplit(); syncTitlebar();
-    renderSplitUac();
-  } else {
-    state.splitEngine = 'off';
-    updateSplit(); syncTitlebar();
-    flash((res && (res.error || res.message)) || '引擎啟動失敗', 'var(--red)');
-  }
-}
-async function grantSplitUac() {
-  state.splitUac = false; state.splitUacSeen = true;
-  closeSplitUac();
-  // app 用 asInvoker 正常啟動；建 TUN 需提權 → 請求以系統管理員身分重啟。
-  // 只有提權被接受時 app 才會關閉並以系管員重啟；被拒/被擋則留在原地顯示錯誤（不 crash）。
-  state.splitEngine = 'starting';
-  updateSplit(); syncTitlebar();
-  flash('正在請求系統管理員權限…');
+  state.splitEngine = 'starting'; updateSplit(); syncTitlebar();
   let r;
-  try { r = window.api.engineElevate ? await window.api.engineElevate() : { ok: false, error: '此版本不支援提權' }; }
-  catch (e) { r = { ok: false, error: (e && e.message) || String(e) }; }
-  if (!r || !r.ok) {
-    state.splitEngine = 'off';
-    updateSplit(); syncTitlebar();
-    flash((r && r.error) || '提權失敗，分流引擎未啟動', 'var(--red)');
-  }
-  // r.ok → app 會以系管員重啟並自動開引擎，這裡不需再處理
+  try { r = await window.api.engineStart(); } catch (e) { r = { ok: false, error: e.message }; }
+  if (r && r.ok) { state.splitEngine = 'running'; await refreshEngineStatus(); updateSplit(); syncTitlebar(); flash('分流引擎已啟動'); return; }
+  state.splitEngine = 'off'; updateSplit(); syncTitlebar();
+  if (r && r.needElevation) { state.splitUac = true; renderSplitUac(); return; }
+  flash('引擎啟動失敗：' + ((r && (r.error || r.message)) || '未知錯誤'), 'var(--red)');
 }
-function toggleSplitUdp() {
-  state.splitUdp = !state.splitUdp;
-  updateSplit();
-  persistSplit({ udp: state.splitUdp });
-  flash(state.splitUdp ? 'UDP 轉發已啟用' : 'UDP 轉發已停用');
+
+async function grantSplitUac() {
+  closeSplitUac();
+  state.splitEngine = 'starting'; updateSplit(); syncTitlebar();
+  let r;
+  try { r = await window.api.engineElevate(); } catch (e) { r = { ok: false, error: e.message }; }
+  if (!(r && r.ok)) {
+    state.splitEngine = 'off'; updateSplit(); syncTitlebar();
+    flash((r && r.error) || '提權失敗', 'var(--red)');
+  }
 }
 
 // ---- 持久化（saveSplit）----
@@ -2002,123 +2157,190 @@ async function persistSplit(patch) {
       if (Array.isArray(merged.rules)) state.splitRules = merged.rules;
       if (merged.defaultTarget != null) state.splitDefaultTarget = merged.defaultTarget;
       if (typeof merged.udp === 'boolean') state.splitUdp = merged.udp;
+      if (merged.mode) state.splitMode = merged.mode;
+      if ('globalTarget' in merged) state.splitGlobalTarget = merged.globalTarget;
+      if (typeof merged.lanDirect === 'boolean') state.splitLanDirect = merged.lanDirect;
       if (state.tab === 'split') updateSplit();
     }
   } catch {}
 }
 
-// ---- 規則外流量 / 目標路由 下拉（接 openMenu）----
-function splitMenuItems(kind) {
-  const isDefault = kind === 'split-default';
-  const cur = isDefault ? state.splitDefaultTarget : state.splitDraft.target;
-  const opts = [{ id: 'direct', label: '直接連線（不經代理）' }, ...state.routes.map(r => ({ id: r.id, label: r.label }))];
+// ---- 下拉選單（接 openMenu）----
+function splitTargetOptions(cur, pick, includeBlock = true, includeDirect = true) {
+  const opts = [
+    ...(includeDirect ? [{ id: 'direct' }] : []),
+    ...state.routes.map(r => ({ id: r.id })),
+    ...(includeBlock ? [{ id: 'block' }] : []),
+  ];
   return opts.map(o => ({
-    label: o.label, badge: splitTargetBadge(o.id), dot: splitTargetDot(o.id), check: cur === o.id,
-    pick: () => {
-      if (isDefault) { state.splitDefaultTarget = o.id; closeMenu(); updateSplit(); persistSplit({ defaultTarget: o.id }); flash('已更新規則外流量走向'); }
-      else { state.splitDraft = { ...state.splitDraft, target: o.id }; closeMenu(); renderSplitSheet(); }
-    },
+    label: splitTargetLabel(o.id), badge: splitTargetBadge(o.id),
+    dot: o.id === 'block' ? 'var(--red)' : splitTargetDot(o.id),
+    check: cur === o.id, pick: () => pick(o.id),
   }));
 }
 
-// ---- 規則編輯面板（右側滑入 470px）----
+function splitMenuItems(kind) {
+  if (kind === 'split-default') {
+    return splitTargetOptions(state.splitDefaultTarget, id => {
+      state.splitDefaultTarget = id; closeMenu(); updateSplit();
+      persistSplit({ defaultTarget: id }); flash('已更新規則外流量走向');
+    }, false);
+  }
+  if (kind === 'split-global') {
+    return splitTargetOptions(state.splitGlobalTarget, id => {
+      state.splitGlobalTarget = id; closeMenu(); updateSplit();
+      persistSplit({ globalTarget: id }); flash(`全域模式：所有流量走「${splitTargetLabel(id)}」`);
+    }, false, false);
+  }
+  if (kind === 'split-target') {
+    return splitTargetOptions(state.splitDraft.target, id => {
+      state.splitDraft = { ...state.splitDraft, target: id }; closeMenu(); renderSplitSheet();
+    });
+  }
+  if (kind === 'split-simexe') {
+    return [{ id: '', label: '不限程式' }, ...state.splitProcs.slice(0, 40).map(p => ({ id: p.exe, label: p.exe }))]
+      .map(o => ({ label: o.label, dot: 'var(--text3)', check: state.splitSimExe === o.id,
+        pick: () => { state.splitSimExe = o.id; closeMenu(); updateSplit(); } }));
+  }
+  if (kind === 'split-proc') {
+    return state.splitProcs.slice(0, 60).map(p => ({ label: p.exe, badge: '', dot: 'var(--purple)', check: false,
+      pick: () => { setDraftWhen({ app: { match: 'name', value: p.exe } }); closeMenu(); renderSplitSheet(); } }));
+  }
+  if (kind === 'split-rs') {
+    const d = state.splitDraft.when.dest || { match: 'ruleset', value: '' };
+    const tags = splitVals(d.value);
+    const inst = state.splitCatalog.filter(c => isInstalled(c.tag));
+    const rest = state.splitCatalog.filter(c => !isInstalled(c.tag));
+    const mk = (c, installed) => ({
+      label: c.label, badge: installed ? '' : '未下載', dot: 'var(--accent)', check: tags.includes(c.tag),
+      pick: () => {
+        const next = tags.includes(c.tag) ? tags.filter(t => t !== c.tag) : [...tags, c.tag];
+        setDraftWhen({ dest: { match: 'ruleset', value: next.join('\n') } });
+        renderSplitSheet();
+      },
+    });
+    return [...inst.map(c => mk(c, true)), ...rest.map(c => mk(c, false))];
+  }
+  return [];
+}
+
+// ---- 規則編輯面板（右側滑入 480px）----
+function setDraftWhen(patch) {
+  const d = state.splitDraft;
+  state.splitDraft = { ...d, when: { ...d.when, ...patch }, error: '' };
+}
 function openSplitSheet(id) {
   const r = id ? state.splitRules.find(x => x.id === id) : null;
   state.splitSheet = true; state.splitEditing = id || null; closeMenu();
-  state.splitPickMode = r ? '手動輸入' : '執行中的程式';
-  state.splitMatchMode = r ? (r.match === 'path' ? '完整路徑' : '程式名稱') : '程式名稱';
-  state.splitProcSearch = '';
-  const defTarget = state.routes[0] ? state.routes[0].id : 'direct';
-  state.splitDraft = r ? { name: r.name, exe: r.exe, path: r.path, pattern: r.exe, target: r.target, match: r.match }
-                       : { name: '', exe: '', path: '', pattern: '', target: defTarget, match: 'name' };
+  const w = r ? JSON.parse(JSON.stringify(rWhen(r))) : {};
+  state.splitDraft = { name: r ? (r.name || '') : '', when: w, target: r ? r.target : (state.routes[0] ? state.routes[0].id : 'direct'), error: '' };
+  state.splitOpenConds = { app: !!w.app, dest: !!w.dest || !r, port: !!w.port, net: !!w.network };
   renderSplitSheet();
   loadSplitProcs();
 }
 function closeSplitSheet() { state.splitSheet = false; closeMenu(); $('splitSheetMount').innerHTML = ''; }
 async function loadSplitProcs() {
   try { const list = await window.api.listProcesses(); if (Array.isArray(list)) state.splitProcs = list; } catch {}
-  if (state.splitSheet && state.splitPickMode === '執行中的程式') renderSplitProcList();
 }
-function syncSplitDraft() {
-  const d = state.splitDraft;
-  if ($('spDraftName')) d.name = $('spDraftName').value;
-  if ($('spDraftPath')) d.path = $('spDraftPath').value;
-  if ($('spDraftPattern')) d.pattern = $('spDraftPattern').value;
-  if ($('spProcSearch')) state.splitProcSearch = $('spProcSearch').value;
-}
+
 function splitDraftJson() {
-  const d = state.splitDraft;
-  const value = d.match === 'path' ? (d.path || '') : (d.pattern || d.exe || '');
-  return '{ "id": "' + (state.splitEditing || 'ru-new') + '", "name": "' + (d.name || '未命名') + '", "match": "' + d.match + '", "value": "' + value + '", "target": "' + d.target + '", "enabled": true }';
+  const d = state.splitDraft, w = d.when;
+  const nameAuto = condSummary(w).map(c => c.v).join(' · ');
+  const when = Object.fromEntries(Object.entries(w).filter(([, v]) => v && (typeof v !== 'object' || v.value)));
+  return JSON.stringify({ id: state.splitEditing || 'r-new', name: d.name || nameAuto || '未命名', when, target: d.target, enabled: true });
 }
-function updateSplitJson() { const el = $('spDraftJson'); if (el) el.textContent = splitDraftJson(); }
 
 function renderSplitSheet() {
   if (!state.splitSheet) { $('splitSheetMount').innerHTML = ''; return; }
-  const d = state.splitDraft;
+  const d = state.splitDraft, w = d.when;
   const scrollTop = $('spSheetBody') ? $('spSheetBody').scrollTop : 0;
-  const isRunningPick = state.splitPickMode === '執行中的程式';
-  const isBrowsePick = state.splitPickMode === '瀏覽檔案';
-  const isManualPick = state.splitPickMode === '手動輸入';
-  const draftTargetLabel = splitTargetLabel(d.target), draftTargetBadge = splitTargetBadge(d.target), draftTargetDot = splitTargetDot(d.target);
-  const draftRt = splitRouteOf(d.target);
-  const draftUdpWarn = (state.splitUdp && draftRt && !splitRouteUdpCapable(draftRt)) ? '「' + draftRt.label + '」的上游為 ' + (draftRt.kind === 'http' ? 'HTTP CONNECT' : 'SOCKS') + '，不支援 UDP；此程式的 UDP 流量將回落為直連。' : '';
-  const pickSeg = ['執行中的程式', '瀏覽檔案', '手動輸入'].map(m => `<button data-spick="${esc(m)}" style="flex:1;border:none;cursor:pointer;height:30px;border-radius:7px;font-size:12px;white-space:nowrap;${segCss(state.splitPickMode === m)}">${m}</button>`).join('');
-  const matchSeg = ['程式名稱', '完整路徑'].map(m => `<button data-smatch="${esc(m)}" style="flex:1;border:none;cursor:pointer;height:30px;border-radius:7px;font-size:12px;white-space:nowrap;${segCss(state.splitMatchMode === m)}">${m}</button>`).join('');
+  const dest = w.dest || { match: 'suffix', value: '' };
+  const dTags = dest.match === 'ruleset' ? splitVals(dest.value) : [];
+  const nameAuto = condSummary(w).map(c => c.v).join(' · ');
+  const appMatch = (w.app || { match: 'name' }).match;
+
+  const condDefs = [
+    { k: 'app', label: '程式', color: 'var(--purple)', has: !!(w.app && w.app.value),
+      icon: 'M4 5h16v11H4zM8 20h8M12 16v4', summary: w.app && w.app.value ? (appMatch === 'path' ? '路徑 ' : '') + w.app.value : '不限' },
+    { k: 'dest', label: '目的地', color: 'var(--accent)', has: !!(w.dest && w.dest.value),
+      icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18',
+      summary: w.dest && w.dest.value ? (condSummary({ dest: w.dest })[0] || {}).full || '不限' : '不限' },
+    { k: 'port', label: '埠', color: 'var(--text2)', has: !!w.port, icon: 'M4 12h16M4 6h16M4 18h16', summary: w.port || '不限' },
+    { k: 'net', label: '協定', color: 'var(--text2)', has: !!w.network, icon: 'M5 12l4-8 6 16 4-8', summary: w.network ? String(w.network).toUpperCase() : 'TCP + UDP' },
+  ];
+
+  const seg = (items, cur, attr) => items.map(([k, label]) =>
+    `<button data-${attr}="${k}" style="flex:1;border:none;cursor:pointer;height:26px;border-radius:6px;font-size:12px;white-space:nowrap;${segCss(cur === k)}">${label}</button>`).join('');
+
+  const condHtml = condDefs.map(c => {
+    const open = !!state.splitOpenConds[c.k];
+    let body = '';
+    if (c.k === 'app') {
+      body = `<div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px">${seg([['name', '程式名稱'], ['path', '完整路徑']], appMatch, 'sappmode')}</div>
+        <div style="display:flex;gap:8px">
+          <input id="spAppValue" value="${esc((w.app || {}).value || '')}" placeholder="${appMatch === 'path' ? 'C:\\Program Files\\...\\app.exe' : 'chrome.exe'}" style="flex:1;min-width:0;height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;outline:none;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">
+          <button id="spPickProc" class="hvFill2" style="flex-shrink:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap">從執行中挑選</button>
+          <button id="spBrowseExe" class="hvFill2" style="flex-shrink:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap">瀏覽…</button>
+        </div>`;
+    } else if (c.k === 'dest') {
+      const isRs = dest.match === 'ruleset';
+      const ui = DEST_UI[dest.match] || DEST_UI.suffix;
+      body = `<div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px">${seg(DEST_KINDS, dest.match, 'sdestkind')}</div>`;
+      if (!isRs) {
+        body += `<textarea id="spDestValue" rows="3" placeholder="${esc(ui.ph)}" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;outline:none;resize:vertical;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;line-height:1.6">${esc(dest.value || '')}</textarea>
+          <span style="font-size:11px;color:var(--text3);line-height:1.5">${esc(ui.hint)}</span>`;
+      } else {
+        body += `<button id="spRsPick" class="hvFill2" style="display:flex;align-items:center;gap:9px;height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--panel);color:${dTags.length ? 'var(--text)' : 'var(--text3)'};font-size:12.5px;cursor:pointer;text-align:left"><span style="flex:1">${dTags.length ? `已選 ${dTags.length} 個` : '選擇地區或分類…'}</span><span style="color:var(--text3);font-size:9px">▾</span></button>
+          ${dTags.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${dTags.map(t => {
+            const ok = isInstalled(t);
+            return `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:7px;background:${ok ? 'var(--accent-dim)' : 'rgba(217,139,31,.14)'};color:${ok ? 'var(--accent)' : 'var(--amber)'};font-size:11.5px;white-space:nowrap">${esc(catLabel(t))}<button data-schip="${esc(t)}" title="移除" style="border:none;background:transparent;color:inherit;cursor:pointer;padding:0;display:flex;font-size:11px">✕</button></span>`;
+          }).join('')}</div>` : ''}
+          <span style="font-size:11px;color:var(--text3);line-height:1.5;text-wrap:pretty">依「目的地在哪個國家」或「屬於哪類網站」（如 Netflix、廣告）比對，選了才下載對應清單，可複選。</span>`;
+      }
+    } else if (c.k === 'port') {
+      body = `<input id="spPortValue" value="${esc(w.port || '')}" placeholder="443, 80, 3000-3999" style="height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;outline:none;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">
+        <span style="font-size:11px;color:var(--text3);line-height:1.5">目的地埠，逗號分隔，可寫範圍。</span>`;
+    } else {
+      body = `<div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px">${seg([['', 'TCP + UDP'], ['tcp', '僅 TCP'], ['udp', '僅 UDP']], w.network || '', 'snetmode')}</div>`;
+    }
+    return `<div style="border:1px solid ${c.has ? 'var(--accent)' : 'var(--sep)'};border-radius:12px;background:${c.has ? 'var(--accent-dim)' : 'var(--bg)'};overflow:hidden;flex-shrink:0">
+      <button data-scond="${c.k}" class="hvFill2" style="width:100%;display:flex;align-items:center;gap:10px;height:42px;padding:0 14px;border:none;background:transparent;color:var(--text);cursor:pointer;text-align:left">
+        <span style="display:flex;color:${c.has ? c.color : 'var(--text3)'}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="${c.icon}"></path></svg></span>
+        <span style="font-size:13px;font-weight:600;white-space:nowrap">${c.label}</span>
+        <span style="flex:1;min-width:0;font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">${esc(c.summary)}</span>
+        <span style="color:var(--text3);font-size:10px;transform:rotate(${open ? '90deg' : '0deg'});transition:transform .2s;display:flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6l6 6-6 6"></path></svg></span>
+      </button>
+      ${open ? `<div style="padding:2px 14px 14px;display:flex;flex-direction:column;gap:9px;animation:fadeUp .18s ease-out">${body}</div>` : ''}
+    </div>`;
+  }).join('');
 
   $('splitSheetMount').innerHTML = `
     <div id="spSheetOverlay" style="position:absolute;inset:0;background:rgba(0,0,0,.28);display:flex;justify-content:flex-end;z-index:60">
-      <div id="spSheetPanel" style="width:470px;height:100%;background:var(--panel);border-left:1px solid var(--sep);box-shadow:-12px 0 40px rgba(0,0,0,.18);display:flex;flex-direction:column;animation:sheetIn .26s cubic-bezier(.32,.72,0,1)">
+      <div id="spSheetPanel" style="width:480px;height:100%;background:var(--panel);border-left:1px solid var(--sep);box-shadow:-12px 0 40px rgba(0,0,0,.18);display:flex;flex-direction:column;animation:sheetIn .26s cubic-bezier(.32,.72,0,1)">
         <div style="padding:16px 20px;border-bottom:1px solid var(--sep);display:flex;align-items:center">
-          <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">${state.splitEditing ? '編輯規則' : '新增應用程式規則'}</span>
+          <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">${state.splitEditing ? '編輯規則' : '新增規則'}</span>
           <button id="spSheetClose" class="hvFill" title="關閉面板" style="margin-left:auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button>
         </div>
-        <div id="spSheetBody" style="flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px">
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">選擇程式</span>
-            <div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:9px">${pickSeg}</div>
-          </div>
-          ${isRunningPick ? `<div style="display:flex;flex-direction:column;gap:8px">
-            <div style="display:flex;gap:8px;align-items:center">
-              <input id="spProcSearch" value="${esc(state.splitProcSearch)}" placeholder="搜尋執行中的程式…" style="flex:1;min-width:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
-              <button id="spProcRefresh" class="hvFill2" title="重新整理清單" style="width:32px;height:32px;flex-shrink:0;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4"></path></svg></button>
-            </div>
-            <div id="spProcList" style="border:1px solid var(--sep);border-radius:11px;max-height:196px;overflow-y:auto;background:var(--bg)"></div>
-          </div>` : ''}
-          ${isBrowsePick ? `<div style="display:flex;flex-direction:column;gap:8px">
-            <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">執行檔路徑</span>
-            <div style="display:flex;gap:8px">
-              <input id="spDraftPath" value="${esc(d.path)}" placeholder="C:\\Program Files\\App\\app.exe" style="flex:1;min-width:0;height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12px;outline:none">
-              <button id="spBrowseExe" class="hvFill2" style="flex-shrink:0;height:34px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">瀏覽…</button>
-            </div>
-            <span style="font-size:11px;color:var(--text3);line-height:1.55">選擇 .exe 後會自動填入程式名稱；勾選「完整路徑比對」可避免同名程式誤命中。</span>
-          </div>` : ''}
-          ${isManualPick ? `<div style="display:flex;flex-direction:column;gap:8px">
-            <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">程式名稱或樣式</span>
-            <input id="spDraftPattern" value="${esc(d.pattern)}" placeholder="例如 chrome.exe 或 *\\Steam\\*" style="height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12px;outline:none">
-            <span style="font-size:11px;color:var(--text3);line-height:1.55">支援 * 通用字元，適合整個資料夾或多個執行檔共用一條規則。</span>
-          </div>` : ''}
-          <div style="display:flex;flex-direction:column;gap:7px">
-            <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">顯示名稱</span>
-            <input id="spDraftName" value="${esc(d.name)}" placeholder="例如 Chrome" style="height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
-          </div>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">比對方式</span>
-            <div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:9px">${matchSeg}</div>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:8px">
+        <div id="spSheetBody" style="flex:1;min-height:0;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:14px">
+          <span style="font-size:11.5px;color:var(--text2);line-height:1.55;text-wrap:pretty;flex-shrink:0">條件全部要同時成立才算命中；沒展開的條件＝不限。至少填一項。</span>
+          ${condHtml}
+          ${d.error ? `<span style="font-size:11px;color:var(--red);line-height:1.5;flex-shrink:0">${esc(d.error)}</span>` : ''}
+          <div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0">
             <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">流量走向</span>
-            <button id="spTargetBtn" class="hvFill2" style="display:flex;align-items:center;gap:9px;height:36px;padding:0 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:12.5px;cursor:pointer;text-align:left">
-              <span style="width:7px;height:7px;border-radius:50%;background:${draftTargetDot};flex-shrink:0"></span>
-              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(draftTargetLabel)}</span>
-              <span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);flex-shrink:0;white-space:nowrap">${draftTargetBadge}</span>
+            <button id="spTargetBtn" class="hvFill2" style="display:flex;align-items:center;gap:9px;height:36px;padding:0 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:${d.target === 'block' ? 'var(--red)' : 'var(--text)'};font-size:12.5px;cursor:pointer;text-align:left">
+              <span style="width:7px;height:7px;border-radius:50%;background:${d.target === 'block' ? 'var(--red)' : splitTargetDot(d.target)};flex-shrink:0"></span>
+              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(splitTargetLabel(d.target))}</span>
+              <span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:${d.target === 'block' ? 'rgba(217,83,74,.14)' : 'var(--fill2)'};color:${d.target === 'block' ? 'var(--red)' : 'var(--text2)'};flex-shrink:0;white-space:nowrap">${splitTargetBadge(d.target)}</span>
               <span style="color:var(--text3);font-size:9px">▾</span>
             </button>
-            ${draftUdpWarn ? `<span style="display:flex;align-items:flex-start;gap:7px;font-size:11px;color:var(--amber);line-height:1.55"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><path d="M12 3.5 2.8 19.5h18.4L12 3.5z"></path><path d="M12 9.5v4.5M12 17h.01"></path></svg><span style="flex:1;text-wrap:pretty">${esc(draftUdpWarn)}</span></span>` : ''}
           </div>
-          <div style="background:var(--fill2);border-radius:12px;padding:13px 15px;display:flex;flex-direction:column;gap:7px">
+          <div style="display:flex;flex-direction:column;gap:7px;flex-shrink:0">
+            <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">顯示名稱</span>
+            <input id="spDraftName" value="${esc(d.name)}" placeholder="${nameAuto ? esc('留空自動使用「' + nameAuto + '」') : '例如 Chrome 連公司系統'}" style="height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
+          </div>
+          <div style="background:var(--fill2);border-radius:12px;padding:13px 15px;display:flex;flex-direction:column;gap:7px;flex-shrink:0">
             <span style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;white-space:nowrap">對應 config.json</span>
-            <span id="spDraftJson" style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text">${esc(splitDraftJson())}</span>
+            <span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text">${esc(splitDraftJson())}</span>
           </div>
         </div>
         <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
@@ -2129,79 +2351,78 @@ function renderSplitSheet() {
       </div>
     </div>`;
 
+  const M = $('splitSheetMount');
   $('spSheetOverlay').onclick = e => { if (e.target === $('spSheetOverlay')) closeSplitSheet(); };
   $('spSheetClose').onclick = () => closeSplitSheet();
   $('spSheetCancel').onclick = () => closeSplitSheet();
   $('spSheetSave').onclick = () => saveSplitRule();
-  $('splitSheetMount').querySelectorAll('[data-spick]').forEach(b => b.onclick = () => { syncSplitDraft(); state.splitPickMode = b.dataset.spick; renderSplitSheet(); if (b.dataset.spick === '執行中的程式') loadSplitProcs(); });
-  $('splitSheetMount').querySelectorAll('[data-smatch]').forEach(b => b.onclick = () => { syncSplitDraft(); state.splitMatchMode = b.dataset.smatch; state.splitDraft.match = b.dataset.smatch === '完整路徑' ? 'path' : 'name'; renderSplitSheet(); });
-  $('spTargetBtn').onclick = e => { e.stopPropagation(); syncSplitDraft(); openMenu('split-target', $('spTargetBtn')); };
-  if ($('spDraftName')) $('spDraftName').addEventListener('input', e => { state.splitDraft.name = e.target.value; updateSplitJson(); });
-  if ($('spDraftPath')) $('spDraftPath').addEventListener('input', e => { state.splitDraft.path = e.target.value; updateSplitJson(); });
-  if ($('spDraftPattern')) $('spDraftPattern').addEventListener('input', e => { state.splitDraft.pattern = e.target.value; updateSplitJson(); });
-  if ($('spProcSearch')) $('spProcSearch').addEventListener('input', e => { state.splitProcSearch = e.target.value; renderSplitProcList(); });
-  if ($('spProcRefresh')) $('spProcRefresh').onclick = async () => { await loadSplitProcs(); flash('已重新讀取程式清單'); };
+  $('spTargetBtn').onclick = e => { e.stopPropagation(); openMenu('split-target', $('spTargetBtn')); };
+  M.querySelectorAll('[data-scond]').forEach(b => b.onclick = () => {
+    const k = b.dataset.scond;
+    state.splitOpenConds = { ...state.splitOpenConds, [k]: !state.splitOpenConds[k] };
+    renderSplitSheet();
+  });
+  M.querySelectorAll('[data-sappmode]').forEach(b => b.onclick = () => { setDraftWhen({ app: { match: b.dataset.sappmode, value: (w.app || {}).value || '' } }); renderSplitSheet(); });
+  M.querySelectorAll('[data-sdestkind]').forEach(b => b.onclick = () => { setDraftWhen({ dest: { match: b.dataset.sdestkind, value: '' } }); renderSplitSheet(); });
+  M.querySelectorAll('[data-snetmode]').forEach(b => b.onclick = () => { setDraftWhen({ network: b.dataset.snetmode || undefined }); renderSplitSheet(); });
+  M.querySelectorAll('[data-schip]').forEach(b => b.onclick = () => {
+    const t = b.dataset.schip;
+    setDraftWhen({ dest: { match: 'ruleset', value: dTags.filter(x => x !== t).join('\n') } });
+    renderSplitSheet();
+  });
+  if ($('spAppValue')) $('spAppValue').addEventListener('input', e => { state.splitDraft.when.app = { match: appMatch, value: e.target.value }; });
+  if ($('spDestValue')) $('spDestValue').addEventListener('input', e => { state.splitDraft.when.dest = { match: dest.match, value: e.target.value }; });
+  if ($('spPortValue')) $('spPortValue').addEventListener('input', e => { state.splitDraft.when.port = e.target.value; });
+  if ($('spDraftName')) $('spDraftName').addEventListener('input', e => { state.splitDraft.name = e.target.value; });
+  if ($('spPickProc')) $('spPickProc').onclick = e => { e.stopPropagation(); openMenu('split-proc', $('spPickProc')); };
   if ($('spBrowseExe')) $('spBrowseExe').onclick = () => splitBrowseExe();
-  if (isRunningPick) renderSplitProcList();
+  if ($('spRsPick')) $('spRsPick').onclick = e => { e.stopPropagation(); openMenu('split-rs', $('spRsPick')); };
   if ($('spSheetBody')) $('spSheetBody').scrollTop = scrollTop;
 }
 
-function renderSplitProcList() {
-  const el = $('spProcList'); if (!el) return;
-  const d = state.splitDraft;
-  const q = (state.splitProcSearch || '').toLowerCase();
-  const procs = state.splitProcs.filter(p => !q || ((p.name || '') + (p.path || '')).toLowerCase().includes(q));
-  if (procs.length === 0) {
-    el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:11.5px">${state.splitProcs.length ? '沒有符合的程式' : '讀取中…'}</div>`;
-    return;
-  }
-  el.innerHTML = procs.map(p => {
-    const iconBg = splitTint(p.name) + '22', iconColor = splitTint(p.name);
-    const checked = d.path === p.path;
-    return `<button data-sproc="${esc(p.path)}" class="hvFill2" style="width:100%;display:flex;align-items:center;gap:9px;padding:9px 11px;border:none;border-bottom:1px solid var(--sep);background:${checked ? 'var(--accent-dim)' : 'transparent'};color:var(--text);cursor:pointer;text-align:left">
-      <span style="width:24px;height:24px;flex-shrink:0;border-radius:6px;background:${iconBg};color:${iconColor};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${esc(splitInitials(p.name))}</span>
-      <span style="display:flex;flex-direction:column;min-width:0;flex:1;gap:1px">
-        <span style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.name)}</span>
-        <span style="font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.path)}</span>
-      </span>
-      <span style="flex-shrink:0;font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap">PID ${esc(String(p.pid))}</span>
-      <span style="width:12px;flex-shrink:0;color:var(--accent);font-size:11px">${checked ? '✓' : ''}</span>
-    </button>`;
-  }).join('');
-  el.querySelectorAll('[data-sproc]').forEach(b => b.onclick = () => {
-    const p = state.splitProcs.find(x => x.path === b.dataset.sproc); if (!p) return;
-    state.splitDraft = { ...state.splitDraft, name: p.name, path: p.path, exe: String(p.path).split('\\').pop().toLowerCase() };
-    const nameEl = $('spDraftName'); if (nameEl) nameEl.value = state.splitDraft.name;
-    renderSplitProcList(); updateSplitJson();
-  });
-}
-
 async function splitBrowseExe() {
-  syncSplitDraft();
   try {
     const res = await window.api.browseExe();
     if (res && res.path) {
-      const base = String(res.path).split('\\').pop();
-      state.splitDraft = { ...state.splitDraft, name: res.name || state.splitDraft.name || base, path: res.path, exe: base.toLowerCase() };
+      setDraftWhen({ app: { match: 'path', value: res.path } });
+      if (!state.splitDraft.name) state.splitDraft.name = res.name || '';
       renderSplitSheet();
-      flash('已選擇 ' + base);
+      flash('已選擇 ' + res.exe);
     }
   } catch {}
 }
 
 async function saveSplitRule() {
-  syncSplitDraft();
-  const d = state.splitDraft, editing = state.splitEditing;
-  const id = editing || 'ru' + Date.now();
-  const rec = { id, name: d.name || '未命名程式', exe: (d.pattern || d.exe || 'app.exe'), path: d.path || '', match: d.match, target: d.target, on: true };
-  state.splitRules = editing ? state.splitRules.map(r => r.id === id ? rec : r) : [...state.splitRules, rec];
+  const d = state.splitDraft, w = d.when;
+  const clean = {};
+  if (w.app && String(w.app.value || '').trim()) clean.app = { match: w.app.match === 'path' ? 'path' : 'name', value: String(w.app.value).trim() };
+  if (w.dest && splitVals(w.dest.value).length) clean.dest = { match: w.dest.match, value: splitVals(w.dest.value).join('\n') };
+  if (w.port && String(w.port).trim()) clean.port = String(w.port).trim();
+  if (w.network) clean.network = w.network;
+
+  let error = '';
+  if (!Object.keys(clean).length) error = '至少要填一項條件';
+  else if (clean.port && !/^\d{1,5}(-\d{1,5})?(\s*,\s*\d{1,5}(-\d{1,5})?)*$/.test(clean.port)) error = '埠格式不正確，例如 443, 80, 3000-3999';
+  else if (clean.dest && clean.dest.match === 'ip') {
+    const bad = splitVals(clean.dest.value).findIndex(v => !/^(\d{1,3}(\.\d{1,3}){3}|[0-9a-fA-F:]+)(\/\d{1,3})?$/.test(v));
+    if (bad >= 0) error = `目的地第 ${bad + 1} 行不是合法的 IP 或網段`;
+  }
+  if (error) { state.splitDraft = { ...d, error }; renderSplitSheet(); return; }
+
+  const id = state.splitEditing || 'r' + Date.now();
+  const prev = state.splitEditing ? state.splitRules.find(r => r.id === id) : null;
+  const rec = { id, name: d.name || '', on: prev ? prev.on !== false : true, target: d.target, when: clean };
+  state.splitRules = state.splitEditing ? state.splitRules.map(r => r.id === id ? rec : r) : [...state.splitRules, rec];
   closeSplitSheet();
   updateSplit();
   persistSplit({ rules: state.splitRules });
-  flash(editing ? '規則已更新' : '已新增規則');
+  flash(state.splitEditing ? '規則已更新' : '已新增規則');
+
+  // 規則引用了還沒下載的規則庫 → 立刻問要不要下載
+  const miss = missingTags(rec);
+  if (miss.length) installRuleSets(miss);
 }
 
-// ---- UAC 提權說明視窗 ----
 function renderSplitUac() {
   if (!state.splitUac) { $('splitUacMount').innerHTML = ''; return; }
   const items = [
