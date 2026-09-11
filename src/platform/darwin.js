@@ -1,4 +1,4 @@
-const path = require('path');
+const path = require('path').posix;   // 同理：與執行主機無關，固定用 POSIX 語意
 const { execFileSync, execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileP = promisify(execFile);

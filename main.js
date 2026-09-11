@@ -750,11 +750,9 @@ const ENGINE_LOG_NOISE = /UDP is not supported by outbound/i;
 // match[N] 的 N 就是我們自己產的 route.rules 索引 → engine.ruleIndex 還原成使用者的規則。
 // 這些行只解析、不寫進 app.log（debug 很吵，會把紀錄灌爆）。
 const ENGINE_LOG_PARSED = /router: (match\[|sniffed protocol)|inbound connection to|outbound connection to|connection closed/;
-const hitCounts = new Map();      // ruleId | '__default__' | '__lan__' → 次數
 const pendingConns = new Map();   // 連線 ID → { host, info }
-let hitsDirty = false;
 
-function resetHits() { hitCounts.clear(); pendingConns.clear(); hitsDirty = true; }
+function resetHits() { pendingConns.clear(); }
 
 // 餵一條 sing-box debug 行進來；回傳 true 代表「已消化，不要寫進紀錄」
 function consumeEngineLine(line) {
@@ -790,11 +788,7 @@ function consumeEngineLine(line) {
 
 function recordHit(conn) {
   const info = conn.info;
-  if (info && info.kind === 'self') return;   // app 自己的流量不算進統計
-  const key = !info ? '__default__' : info.kind === 'lan' ? '__lan__' : info.id;
-  hitCounts.set(key, (hitCounts.get(key) || 0) + 1);
-  hitsDirty = true;
-
+  if (info && info.kind === 'self') return;   // app 自己的流量不記
   const split = config.getSplit();
   const rule = info && info.kind === 'rule' ? split.rules.find(r => r.id === info.id) : null;
   addLog('info', 'split', `連線 ${conn.host}`, null, {
@@ -805,13 +799,6 @@ function recordHit(conn) {
     target: info ? (info.kind === 'lan' ? 'direct' : info.target) : split.defaultTarget,
   });
 }
-
-// 命中次數每秒推一次給 UI（避免每條連線都發一次 IPC）
-setInterval(() => {
-  if (!hitsDirty || !mainWindow || mainWindow.isDestroyed()) return;
-  hitsDirty = false;
-  mainWindow.webContents.send('engine-hits', Object.fromEntries(hitCounts));
-}, 1000).unref();
 
 function setupEngine() {
   if (engine) return;
@@ -1030,7 +1017,6 @@ ipcMain.handle('engine-stop', async () => {
   return { ok: true };
 });
 ipcMain.handle('get-engine-status', () => { setupEngine(); return engine.status(); });
-ipcMain.handle('get-engine-hits', () => Object.fromEntries(hitCounts));
 
 // 用到才提權。提權方式因平台而異（adapter 的 engineElevation.strategy）：
 //   relaunch-app（Windows）：以系統管理員重啟自己，帶旗標讓新實例自動啟動引擎與上游路由

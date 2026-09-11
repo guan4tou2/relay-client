@@ -8,12 +8,12 @@ on:
 
 jobs:
   test:
-    # 三平台都跑測試。目前只出 Windows 安裝檔，但 src/platform/ 的 adapter 與純函式邏輯
-    # 在三個 OS 上都該通過——這樣移植時才不會等到打包才發現壞掉。
+    # Windows 與 Linux 都跑測試（macOS 暫不開發，但 darwin adapter 仍會在這兩個
+    # runner 上被 forPlatform('darwin') 測到——adapter 的邏輯刻意與執行主機無關）。
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
