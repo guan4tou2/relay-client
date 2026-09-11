@@ -1,4 +1,7 @@
-const path = require('path');
+// 用 path.win32 而不是 path——path 的分隔符依「執行主機」決定，
+// 在 macOS/Linux 上跑時 path.basename('C:\x\a.exe') 會回傳整串。
+// adapter 的邏輯必須與執行主機無關，否則在別的 OS 上測 Windows adapter 就是假的。
+const path = require('path').win32;
 const { execSync, execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileP = promisify(execFile);

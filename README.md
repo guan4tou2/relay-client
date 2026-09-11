@@ -146,12 +146,13 @@ flowchart LR
 | | 方式 A（本地端口 · 串接） | 方式 B/C（指定程式 · 網域/地區分流） |
 |---|:---:|:---:|
 | **Windows 10/11** | ✅ 已發行 | ✅ 已發行 |
-| macOS | ➖ 程式碼已就緒，尚未出安裝檔 | ❌ TUN 必須 root，且需要一支經簽章的特權助手，尚未實作 |
-| Linux | ➖ 程式碼已就緒，尚未出安裝檔 | ➖ 程式碼已就緒（`setcap cap_net_admin` 一次授權即可），尚未實機驗證 |
+| Linux | ➖ 已加打包（AppImage / deb），尚未實機驗證 | ➖ 程式碼已就緒（`setcap cap_net_admin` 一次授權即可），尚未實機驗證 |
+| macOS | ➖ adapter 已寫、有測試 | ❌ 暫不開發（TUN 必須 root，且需要一支經簽章的特權助手） |
 
 核心邏輯（本地端口、串接、規則生成、規則庫）本來就與 OS 無關；平台差異全部收斂在
-`src/platform/` 的三份 adapter 裡，CI 已在 Windows / macOS / Linux 三個 runner 上跑同一套測試。
-**目前只發行 Windows 安裝檔。**
+`src/platform/` 的 adapter 裡，CI 在 Windows 與 Linux 兩個 runner 上跑同一套測試。
+adapter 的邏輯刻意與執行主機無關（固定用 `path.win32` / `path.posix`），
+所以 darwin adapter 即使沒有 macOS runner 也照樣被測到。
 
 ## 安裝
 
