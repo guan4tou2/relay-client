@@ -58,3 +58,6 @@ input:focus{border-color:var(--accent)}
 /* frameless 視窗：標題列可拖曳，互動元件不可拖曳 */
 .titlebar{-webkit-app-region:drag}
 .titlebar button,.titlebar input,.no-drag{-webkit-app-region:no-drag}
+
+/* 斷線保護橫幅的盾牌圖示進場（設計稿 v7b）*/
+@keyframes shieldIn{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}

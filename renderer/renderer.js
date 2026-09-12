@@ -210,7 +210,25 @@ function syncTitlebar() {
   if (state.tab === 'split') { syncSplitTitlebar(); renderTabs(); return; }
   const runIds = runningRouteIds(), actIds = activeRouteIds();
   const st = $('status'); if (!st) return;
-  // 三段狀態句：路由 · 系統代理 · 斷線保護。各段自己著色、可點跳分頁。
+
+  // 標題列副標：設計稿只放一句短狀態（有色），
+  // 三段式的狀態列在儀表板頁首列，別把兩者搞混。
+  const first = runIds.length === 1 ? (state.routes.find(r => r.id === runIds[0]) || {}) : null;
+  st.textContent = runIds.length > 1 ? `${runIds.length} 條路由執行中`
+    : first ? `執行中 · ${first.label || '未命名路由'}`
+    : actIds.length ? '正在啟動…' : '未執行';
+  st.style.color = runIds.length ? 'var(--good)' : actIds.length ? 'var(--amber)' : 'var(--text3)';
+
+  renderDashStatus(runIds, actIds);
+  $('markArc').setAttribute('stroke', runIds.length ? '#7fe3bd' : 'rgba(255,255,255,.55)');
+  syncAddButton();
+  renderTabs();
+}
+
+// 儀表板首列：三段狀態句 · 分流引擎開關 · 快捷鍵提示。
+// 各段自己著色、可點跳分頁。
+function renderDashStatus(runIds, actIds) {
+  const st = $('dashStatus'); if (!st) return;
   const segs = [
     { label: runIds.length ? `${runIds.length} 條路由執行中` : actIds.length ? '路由連線中' : '沒有路由執行',
       color: runIds.length ? 'var(--good)' : actIds.length ? 'var(--amber)' : 'var(--text2)', tab: 'dashboard' },
@@ -221,19 +239,19 @@ function syncTitlebar() {
       : { label: state.settings.killSwitch ? '斷線保護就緒' : '斷線保護停用',
           color: state.settings.killSwitch && splitRunning() ? 'var(--good)' : 'var(--text2)', tab: 'settings' },
   ];
-  // 末端的分流引擎膠囊：直接開關引擎，與分流頁的電源圓環同步
+  // 末端的分流引擎開關：設計稿是「迷你開關 + 文字」包在一顆有框的鈕裡，
+  // 不是徽章。開關本身 32×18、鈕 26 高，狀態靠顏色與撥桿位置表達。
   const engOn = splitRunning(), engBusy = state.splitEngine === 'starting';
-  const pill = `<button id="stEnginePill" title="${engOn ? '停止分流引擎' : '啟動分流引擎'}" style="margin-left:10px;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border:1px solid var(--sep);border-radius:11px;background:${engOn ? 'rgba(47,158,120,.14)' : 'var(--fill2)'};color:${engOn ? 'var(--good)' : engBusy ? 'var(--amber)' : 'var(--text2)'};font-size:11px;font-weight:600;cursor:pointer;vertical-align:middle">
-    <span style="width:6px;height:6px;border-radius:50%;background:currentColor;${engOn ? 'animation:dotBeat 2.2s ease-in-out infinite' : ''}"></span>分流${engOn ? '開' : engBusy ? '啟動中' : '關'}
+  const engTip = engOn ? '停止引擎：程式與網域規則將失效' : '啟動引擎：依程式與網域規則自動分流（需管理員權限）';
+  const pill = `<button id="stEnginePill" class="hvFill2" title="${engTip}" style="display:flex;align-items:center;gap:7px;border:1px solid var(--sep);background:var(--card);padding:0 9px 0 6px;height:26px;border-radius:13px;cursor:pointer;color:${engOn ? 'var(--good)' : engBusy ? 'var(--amber)' : 'var(--text2)'};font-weight:500;font-size:12px;white-space:nowrap">
+    <span style="width:32px;height:18px;border-radius:9px;position:relative;background:${engOn ? 'var(--good)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:2px;left:${engOn ? '16px' : '2px'};width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></span>${engBusy ? '分流引擎啟動中' : engOn ? '分流引擎執行中' : '分流引擎未執行'}
   </button>`;
+  // 設計稿在狀態列最右端放快捷鍵提示，用 margin-left:auto 推到底
+  const hint = '<span style="margin-left:auto;font-size:11px;color:var(--text3);white-space:nowrap">Ctrl+1–6 切換分頁</span>';
   st.innerHTML = segs.map((g, i) =>
-    `${i ? '<span style="color:var(--text3);margin:0 6px">·</span>' : ''}<button data-stseg="${g.tab}" style="border:none;background:transparent;padding:0;cursor:pointer;font:inherit;color:${g.color}">${esc(g.label)}</button>`).join('') + pill;
-  st.style.color = 'var(--text2)';
+    `${i ? '<span style="color:var(--text3);margin:0 6px">·</span>' : ''}<button data-stseg="${g.tab}" style="border:none;background:transparent;padding:0;cursor:pointer;font-weight:500;font-size:12.5px;white-space:nowrap;color:${g.color}">${esc(g.label)}</button>`).join('') + pill + hint;
   st.querySelectorAll('[data-stseg]').forEach(b => b.onclick = () => showTab(b.dataset.stseg));
   $('stEnginePill').onclick = () => toggleSplitEngine();
-  $('markArc').setAttribute('stroke', runIds.length ? '#7fe3bd' : 'rgba(255,255,255,.55)');
-  syncAddButton();
-  renderTabs();
 }
 
 function showTab(tab) {
@@ -406,6 +424,7 @@ function renderGuide() {
 function buildDashboard() {
   $('view-dash').innerHTML = `
     <div style="display:flex;flex-direction:column;gap:14px">
+      <div id="dashStatus" style="display:flex;align-items:center;gap:8px;font-size:12.5px;padding:0 2px;flex-wrap:wrap"></div>
       <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:15px">
         <div style="display:flex;align-items:center;gap:20px">
           <button id="powerBtn" title="啟動路由（空白鍵）" style="width:100px;height:100px;flex-shrink:0;position:relative;border:none;background:transparent;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center">
@@ -978,8 +997,8 @@ const SW_GROUPS = {
 const swRow = (w, last) => `
   <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;${last ? '' : 'border-bottom:1px solid var(--sep)'}">
     <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">${w.label}</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">${w.desc}</div></div>
-    <button data-sw="${w.key}" role="switch" aria-checked="false" aria-label="${w.label}" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s;flex-shrink:0">
-      <span style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
+    <button data-sw="${w.key}" role="switch" aria-checked="false" aria-label="${w.label}" style="width:46px;height:28px;border-radius:14px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s;flex-shrink:0">
+      <span style="position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
     </button>
   </div>`;
 
@@ -1531,8 +1550,8 @@ function renderKillswitch() {
   m.innerHTML = `
     <div style="position:absolute;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:150">
       <div style="width:384px;background:var(--panel);border:1px solid var(--red);border-radius:16px;box-shadow:0 20px 50px rgba(0,0,0,.34);padding:22px;display:flex;flex-direction:column;align-items:center;gap:13px;text-align:center;animation:fadeUp .2s ease-out">
-        <div style="width:46px;height:46px;border-radius:50%;background:rgba(217,83,74,.16);display:flex;align-items:center;justify-content:center;color:var(--red)">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3.5 2.8 19.5h18.4L12 3.5z"></path><path d="M12 9.5v4.5M12 17h.01"></path></svg>
+        <div style="width:52px;height:52px;flex-shrink:0;border-radius:15px;background:rgba(217,83,74,.14);display:flex;align-items:center;justify-content:center;color:var(--red);animation:shieldIn .35s cubic-bezier(.32,.72,0,1)">
+          <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z"></path><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"></path></svg>
         </div>
         <span style="display:flex;align-items:center;gap:8px;font-size:15.5px;font-weight:700;letter-spacing:-.2px"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--red);flex-shrink:0"><path d="M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z"></path><path d="M12 9v4M12 16h.01"></path></svg>斷線保護已啟動</span>
         <span style="font-size:12.5px;color:var(--text2);line-height:1.7;text-wrap:pretty">${esc(k.reason || '分流引擎中止')}。<br>${blockLine}</span>
@@ -2120,7 +2139,7 @@ function renderSplitRules() {
     <span style="flex:1;min-width:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--text2)"></span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">直接連線（不經代理）</span></span>
     
     <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
-      <button data-lan="1" title="${lanOn ? '停用內建的本機與內網保護' : '啟用內建的本機與內網保護'}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${lanOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s"><span style="position:absolute;top:3px;left:${lanOn ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+      <button data-lan="1" title="${lanOn ? '停用內建保護（不建議：印表機、NAS、路由器管理頁會被送進代理）' : '啟用內建保護'}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${lanOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s"><span style="position:absolute;top:3px;left:${lanOn ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
       <span style="width:58px"></span>
     </span>
   </div>`;
@@ -2218,19 +2237,21 @@ async function toggleLanDirect() {
 function renderSplitEmpty() {
   const el = $('spEmpty'); if (!el) return;
   if (state.splitRules.length) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:40px 24px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center">
-    <span style="width:46px;height:46px;border-radius:13px;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h6"></path></svg></span>
-    <span style="font-size:16px;font-weight:700;letter-spacing:-.2px">還沒有規則</span>
-    <span style="font-size:12.5px;color:var(--text2);line-height:1.7;max-width:420px;text-wrap:pretty">一條規則＝「誰／連去哪／哪個埠」的組合 → 走哪條路。內建的「本機與內網直連」已在保護你。</span>
-    <div style="display:flex;gap:9px;margin-top:2px">
-      <button id="spEmptyAdd" class="hvBright" style="height:34px;padding:0 16px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增規則</button>
-      <button id="spEmptyBrowser" class="hvFill2" style="height:34px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">用這條路由開瀏覽器</button>
+  el.innerHTML = `<div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:34px 24px 24px;display:flex;flex-direction:column;align-items:center;gap:18px;flex-shrink:0">
+    <div style="width:56px;height:56px;border-radius:16px;background:var(--accent-dim);color:var(--accent);display:flex;align-items:center;justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h6"></path></svg></div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center">
+      <span style="font-size:16px;font-weight:700;letter-spacing:-.2px">還沒有規則</span>
+      <span style="font-size:12.5px;color:var(--text2);line-height:1.6;text-wrap:pretty;max-width:440px">一條規則＝「誰／連去哪／哪個埠」的組合 → 走哪條路。內建的「本機與內網直連」已在保護你。</span>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;width:100%;padding-top:8px">
-      ${splitTemplates().map((t, i) => `<button data-stpl="${i}" class="hvFill2" style="border:1px solid var(--sep);border-radius:12px;padding:13px;background:var(--bg);cursor:pointer;display:flex;flex-direction:column;gap:7px;text-align:left;color:var(--text)">
-        <span style="color:${t.color};display:flex"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="${t.icon}"></path></svg></span>
-        <span style="font-size:12.5px;font-weight:600;text-wrap:pretty">${esc(t.title)}</span>
-        <span style="font-size:11px;color:var(--text2);line-height:1.5;text-wrap:pretty">${esc(t.desc)}</span>
+    <div style="display:flex;gap:9px">
+      <button id="spEmptyAdd" class="hvBright" style="height:34px;padding:0 16px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增規則</button>
+      <button id="spEmptyBrowser" class="hvFill2" title="不用規則、不用引擎：用路由開一個只有它走代理的瀏覽器" style="display:flex;align-items:center;gap:6px;height:34px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>用這條路由開瀏覽器</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;width:100%;padding-top:4px">
+      ${splitTemplates().map((t, i) => `<button data-stpl="${i}" class="hvFill2" style="display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:14px 15px;border:1px solid var(--sep);border-radius:13px;background:var(--bg);color:var(--text);cursor:pointer;text-align:left;min-width:0">
+        <span style="display:flex;color:${t.color}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="${t.icon}"></path></svg></span>
+        <span style="font-size:13px;font-weight:600;line-height:1.4;text-wrap:pretty">${esc(t.title)}</span>
+        <span style="font-size:11px;color:var(--text2);line-height:1.6;text-wrap:pretty">${esc(t.desc)}</span>
       </button>`).join('')}
     </div>
   </div>`;
@@ -2721,7 +2742,7 @@ function renderRuleSets() {
       <div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px;opacity:${autoOn ? '1' : '.45'}">
         ${[7, 14, 30].map(d => `<button data-rsd="${d}" ${autoOn ? '' : 'disabled'} style="border:none;cursor:${autoOn ? 'pointer' : 'not-allowed'};height:26px;padding:0 10px;border-radius:6px;font-size:12px;white-space:nowrap;${segCss(days === d)}">${d}</button>`).join('')}
       </div>
-      <button data-rsauto="1" role="switch" aria-label="自動更新規則庫" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${autoOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${autoOn ? '21px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+      <button data-rsauto="1" role="switch" aria-label="自動更新規則庫" style="width:46px;height:28px;border-radius:14px;border:none;padding:0;cursor:pointer;position:relative;background:${autoOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${autoOn ? '21px' : '3px'};width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
     </div>
     <div style="padding:13px 16px;display:flex;align-items:center;gap:14px">
       <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">下載經由</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">規則庫來源在 GitHub</div></div>
