@@ -50,8 +50,7 @@ const state = {
   splitEngine: 'off', splitElevated: false, splitTun: null, splitHealth: [],
   splitFilter: '全部', splitSearch: '', splitSheet: false, splitEditing: null,
   splitProcs: [], splitCatalog: [], splitInstalled: [],
-  splitSimHost: '', splitSimExe: '', splitSim: null, splitHitId: null,
-  splitHitCounts: {},
+  splitSimHost: '', splitSimExe: '', splitSim: null, splitHitId: null, splitSimOpen: false,
   ksAlertOpen: false,
   splitDraft: { name: '', when: {}, target: 'direct', error: '' }, splitOpenConds: {},
   splitPendingDel: null, splitDrag: null, splitUac: false, splitUacSeen: false,
@@ -1001,8 +1000,8 @@ const SW_GROUPS = {
 const swRow = (w, last) => `
   <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;${last ? '' : 'border-bottom:1px solid var(--sep)'}">
     <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">${w.label}</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">${w.desc}</div></div>
-    <button data-sw="${w.key}" role="switch" aria-checked="false" aria-label="${w.label}" style="width:46px;height:28px;border-radius:14px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s;flex-shrink:0">
-      <span style="position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
+    <button data-sw="${w.key}" role="switch" aria-checked="false" aria-label="${w.label}" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s;flex-shrink:0">
+      <span style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
     </button>
   </div>`;
 
@@ -1804,7 +1803,6 @@ async function boot() {
   try { const logs = await window.api.getLogs(); state.logs = (logs || []).map(l => ({ ...l, id: ++logSeq })); } catch {}
   try { const sp = await window.api.getSplit(); if (sp) { if (Array.isArray(sp.rules)) state.splitRules = sp.rules; if (sp.defaultTarget != null) state.splitDefaultTarget = sp.defaultTarget; if (typeof sp.udp === 'boolean') state.splitUdp = sp.udp; } } catch {}
   try { const est = await window.api.getEngineStatus(); if (est) applyEngineStatus(est); } catch {}
-  try { const hc = await window.api.getHitCounts(); if (hc) state.splitHitCounts = hc; } catch {}
 
   renderSidebar();
   showTab('dashboard');
@@ -1826,7 +1824,6 @@ async function boot() {
   window.api.onRouteStatus(list => reconcileStatus(list));
 
   if (window.api.onEngineStatus) window.api.onEngineStatus(st => { if (st) applyEngineStatus(st); });
-  if (window.api.onHitCounts) window.api.onHitCounts(c => { state.splitHitCounts = c || {}; if (state.tab === 'split') renderSplitRules(); });
   if (window.api.onKillswitch) window.api.onKillswitch(k => { if (k) { if (k.tripped && !(state.killswitch && state.killswitch.tripped)) state.ksAlertOpen = true; state.killswitch = k; renderKillswitch(); if (k.tripped) flash('斷線保護啟動：已暫停受保護程式的連線', 'var(--red)'); } });
   if (window.api.onUpdateStatus) window.api.onUpdateStatus(s => {
     if (!s) return;
@@ -2014,16 +2011,6 @@ function buildSplit() {
         </div>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:9px;padding-top:13px;border-top:1px solid var(--sep)">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span title="測試某個目的地會走哪一條規則" style="display:flex;color:var(--text3);flex-shrink:0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg></span>
-          <input id="spSimHost" placeholder="輸入網域、IP 或 IP:埠，例如 www.netflix.com 或 10.0.0.5:3389" style="flex:1;min-width:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
-          <button id="spSimExeBtn" class="hvFill2" title="只測某支程式" style="display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><span id="spSimExeLabel">不限程式</span><span style="color:var(--text3);font-size:9px">▾</span></button>
-          <button id="spSimRun" class="hvBright" title="測試（Enter）" style="height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">測試</button>
-        </div>
-        <div id="spSimResult"></div>
-      </div>
-
     </div>
 
     <div id="spNotice"></div>
@@ -2031,10 +2018,20 @@ function buildSplit() {
     <div id="spRulesHead" style="display:flex;align-items:center;gap:10px;flex-shrink:0">
       <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">規則</span>
       <span style="font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">由上往下比對，第一條命中即生效；一條規則可同時限定程式、目的地、埠與協定</span>
-      <div id="spTools" style="display:none;margin-left:auto;align-items:center;gap:8px;flex-shrink:0">
+      <button id="spSimToggle" class="hvFill2" title="測試某個網址會走哪一條規則" style="margin-left:auto;display:flex;align-items:center;gap:5px;height:28px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg>模擬</button>
+      <div id="spTools" style="display:none;align-items:center;gap:8px;flex-shrink:0">
         <input id="spSearch" placeholder="搜尋…" style="width:150px;height:28px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text);font-size:12px;outline:none">
         <div id="spFilterSeg" style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px"></div>
       </div>
+    </div>
+
+    <div id="spSimPanel" style="display:none;flex-direction:column;gap:9px;background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:13px 16px;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:8px">
+        <input id="spSimHost" placeholder="輸入網域、IP 或 IP:埠，例如 www.netflix.com" style="flex:1;min-width:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
+        <button id="spSimExeBtn" class="hvFill2" title="只測某支程式" style="display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><span id="spSimExeLabel">不限程式</span><span style="color:var(--text3);font-size:9px">▾</span></button>
+        <button id="spSimRun" class="hvBright" style="height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">模擬</button>
+      </div>
+      <div id="spSimResult"></div>
     </div>
 
     <div id="spTableWrap" style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden;flex-shrink:0;transition:opacity .3s">
@@ -2049,6 +2046,11 @@ function buildSplit() {
   $('spGlobalBtn').onclick = e => { e.stopPropagation(); openMenu('split-global', $('spGlobalBtn')); };
   $('spSimExeBtn').onclick = e => { e.stopPropagation(); openMenu('split-simexe', $('spSimExeBtn')); };
   $('spSimRun').onclick = () => runSplitSim();
+  $('spSimToggle').onclick = () => {
+    state.splitSimOpen = !state.splitSimOpen;
+    updateSplit();
+    if (state.splitSimOpen && $('spSimHost')) $('spSimHost').focus();
+  };
   $('spSimHost').addEventListener('input', e => { state.splitSimHost = e.target.value; });
   $('spSimHost').addEventListener('keydown', e => { if (e.key === 'Enter') runSplitSim(); });
   $('spSearch').addEventListener('input', e => { state.splitSearch = e.target.value; renderSplitRules(); });
@@ -2094,6 +2096,8 @@ function updateSplit() {
   $('spTableWrap').style.display = has ? 'block' : 'none';
   $('spTableWrap').style.opacity = ruleMode ? '1' : '.45';
   $('spTools').style.display = state.splitRules.length >= 10 ? 'flex' : 'none';
+  $('spSimToggle').style.display = has ? 'flex' : 'none';
+  $('spSimPanel').style.display = (has && state.splitSimOpen) ? 'flex' : 'none';
 
   renderSplitNotice();
   renderSplitFilter();
@@ -2178,12 +2182,10 @@ function renderSplitRules() {
     <span style="width:26px;flex-shrink:0"></span><span style="width:26px;flex-shrink:0">#</span>
     <span style="flex:1.3;min-width:0;white-space:nowrap">規則 · 條件</span>
     <span style="flex:1;min-width:0;white-space:nowrap">流量走向</span>
-    <span style="width:64px;flex-shrink:0;text-align:right;white-space:nowrap">命中</span>
     <span style="width:104px;flex-shrink:0"></span>
   </div>`;
 
   const lanOn = state.splitLanDirect;
-  const lanCountable = splitRunning() && lanOn;
   const builtin = `<div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${lanOn ? 'transparent' : 'var(--fill2)'};color:${lanOn ? 'var(--text)' : 'var(--text3)'}">
     <span title="內建規則：固定在最前面，可停用、不可刪除" style="width:26px;flex-shrink:0;display:flex;align-items:center;color:var(--text3)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg></span>
     <span style="width:26px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3)">0</span>
@@ -2193,7 +2195,6 @@ function renderSplitRules() {
     </span>
     <span style="flex:1;min-width:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--text2)"></span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">直接連線（不經代理）</span></span>
     
-    <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:${lanCountable ? 'var(--text2)' : 'var(--text3)'};white-space:nowrap">${lanCountable ? String(state.splitHitCounts.__lan || 0) : '—'}</span>
     <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
       <button data-lan="1" title="${lanOn ? '停用內建保護（不建議：印表機、NAS、路由器管理頁會被送進代理）' : '啟用內建保護'}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${lanOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s"><span style="position:absolute;top:3px;left:${lanOn ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
       <span style="width:58px"></span>
@@ -2211,13 +2212,6 @@ function renderSplitRules() {
     const dot = splitTargetDot(r.target, on);
     const dotAnim = on && active && !isBlock && r.target !== 'direct' ? 'dotBeat 2.2s ease-in-out infinite' : 'none';
     const rowBg = state.splitHitId === r.id ? 'var(--accent-dim)' : on ? 'transparent' : 'var(--fill2)';
-    // 命中數只在「引擎在跑 + 規則啟用 + 規則庫齊全」時才有意義，
-    // 否則顯示破折號，不要讓使用者以為「0」代表規則沒效
-    const countable = active && on && !miss.length;
-    const hits = countable ? String(state.splitHitCounts[r.id] || 0) : '—';
-    const hitTip = countable ? '引擎啟動至今的命中次數'
-      : !active ? '分流引擎未執行，不會統計'
-      : !on ? '規則已停用' : '規則庫未下載，這條規則不會生效';
     return `<div data-srid="${esc(r.id)}" draggable="true" class="hvFill2" style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${rowBg};box-shadow:${miss.length ? 'inset 3px 0 0 var(--amber)' : 'none'};cursor:grab;color:${on ? 'var(--text)' : 'var(--text3)'};transition:background .3s">
       <span style="width:26px;flex-shrink:0;display:flex;align-items:center;color:var(--text3)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7h.01M8 12h.01M8 17h.01M16 7h.01M16 12h.01M16 17h.01"></path></svg></span>
       <span style="width:26px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3)">${idx}</span>
@@ -2233,7 +2227,6 @@ function renderSplitRules() {
         <span title="${esc(targetLabel)}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:${targetColor}">${esc(targetLabel)}</span>
         ${miss.length ? `<button data-sact="dl" class="hvBright" style="flex-shrink:0;height:22px;padding:0 9px;border:none;border-radius:6px;background:var(--amber);color:#fff;font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap">下載規則庫</button>` : ''}
       </span>
-      <span title="${hitTip}" style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:${hits === '—' ? 'var(--text3)' : 'var(--text2)'}">${hits}</span>
       <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
         <button data-sact="toggle" title="${on ? '停用規則：' : '啟用規則：'}${esc(name)}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${on ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${on ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
         <button data-sact="edit" class="hvAcc" title="編輯規則" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
@@ -2257,7 +2250,6 @@ function renderSplitRules() {
       <span style="width:7px;height:7px;border-radius:50%;background:${splitTargetDot(state.splitDefaultTarget)};flex-shrink:0"></span>
       <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(splitTargetLabel(state.splitDefaultTarget))}</span>
     </span>
-    <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3);white-space:nowrap">${splitRunning() ? String(state.splitHitCounts.__default || 0) : '—'}</span>
     <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end"><button id="spDefaultChange" class="hvAccDim" style="height:26px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--accent);font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap">變更</button></span>
   </div>`;
 
@@ -2809,7 +2801,7 @@ function renderRuleSets() {
       <div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px;opacity:${autoOn ? '1' : '.45'}">
         ${[7, 14, 30].map(d => `<button data-rsd="${d}" ${autoOn ? '' : 'disabled'} style="border:none;cursor:${autoOn ? 'pointer' : 'not-allowed'};height:26px;padding:0 10px;border-radius:6px;font-size:12px;white-space:nowrap;${segCss(days === d)}">${d}</button>`).join('')}
       </div>
-      <button data-rsauto="1" role="switch" aria-label="自動更新規則庫" style="width:46px;height:28px;border-radius:14px;border:none;padding:0;cursor:pointer;position:relative;background:${autoOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${autoOn ? '21px' : '3px'};width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+      <button data-rsauto="1" role="switch" aria-label="自動更新規則庫" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${autoOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${autoOn ? '21px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
     </div>
     <div style="padding:13px 16px;display:flex;align-items:center;gap:14px">
       <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">下載經由</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">規則庫來源在 GitHub</div></div>
@@ -2885,12 +2877,6 @@ function splitTemplates() {
       tags: ['geoip-tw'],
       rules: [{ id: 't' + Date.now(), name: '台灣網站直連', on: true, target: 'direct', when: { dest: { match: 'ruleset', value: 'geoip-tw' } } }],
       def: firstRoute,
-    },
-    {
-      title: '只有特定程式走代理', color: 'var(--purple)',
-      desc: '建立一條程式規則，挑選程式後填走向。',
-      icon: 'M4 5h16v11H4zM8 20h8M12 16v4',
-      openSheet: true,
     },
     {
       title: '擋掉廣告與追蹤', color: 'var(--red)',

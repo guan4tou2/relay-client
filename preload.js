@@ -69,7 +69,6 @@ contextBridge.exposeInMainWorld('api', {
   engineElevate: () => ipcRenderer.invoke('engine-elevate'),
   isElevated: () => ipcRenderer.invoke('is-elevated'),
   getEngineStatus: () => ipcRenderer.invoke('get-engine-status'),
-  getHitCounts: () => ipcRenderer.invoke('get-hit-counts'),
 
   // 依網域 / 地區(GeoIP) 分流的規則庫（rule-set）
   rulesetCatalog: () => ipcRenderer.invoke('ruleset-catalog'),
@@ -96,12 +95,6 @@ contextBridge.exposeInMainWorld('api', {
     const listener = (_e, s) => callback(s);
     ipcRenderer.on('engine-status', listener);
     return () => ipcRenderer.removeListener('engine-status', listener);
-  },
-
-  onHitCounts: (callback) => {
-    const listener = (_e, counts) => callback(counts);
-    ipcRenderer.on('hit-counts', listener);
-    return () => ipcRenderer.removeListener('hit-counts', listener);
   },
   onEngineStats: (callback) => {
     const listener = (_e, s) => callback(s);

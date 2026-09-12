@@ -751,33 +751,13 @@ const hitParser = new HitParser({
   onHit: (conn) => recordHit(conn),
 });
 const consumeEngineLine = line => hitParser.consume(line);
-function resetHits() { hitParser.reset(); resetHitCounts(); }
-
-// 每條規則的命中次數（設計稿規則表有一欄「命中」）。只活在記憶體，
-// 引擎一重啟就歸零 —— 跨 session 累計沒意義，也不值得寫進設定檔。
-let hitCounts = Object.create(null);
-let hitFlushTimer = null;
-function flushHitCounts() {
-  if (hitFlushTimer) return;                 // 高流量時一秒最多推一次，不要每條連線都重畫 UI
-  hitFlushTimer = setTimeout(() => {
-    hitFlushTimer = null;
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('hit-counts', { ...hitCounts });
-  }, 1000);
-}
-function resetHitCounts() {
-  hitCounts = Object.create(null);
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('hit-counts', {});
-}
-ipcMain.handle('get-hit-counts', () => ({ ...hitCounts }));
+function resetHits() { hitParser.reset(); }
 
 function recordHit(conn) {
   const info = conn.info;
   if (info && info.kind === 'self') return;   // app 自己的流量不記
   const split = config.getSplit();
   const rule = info && info.kind === 'rule' ? split.rules.find(r => r.id === info.id) : null;
-  // 內建列與預設列也有命中欄，用保留鍵記（規則 id 是 r_xxx，不會撞）
-  const key = rule ? rule.id : !info ? '__default' : info.kind === 'lan' ? '__lan' : null;
-  if (key) { hitCounts[key] = (hitCounts[key] || 0) + 1; flushHitCounts(); }
   addLog('info', 'split', `連線 ${conn.host}`, null, {
     matched: !!info,
     ruleId: rule ? rule.id : null,
