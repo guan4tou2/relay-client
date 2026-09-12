@@ -1,0 +1,55 @@
++0800 2026-09-12 09:50:23 INFO network: updated default interface Wi-Fi, index 7
++0800 2026-09-12 09:50:23 INFO inbound/socks[in]: tcp server started at 127.0.0.1:19085
++0800 2026-09-12 09:50:23 INFO sing-box started (0.177s)
++0800 2026-09-12 09:50:25 INFO [1628107737 0ms] inbound/socks[in]: inbound connection from 127.0.0.1:57114
++0800 2026-09-12 09:50:25 INFO [1628107737 2ms] inbound/socks[in]: inbound connection to example.com:443
++0800 2026-09-12 09:50:25 INFO [1628107737 4ms] router: found process path: C:\Program Files\Git\mingw64\bin\curl.exe
++0800 2026-09-12 09:50:25 DEBUG [1628107737 4ms] router: match[0] => sniff
++0800 2026-09-12 09:50:25 DEBUG [1628107737 12ms] router: sniffed protocol: tls, domain: example.com
++0800 2026-09-12 09:50:25 DEBUG [1628107737 14ms] router: match[4] domain_suffix=example.com => route(direct)
++0800 2026-09-12 09:50:25 INFO [1628107737 14ms] outbound/direct[direct]: outbound connection to example.com:443
++0800 2026-09-12 09:50:25 DEBUG [1628107737 14ms] dns: lookup domain example.com
++0800 2026-09-12 09:50:25 DEBUG [1628107737 44ms] dns: exchanged example.com NOERROR 300
++0800 2026-09-12 09:50:25 DEBUG [1628107737 45ms] dns: exchanged example.com NOERROR 300
++0800 2026-09-12 09:50:25 DEBUG [1628107737 45ms] dns: exchanged A example.com. 300 IN A 104.20.23.154
++0800 2026-09-12 09:50:25 DEBUG [1628107737 45ms] dns: exchanged A example.com. 300 IN A 172.66.147.243
++0800 2026-09-12 09:50:25 DEBUG [1628107737 45ms] dns: exchanged AAAA example.com. 300 IN AAAA 2606:4700:10::ac42:93f3
++0800 2026-09-12 09:50:25 DEBUG [1628107737 45ms] dns: exchanged AAAA example.com. 300 IN AAAA 2606:4700:10::6814:179a
++0800 2026-09-12 09:50:25 DEBUG [1628107737 45ms] dns: lookup succeed for example.com: 104.20.23.154 172.66.147.243 2606:4700:10::ac42:93f3 2606:4700:10::6814:179a
++0800 2026-09-12 09:50:25 DEBUG [1628107737 232ms] connection: connection upload finished
++0800 2026-09-12 09:50:25 DEBUG [1628107737 286ms] connection: connection download finished
++0800 2026-09-12 09:50:25 INFO [755017183 0ms] inbound/socks[in]: inbound connection from 127.0.0.1:57116
++0800 2026-09-12 09:50:25 INFO [755017183 0ms] inbound/socks[in]: inbound connection to www.google.com:443
++0800 2026-09-12 09:50:25 INFO [755017183 0ms] router: found process path: C:\Program Files\Git\mingw64\bin\curl.exe
++0800 2026-09-12 09:50:25 DEBUG [755017183 0ms] router: match[0] => sniff
++0800 2026-09-12 09:50:25 DEBUG [755017183 3ms] router: sniffed protocol: tls, domain: www.google.com
++0800 2026-09-12 09:50:25 INFO [755017183 3ms] outbound/direct[direct]: outbound connection to www.google.com:443
++0800 2026-09-12 09:50:25 DEBUG [755017183 3ms] dns: lookup domain www.google.com
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged www.google.com NOERROR 82
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged AAAA www.google.com. 82 IN AAAA 2001:4860:482c:7700::
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged AAAA www.google.com. 82 IN AAAA 2001:4860:4826:7700::
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged AAAA www.google.com. 82 IN AAAA 2001:4860:482d:7700::
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged AAAA www.google.com. 82 IN AAAA 2001:4860:482a:7700::
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged AAAA www.google.com. 82 IN AAAA 2001:4860:482b:7700::
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged AAAA www.google.com. 82 IN AAAA 2001:4860:4828:7700::
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged www.google.com NOERROR 140
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged AAAA www.google.com. 82 IN AAAA 2001:4860:4827:7700::
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged A www.google.com. 140 IN A 142.251.152.119
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged A www.google.com. 140 IN A 142.251.155.119
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged A www.google.com. 140 IN A 142.251.153.119
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged AAAA www.google.com. 82 IN AAAA 2001:4860:4829:7700::
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged A www.google.com. 140 IN A 142.251.154.119
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged A www.google.com. 140 IN A 142.251.150.119
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged A www.google.com. 140 IN A 142.251.151.119
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged A www.google.com. 140 IN A 142.251.157.119
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: exchanged A www.google.com. 140 IN A 142.251.156.119
++0800 2026-09-12 09:50:25 DEBUG [755017183 13ms] dns: lookup succeed for www.google.com: 142.251.152.119 142.251.155.119 142.251.153.119 142.251.154.119 142.251.150.119 142.251.151.119 142.251.157.119 142.251.156.119 2001:4860:482c:7700:: 2001:4860:4826:7700:: 2001:4860:482d:7700:: 2001:4860:482a:7700:: 2001:4860:482b:7700:: 2001:4860:4828:7700:: 2001:4860:4827:7700:: 2001:4860:4829:7700::
++0800 2026-09-12 09:50:25 DEBUG [755017183 111ms] connection: connection upload finished
++0800 2026-09-12 09:50:25 DEBUG [755017183 115ms] connection: connection download finished
++0800 2026-09-12 09:50:25 INFO [2617992817 0ms] inbound/socks[in]: inbound connection from 127.0.0.1:57118
++0800 2026-09-12 09:50:25 INFO [2617992817 21ms] inbound/socks[in]: inbound connection to blocked.test:80
++0800 2026-09-12 09:50:25 INFO [2617992817 22ms] router: found process path: C:\Program Files\Git\mingw64\bin\curl.exe
++0800 2026-09-12 09:50:25 DEBUG [2617992817 22ms] router: match[0] => sniff
++0800 2026-09-12 09:50:25 DEBUG [2617992817 27ms] router: sniffed protocol: http, domain: blocked.test
++0800 2026-09-12 09:50:25 DEBUG [2617992817 27ms] router: match[5] domain_suffix=blocked.test => reject
++0800 2026-09-12 09:50:25 DEBUG [2617992817 28ms] router: connection closed: rejected
