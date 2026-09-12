@@ -10,7 +10,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D6)
 ![Electron](https://img.shields.io/badge/Electron-32-47848F)
 ![Engine](https://img.shields.io/badge/TUN-sing--box-4470c4)
-![Tests](https://img.shields.io/badge/tests-265%20passing-2f9e78)
+![Tests](https://img.shields.io/badge/tests-277%20passing-2f9e78)
 [![Release](https://img.shields.io/github/v/release/guan4tou2/relay-client?color=8cb0ef)](https://github.com/guan4tou2/relay-client/releases)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -171,7 +171,7 @@ adapter 的邏輯刻意與執行主機無關（固定用 `path.win32` / `path.po
 npm install
 # 放入虛擬網卡引擎執行檔（需以 with_gvisor tag 編譯，才有 TUN 功能）：
 #   engine/sing-box.exe        ← 基於授權與檔案大小，本 repo 不含此檔
-npm test          # 265 個單元測試
+npm test          # 277 個單元測試
 npm run dist      # → dist/RelayClient-Setup-*.exe 與免安裝版
 ```
 
@@ -210,7 +210,7 @@ src/engine/        singbox — 產生虛擬網卡設定 + 生命週期 + 斷線�
                    ruleset — 依網域/地區分流的規則庫：內建目錄、下載/匯入/更新、交給引擎
 src/platform/      平台適配層 — windows / darwin / linux 各一份，收斂所有 OS 差異
                    （引擎執行檔名、TUN 命名、提權方式、行程列舉、系統代理、開機自啟）
-test/              265 個單元測試（jest）
+test/              277 個單元測試（jest）
 ```
 
 ## 授權

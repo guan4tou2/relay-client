@@ -26,6 +26,7 @@ const HttpBridge = require('./src/proxy/http-bridge');
 const RouteManager = require('./src/proxy/route-manager');
 const SingBoxEngine = require('./src/engine/singbox');
 const { RuleSetStore } = require('./src/engine/ruleset');
+const { HitParser } = require('./src/engine/hit-parser');
 const platform = require('./src/platform').current;  // 平台差異一律走 adapter，main.js 不做 process.platform 判斷
 const systemProxy = platform.systemProxy;            // 系統代理開關（Windows 登錄檔 / macOS networksetup / Linux gsettings）
 const { execSync, spawn } = require('child_process');
@@ -742,49 +743,15 @@ ipcMain.handle('delete-route', async (_e, id) => {
 // sing-box 的良性噪音：http/socks 上游本就不帶 UDP，QUIC/UDP 會被拒並記 ERROR，但不影響功能 → 不進紀錄。
 const ENGINE_LOG_NOISE = /UDP is not supported by outbound/i;
 // ===== 命中追蹤 =====
-// 引擎跑在 log.level=debug，每條連線會印：
-//   [ID] inbound/tun[tun-in]: inbound connection to HOST:PORT
-//   [ID] router: sniffed protocol: tls, domain: HOST      （有嗅探時才有，網域比 inbound 那行準）
-//   [ID] router: match[N] <條件> => route(TAG) | reject    （沒命中就完全沒有這行）
-//   [ID] outbound/xxx: outbound connection to ...         （連線定案）
-// match[N] 的 N 就是我們自己產的 route.rules 索引 → engine.ruleIndex 還原成使用者的規則。
-// 這些行只解析、不寫進 app.log（debug 很吵，會把紀錄灌爆）。
-const ENGINE_LOG_PARSED = /router: (match\[|sniffed protocol)|inbound connection to|outbound connection to|connection closed/;
-const pendingConns = new Map();   // 連線 ID → { host, info }
-
-function resetHits() { pendingConns.clear(); }
-
-// 餵一條 sing-box debug 行進來；回傳 true 代表「已消化，不要寫進紀錄」
-function consumeEngineLine(line) {
-  if (!ENGINE_LOG_PARSED.test(line)) return false;
-  const id = (line.match(/\[(\d{4,}) /) || [])[1];
-  if (!id) return true;
-
-  let m = line.match(/inbound connection to (\S+)/);
-  if (m) { pendingConns.set(id, { host: m[1], info: null }); return true; }
-
-  m = line.match(/sniffed protocol: [^,]+, domain: (\S+)/);
-  if (m) {
-    const c = pendingConns.get(id);
-    if (c) { const port = c.host.includes(':') ? ':' + c.host.split(':').pop() : ''; c.host = m[1] + port; }
-    return true;
-  }
-
-  m = line.match(/router: match\[(\d+)\]/);
-  if (m) {
-    const c = pendingConns.get(id);
-    const info = engine && engine.ruleIndex && engine.ruleIndex[Number(m[1])];
-    if (c && info && info.kind !== 'sniff') c.info = info;   // sniff 不是使用者規則
-    return true;
-  }
-
-  if (line.includes('outbound connection to') || line.includes('connection closed')) {
-    const c = pendingConns.get(id);
-    if (c) { pendingConns.delete(id); recordHit(c); }
-    return true;
-  }
-  return true;
-}
+// 解析器在 src/engine/hit-parser.js（抽出去才測得到——main.js 需要 electron 才能載入）。
+// 它吃引擎的 debug log，把「這條連線命中第幾條規則」還原出來；這些行只統計不落地，
+// 否則 debug 每條連線三四行會把 app.log 灌爆。
+const hitParser = new HitParser({
+  getRuleIndex: () => (engine && engine.ruleIndex) || [],
+  onHit: (conn) => recordHit(conn),
+});
+const consumeEngineLine = line => hitParser.consume(line);
+function resetHits() { hitParser.reset(); }
 
 function recordHit(conn) {
   const info = conn.info;

@@ -10,7 +10,7 @@ Turn any SOCKS / HTTP upstream into **multiple local ports · multi-hop chains �
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D6)
 ![Electron](https://img.shields.io/badge/Electron-32-47848F)
 ![Engine](https://img.shields.io/badge/TUN-sing--box-4470c4)
-![Tests](https://img.shields.io/badge/tests-265%20passing-2f9e78)
+![Tests](https://img.shields.io/badge/tests-277%20passing-2f9e78)
 [![Release](https://img.shields.io/github/v/release/guan4tou2/relay-client?color=8cb0ef)](https://github.com/guan4tou2/relay-client/releases)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -156,7 +156,7 @@ Grab the latest from **[Releases](../../releases)**:
 npm install
 # Provide the TUN engine binary (compiled with the with_gvisor tag) at:
 #   engine/sing-box.exe        ← not included in this repo
-npm test          # 265 unit tests
+npm test          # 277 unit tests
 npm run dist      # → dist/RelayClient-Setup-*.exe + Portable
 ```
 
