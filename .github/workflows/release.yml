@@ -1,10 +1,15 @@
 name: Build & Release
 
 # 推一個 v* tag（例如 v1.1.1）就會自動：跑測試 → 抓 sing-box 引擎 → 打包 →
-# 發佈到 GitHub Releases（含 latest.yml 供自動更新）。也可從 Actions 頁手動觸發。
+# 發佈到 GitHub Releases（含 latest.yml 供自動更新）。
+#
+# 非 tag（推分支 / 手動觸發）一樣打包，但**不發佈**，而是把安裝檔上傳成
+# artifact：進 Actions 點進那次執行就能下載，不用為了試裝而切一個版。
+# 保留 14 天；安裝檔本身已壓縮，所以 compression-level: 0（再壓一次只是浪費時間）。
 on:
   push:
     tags: ['v*']
+    branches: ['**']      # 推分支也打包，產物上傳成 artifact（不發佈）
   workflow_dispatch: {}
 
 permissions:
@@ -57,7 +62,7 @@ jobs:
           & "engine/sing-box.exe" check -c sbcheck.json
           if ($LASTEXITCODE -ne 0) { throw "sing-box gVisor TUN config check failed — engine incompatible" }
 
-      - name: Build (tag 才發佈；手動觸發只驗證打包)
+      - name: Build (tag 才發佈；其餘只打包成 artifact)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
@@ -65,6 +70,19 @@ jobs:
           npm run make-icon
           if ("${{ github.ref }}".StartsWith("refs/tags/v")) { npx electron-builder --win --publish always }
           else { npx electron-builder --win --publish never }
+
+      # 只收安裝檔。dist/win-unpacked/ 是解開的整棵樹（上百 MB），千萬別整包上傳。
+      - name: Upload installers (非 tag 才需要，tag 的已經在 Release 裡)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-${{ github.run_number }}
+          path: |
+            dist/RelayClient-Setup-*.exe
+            dist/RelayClient-Portable-*.exe
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
 
       - name: Publish release (un-draft, mark latest)
         if: startsWith(github.ref, 'refs/tags/v')
@@ -114,7 +132,7 @@ jobs:
           JSON
           engine/sing-box check -c sbcheck.json
 
-      - name: Build (tag 才發佈；手動觸發只驗證打包)
+      - name: Build (tag 才發佈；其餘只打包成 artifact)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -126,3 +144,16 @@ jobs:
 
       - name: 列出產物
         run: ls -lh dist/ | grep -Ei 'appimage|deb' || ls -lh dist/
+
+      # dist/linux-unpacked/ 同樣不收，只要 AppImage 與 deb。
+      - name: Upload packages (非 tag 才需要，tag 的已經在 Release 裡)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages-${{ github.run_number }}
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
