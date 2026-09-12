@@ -786,7 +786,7 @@ function deleteServerRow(id) {
       if (r.hops.includes(id)) { r.hops = r.hops.filter(h => h !== id); await window.api.saveRoute(r); }
     }
     state.routes = await window.api.getRoutes();
-    renderServers(); renderSidebar(); flash('已刪除伺服器');
+    renderSidebar(); showTab(state.tab); flash('已刪除伺服器');
   }).catch(e => flash('刪除伺服器失敗：' + (e && e.message || e), 'var(--red)'));
 }
 
@@ -1456,14 +1456,16 @@ async function saveSrvSheet() {
   if (saveCred && user) { state.creds.push({ id: 'c' + Date.now(), name: name || host, user, pass, note, shown: false }); saveCreds(); }
   state.servers = await window.api.getServers();
   closeSrvSheet();
-  if (state.tab === 'servers') renderServers();
-  if (state.tab === 'dashboard') updateChain();
+  renderSidebar();
+  // 走 showTab 而不是只 updateChain()：儀表板可能正在顯示空狀態引導，
+  // 而引導的階段是由 servers/routes 數量算出來的，不重畫就會停在上一階。
+  if (state.tab === 'dashboard' || state.tab === 'servers') showTab(state.tab);
   flash('已儲存');
   window.api.testServer(id, state.settings.testTarget || undefined).then(async () => {
     state.servers = await window.api.getServers();
     if (state.tab === 'servers') renderServers();
     if (state.tab === 'dashboard') updateChain();
-  });
+  }).catch(() => {});
 }
 
 // =====================================================================================
