@@ -53,7 +53,7 @@ const state = {
   splitSimHost: '', splitSimExe: '', splitSim: null, splitHitId: null,
   splitDraft: { name: '', when: {}, target: 'direct', error: '' }, splitOpenConds: {},
   splitPendingDel: null, splitDrag: null, splitUac: false, splitUacSeen: false,
-  setsBusy: null, setsPendingDel: null, splitSimOpen: false,
+  setsBusy: null, setsPendingDel: null,
 };
 
 // ------- session 小工具 -------
@@ -171,7 +171,11 @@ function mount() {
   $('bannerDismiss').onclick = () => { state.banner = ''; state.sysHintSeen = true; showBanner(); };
 
   document.addEventListener('keydown', e => {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); if (state.tab === 'split') openSplitSheet(); else openRoute(); }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
+      e.preventDefault();
+      if (state.tab === 'logs' || state.tab === 'settings') return;   // 這兩頁沒有新增動作
+      if (state.tab === 'split') openSplitSheet(); else openRoute();
+    }
     // Ctrl+1–6 切分頁；Ctrl+L 用選取的路由開瀏覽器
     if ((e.metaKey || e.ctrlKey) && /^[1-6]$/.test(e.key)) {
       e.preventDefault();
@@ -217,10 +221,16 @@ function syncTitlebar() {
       : { label: state.settings.killSwitch ? '斷線保護就緒' : '斷線保護停用',
           color: state.settings.killSwitch && splitRunning() ? 'var(--good)' : 'var(--text2)', tab: 'settings' },
   ];
+  // 末端的分流引擎膠囊：直接開關引擎，與分流頁的電源圓環同步
+  const engOn = splitRunning(), engBusy = state.splitEngine === 'starting';
+  const pill = `<button id="stEnginePill" title="${engOn ? '停止分流引擎' : '啟動分流引擎'}" style="margin-left:10px;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border:1px solid var(--sep);border-radius:11px;background:${engOn ? 'rgba(47,158,120,.14)' : 'var(--fill2)'};color:${engOn ? 'var(--good)' : engBusy ? 'var(--amber)' : 'var(--text2)'};font-size:11px;font-weight:600;cursor:pointer;vertical-align:middle">
+    <span style="width:6px;height:6px;border-radius:50%;background:currentColor;${engOn ? 'animation:dotBeat 2.2s ease-in-out infinite' : ''}"></span>分流${engOn ? '開' : engBusy ? '啟動中' : '關'}
+  </button>`;
   st.innerHTML = segs.map((g, i) =>
-    `${i ? '<span style="color:var(--text3);margin:0 6px">·</span>' : ''}<button data-stseg="${g.tab}" style="border:none;background:transparent;padding:0;cursor:pointer;font:inherit;color:${g.color}">${esc(g.label)}</button>`).join('');
+    `${i ? '<span style="color:var(--text3);margin:0 6px">·</span>' : ''}<button data-stseg="${g.tab}" style="border:none;background:transparent;padding:0;cursor:pointer;font:inherit;color:${g.color}">${esc(g.label)}</button>`).join('') + pill;
   st.style.color = 'var(--text2)';
   st.querySelectorAll('[data-stseg]').forEach(b => b.onclick = () => showTab(b.dataset.stseg));
+  $('stEnginePill').onclick = () => toggleSplitEngine();
   $('markArc').setAttribute('stroke', runIds.length ? '#7fe3bd' : 'rgba(255,255,255,.55)');
   syncAddButton();
   renderTabs();
@@ -290,7 +300,7 @@ function renderSidebar() {
         <span style="margin-left:auto;font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:96px">${esc(refs || exitName)}</span>
       </div>
       ${active ? `<div style="display:flex;gap:6px;padding-top:2px">
-        <button class="hvBright" data-act="power" title="${powerTip}" style="flex:1;height:26px;border:none;border-radius:7px;background:${powerBg};color:${powerColor};cursor:pointer;display:flex;align-items:center;justify-content:center">${POWER_ICON}</button>
+        <button class="hvBright" data-act="power" title="${powerTip}（空白鍵）" style="flex:1;height:26px;border:none;border-radius:7px;background:${powerBg};color:${powerColor};cursor:pointer;display:flex;align-items:center;justify-content:center">${POWER_ICON}</button>
         <button class="hvAcc" data-act="edit" title="編輯路由" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
         <button class="hvAcc" data-act="browser" title="以此路由開啟瀏覽器（Ctrl+L）" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></button>
         <button class="hvRed" data-act="del" title="${pend ? '再按一次確認刪除' + (refs ? '（' + refs + '將失效）' : '') : '刪除路由'}" style="flex:1;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
@@ -344,24 +354,50 @@ function deleteRoute(id) {
 // =====================================================================================
 // 導引（無路由）
 // =====================================================================================
+// 空狀態接力：無伺服器 → 無路由 → 有路由無規則。每段只給「下一步」，不列全部。
+// 儀表板的空狀態只有兩階；第三階「還沒有規則」在分流頁的 spEmpty，
+// 因為路由建好之後儀表板要顯示路由列表，不再是空的。
+function guideStage() {
+  return state.servers.length ? 'route' : 'server';
+}
+
 function renderGuide() {
+  const stage = guideStage();
+  const firstServer = state.servers[0];
+  const G = {
+    server: {
+      icon: 'M4 6h16v5H4zM4 13h16v5H4zM7.5 8.5h.01M7.5 15.5h.01',
+      title: '先新增一台伺服器',
+      body: '伺服器就是你手上的 SOCKS / HTTP 代理。路由再從這裡挑跳點組成鏈路。',
+      primary: '新增伺服器', onPrimary: () => openSrv(),
+      secondary: '匯入', onSecondary: () => importData(),
+    },
+    route: {
+      icon: 'M6 3v12a3 3 0 0 0 3 3h9M15 15l3 3-3 3',
+      title: firstServer ? `用「${firstServer.name || firstServer.host}」建一條路由` : '建立第一條路由',
+      body: '一條路由 = 一個本地端口 + 一串上游跳點。多條路由可同時執行，各自綁不同端口與線路。',
+      primary: '新增路由', onPrimary: () => openRoute(),
+      secondary: '匯入', onSecondary: () => importData(),
+    },
+  }[stage];
+
   $('view-guide').innerHTML = `
     <div style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;text-align:center;animation:fadeUp .3s ease-out">
       <div style="width:62px;height:62px;border-radius:18px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;color:var(--accent)">
-        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.5"></circle><circle cx="19" cy="12" r="2.5"></circle><circle cx="12" cy="5" r="2.5"></circle><path d="M7.5 12h2M14.5 12h2M12 7.5v2"></path></svg>
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${G.icon}"></path></svg>
       </div>
       <div style="display:flex;flex-direction:column;gap:7px;max-width:360px">
-        <span style="font-size:19px;font-weight:700;letter-spacing:-.3px">建立第一條路由</span>
-        <span style="font-size:13px;color:var(--text2);line-height:1.65;text-wrap:pretty">一條路由 = 一個本地端口 + 一串上游跳點。多條路由可同時執行，各自綁不同端口與線路。</span>
+        <span style="font-size:19px;font-weight:700;letter-spacing:-.3px">${esc(G.title)}</span>
+        <span style="font-size:13px;color:var(--text2);line-height:1.65;text-wrap:pretty">${esc(G.body)}</span>
       </div>
       <div style="display:flex;gap:10px">
-        <button id="guideAdd" class="hvBright" style="height:38px;padding:0 20px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:13.5px;font-weight:600;cursor:pointer">新增路由</button>
-        <button id="guideImport" class="hvFill2" style="height:38px;padding:0 20px;border:1px solid var(--sep);border-radius:10px;background:var(--card);color:var(--text);font-size:13.5px;font-weight:600;cursor:pointer">匯入</button>
+        <button id="guideAdd" class="hvBright" style="height:38px;padding:0 20px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(G.primary)}</button>
+        <button id="guideAlt" class="hvFill2" style="height:38px;padding:0 20px;border:1px solid var(--sep);border-radius:10px;background:var(--card);color:var(--text);font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap">${esc(G.secondary)}</button>
       </div>
       <span style="font-size:11.5px;color:var(--text3)">⌘/Ctrl + N 新增 · 空白鍵啟動選取的路由</span>
     </div>`;
-  $('guideAdd').onclick = () => openRoute();
-  $('guideImport').onclick = () => importData();
+  $('guideAdd').onclick = G.onPrimary;
+  $('guideAlt').onclick = G.onSecondary;
 }
 
 // =====================================================================================
@@ -942,8 +978,8 @@ const SW_GROUPS = {
 const swRow = (w, last) => `
   <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;${last ? '' : 'border-bottom:1px solid var(--sep)'}">
     <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">${w.label}</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">${w.desc}</div></div>
-    <button data-sw="${w.key}" role="switch" aria-checked="false" aria-label="${w.label}" style="width:46px;height:28px;border-radius:14px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s;flex-shrink:0">
-      <span style="position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
+    <button data-sw="${w.key}" role="switch" aria-checked="false" aria-label="${w.label}" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s;flex-shrink:0">
+      <span style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
     </button>
   </div>`;
 
@@ -1823,6 +1859,10 @@ function syncSplitTitlebar() {
 }
 function syncAddButton() {
   const b = $('btnAdd'); if (!b) return;
+  // 紀錄與設定頁沒有「新增」這個動作 → 整顆隱藏，免得按了跑去新增路由
+  const hidden = state.tab === 'logs' || state.tab === 'settings';
+  b.style.display = hidden ? 'none' : 'flex';
+  if (hidden) return;
   const isSplit = state.tab === 'split';
   const label = isSplit ? '新增規則' : '新增路由';
   b.title = label + ' (Ctrl+N)';
@@ -1902,6 +1942,16 @@ function buildSplit() {
         </div>
       </div>
 
+      <div style="display:flex;flex-direction:column;gap:9px;padding-top:13px;border-top:1px solid var(--sep)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span title="測試某個目的地會走哪一條規則" style="display:flex;color:var(--text3);flex-shrink:0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg></span>
+          <input id="spSimHost" placeholder="輸入網域、IP 或 IP:埠，例如 www.netflix.com 或 10.0.0.5:3389" style="flex:1;min-width:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
+          <button id="spSimExeBtn" class="hvFill2" title="只測某支程式" style="display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><span id="spSimExeLabel">不限程式</span><span style="color:var(--text3);font-size:9px">▾</span></button>
+          <button id="spSimRun" class="hvBright" title="測試（Enter）" style="height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">測試</button>
+        </div>
+        <div id="spSimResult"></div>
+      </div>
+
     </div>
 
     <div id="spNotice"></div>
@@ -1909,20 +1959,10 @@ function buildSplit() {
     <div id="spRulesHead" style="display:flex;align-items:center;gap:10px;flex-shrink:0">
       <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">規則</span>
       <span style="font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">由上往下比對，第一條命中即生效；一條規則可同時限定程式、目的地、埠與協定</span>
-      <button id="spSimToggle" class="hvFill2" title="測試某個網址會走哪一條規則" style="margin-left:auto;display:flex;align-items:center;gap:5px;height:28px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg>模擬</button>
-      <div id="spTools" style="display:none;align-items:center;gap:8px;flex-shrink:0">
+      <div id="spTools" style="display:none;margin-left:auto;align-items:center;gap:8px;flex-shrink:0">
         <input id="spSearch" placeholder="搜尋…" style="width:150px;height:28px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text);font-size:12px;outline:none">
         <div id="spFilterSeg" style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px"></div>
       </div>
-    </div>
-
-    <div id="spSimPanel" style="display:none;flex-direction:column;gap:9px;background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:13px 16px;flex-shrink:0">
-      <div style="display:flex;align-items:center;gap:8px">
-        <input id="spSimHost" placeholder="輸入網域、IP 或 IP:埠，例如 www.netflix.com" style="flex:1;min-width:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
-        <button id="spSimExeBtn" class="hvFill2" title="只測某支程式" style="display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><span id="spSimExeLabel">不限程式</span><span style="color:var(--text3);font-size:9px">▾</span></button>
-        <button id="spSimRun" class="hvBright" style="height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">模擬</button>
-      </div>
-      <div id="spSimResult"></div>
     </div>
 
     <div id="spTableWrap" style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden;flex-shrink:0;transition:opacity .3s">
@@ -1937,11 +1977,6 @@ function buildSplit() {
   $('spGlobalBtn').onclick = e => { e.stopPropagation(); openMenu('split-global', $('spGlobalBtn')); };
   $('spSimExeBtn').onclick = e => { e.stopPropagation(); openMenu('split-simexe', $('spSimExeBtn')); };
   $('spSimRun').onclick = () => runSplitSim();
-  $('spSimToggle').onclick = () => {
-    state.splitSimOpen = !state.splitSimOpen;
-    updateSplit();
-    if (state.splitSimOpen && $('spSimHost')) $('spSimHost').focus();
-  };
   $('spSimHost').addEventListener('input', e => { state.splitSimHost = e.target.value; });
   $('spSimHost').addEventListener('keydown', e => { if (e.key === 'Enter') runSplitSim(); });
   $('spSearch').addEventListener('input', e => { state.splitSearch = e.target.value; renderSplitRules(); });
@@ -1987,8 +2022,6 @@ function updateSplit() {
   $('spTableWrap').style.display = has ? 'block' : 'none';
   $('spTableWrap').style.opacity = ruleMode ? '1' : '.45';
   $('spTools').style.display = state.splitRules.length >= 10 ? 'flex' : 'none';
-  $('spSimToggle').style.display = has ? 'flex' : 'none';
-  $('spSimPanel').style.display = (has && state.splitSimOpen) ? 'flex' : 'none';
 
   renderSplitNotice();
   renderSplitFilter();
@@ -2193,7 +2226,7 @@ function renderSplitEmpty() {
       <button id="spEmptyAdd" class="hvBright" style="height:34px;padding:0 16px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增規則</button>
       <button id="spEmptyBrowser" class="hvFill2" style="height:34px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">用這條路由開瀏覽器</button>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:100%;max-width:460px;padding-top:8px">
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;width:100%;padding-top:8px">
       ${splitTemplates().map((t, i) => `<button data-stpl="${i}" class="hvFill2" style="border:1px solid var(--sep);border-radius:12px;padding:13px;background:var(--bg);cursor:pointer;display:flex;flex-direction:column;gap:7px;text-align:left;color:var(--text)">
         <span style="color:${t.color};display:flex"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="${t.icon}"></path></svg></span>
         <span style="font-size:12.5px;font-weight:600;text-wrap:pretty">${esc(t.title)}</span>
@@ -2224,7 +2257,7 @@ async function runSplitSim() {
     renderSplitSim(); renderSplitRules();
     clearTimeout(state._splitHitT);
     state._splitHitT = setTimeout(() => { state.splitHitId = null; renderSplitRules(); }, 2000);
-  } catch { flash('模擬失敗', 'var(--red)'); }
+  } catch { flash('測試失敗', 'var(--red)'); }
 }
 
 function renderSplitSim() {
@@ -2232,6 +2265,29 @@ function renderSplitSim() {
   const sim = state.splitSim;
   if (!sim) { el.innerHTML = ''; return; }
   const r = sim.res || {};
+
+  // 內建「本機與內網」沒有對應的使用者規則列，單獨一段
+  if (r.builtin) {
+    el.innerHTML = simResultHtml({
+      host: sim.host, bg: 'var(--fill2)', color: 'var(--text2)', icon: 'M5 13l4 4L19 7',
+      title: '命中內建規則「本機與內網」', sub: '走向：直接連線', note: '',
+    });
+    return;
+  }
+
+  // 全域／直連模式下規則表整個不比對，結果只會誤導人
+  if (state.splitMode !== 'rule') {
+    const glob = state.splitMode === 'global';
+    el.innerHTML = simResultHtml({
+      host: sim.host, bg: glob ? 'var(--accent-dim)' : 'var(--fill2)', color: glob ? 'var(--accent)' : 'var(--text3)',
+      icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8h.01M11 12h1v5h1',
+      title: glob ? '全域模式，不比對規則' : '直連模式，不比對規則',
+      sub: '走向：' + (glob ? (state.splitGlobalTarget ? splitTargetLabel(state.splitGlobalTarget) : '尚未選擇路由') : '直接連線'),
+      note: '',
+    });
+    return;
+  }
+
   const hit = r.matched;
   const rule = hit ? state.splitRules.find(x => x.id === r.ruleId) : null;
   const idx = rule ? state.splitRules.indexOf(rule) + 1 : 0;
@@ -2243,16 +2299,23 @@ function renderSplitSim() {
     : hit ? 'M5 13l4 4L19 7' : 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8h.01M11 12h1v5h1';
   const title = hit ? `命中第 ${idx} 條「${rule ? (rule.name || condSummary(rWhen(rule)).map(c => c.v).join(' · ')) : r.ruleName}」` : '未命中任何規則 → 依預設走向';
   const sub = `走向：${r.targetLabel || splitTargetLabel(r.target)}` + (isBlock ? '，這個連線會被丟棄' : '');
-  el.innerHTML = `<div style="display:flex;align-items:flex-start;gap:10px;padding:11px 13px;background:${bg};border-radius:11px;font-size:12px;line-height:1.65;animation:fadeUp .2s ease-out">
+  el.innerHTML = simResultHtml({
+    host: sim.host, bg, color, icon, title, sub,
+    note: miss.length ? '此規則目前不會生效（規則庫未下載）' : '',
+  });
+}
+
+function simResultHtml({ host, bg, color, icon, title, sub, note }) {
+  return `<div style="display:flex;align-items:flex-start;gap:10px;padding:11px 13px;background:${bg};border-radius:11px;font-size:12px;line-height:1.65;animation:fadeUp .2s ease-out">
     <span style="flex-shrink:0;margin-top:1px;color:${color};display:flex"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${icon}"></path></svg></span>
     <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
       <span style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
-        <span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-weight:600;white-space:nowrap">${esc(sim.host)}</span>
+        <span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-weight:600;white-space:nowrap">${esc(host)}</span>
         <span style="color:var(--text3)">→</span>
         <span style="text-wrap:pretty">${esc(title)}</span>
       </span>
       <span style="color:var(--text2);text-wrap:pretty">${esc(sub)}</span>
-      ${miss.length ? `<span style="color:var(--amber);text-wrap:pretty">此規則目前不會生效（規則庫未下載）</span>` : ''}
+      ${note ? `<span style="color:var(--amber);text-wrap:pretty">${esc(note)}</span>` : ''}
     </div>
   </div>`;
 }
@@ -2658,7 +2721,7 @@ function renderRuleSets() {
       <div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px;opacity:${autoOn ? '1' : '.45'}">
         ${[7, 14, 30].map(d => `<button data-rsd="${d}" ${autoOn ? '' : 'disabled'} style="border:none;cursor:${autoOn ? 'pointer' : 'not-allowed'};height:26px;padding:0 10px;border-radius:6px;font-size:12px;white-space:nowrap;${segCss(days === d)}">${d}</button>`).join('')}
       </div>
-      <button data-rsauto="1" role="switch" aria-label="自動更新規則庫" style="width:46px;height:28px;border-radius:14px;border:none;padding:0;cursor:pointer;position:relative;background:${autoOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${autoOn ? '21px' : '3px'};width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+      <button data-rsauto="1" role="switch" aria-label="自動更新規則庫" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${autoOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${autoOn ? '21px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
     </div>
     <div style="padding:13px 16px;display:flex;align-items:center;gap:14px">
       <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">下載經由</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">規則庫來源在 GitHub</div></div>
@@ -2734,6 +2797,12 @@ function splitTemplates() {
       tags: ['geoip-tw'],
       rules: [{ id: 't' + Date.now(), name: '台灣網站直連', on: true, target: 'direct', when: { dest: { match: 'ruleset', value: 'geoip-tw' } } }],
       def: firstRoute,
+    },
+    {
+      title: '只有特定程式走代理', color: 'var(--purple)',
+      desc: '建立一條程式規則，挑選程式後填走向。',
+      icon: 'M4 5h16v11H4zM8 20h8M12 16v4',
+      openSheet: true,
     },
     {
       title: '擋掉廣告與追蹤', color: 'var(--red)',

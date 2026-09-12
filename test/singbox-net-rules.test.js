@@ -219,8 +219,24 @@ describe('matchTarget — 規則模擬器', () => {
   });
 
   test('IP 落在 CIDR 內才命中', async () => {
-    await expect(e.matchTarget(q({ host: '10.5.1.2' }))).resolves.toMatchObject({ ruleId: 'n2', target: 'direct' });
+    // 關掉內建保護才能單獨驗使用者規則的 CIDR 比對（開著的話 10/8 會先被內建規則吃掉）
+    await expect(e.matchTarget(q({ host: '10.5.1.2', lanDirect: false }))).resolves.toMatchObject({ ruleId: 'n2', target: 'direct' });
     await expect(e.matchTarget(q({ host: '11.5.1.2' }))).resolves.toMatchObject({ matched: false });
+  });
+
+  test('內建「本機與內網」排在使用者規則之前（和引擎一致）', async () => {
+    const lanRules = [{ id: 'x1', on: true, name: '全部走代理', target: 'r-jp', when: { dest: { match: 'ip', value: '0.0.0.0/0' } } }];
+    // 引擎把 PRIVATE_CIDRS 推在 route.rules 最前面，模擬器必須给出同樣的答案
+    await expect(e.matchTarget({ rules: lanRules, defaultTarget: 'r1', host: '192.168.1.10' }))
+      .resolves.toMatchObject({ matched: true, builtin: true, target: 'direct' });
+    await expect(e.matchTarget({ rules: lanRules, defaultTarget: 'r1', host: '127.0.0.1' }))
+      .resolves.toMatchObject({ builtin: true, target: 'direct' });
+    // 停用內建保護時就該落回使用者規則
+    await expect(e.matchTarget({ rules: lanRules, defaultTarget: 'r1', host: '192.168.1.10', lanDirect: false }))
+      .resolves.toMatchObject({ ruleId: 'x1', target: 'r-jp' });
+    // 公網 IP 不受影響
+    await expect(e.matchTarget({ rules: lanRules, defaultTarget: 'r1', host: '8.8.8.8' }))
+      .resolves.toMatchObject({ ruleId: 'x1', target: 'r-jp' });
   });
 
   test('關鍵字 → 封鎖', async () => {

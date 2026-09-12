@@ -301,7 +301,7 @@ class SingBoxEngine extends EventEmitter {
   // ===== 規則模擬器（「這個網址會走哪一條？」）=====
   // 依和引擎完全相同的順序逐條比對，回傳第一個命中的規則。地區/網域規則庫用 sing-box 自己的
   // `rule-set match` 子命令判定（不需啟動 TUN、不需提權），所以結果與實際分流一致。
-  async matchTarget({ host = '', exe = '', port = 0, network = 'tcp', rules = [], ruleSets = [], defaultTarget = 'direct' } = {}) {
+  async matchTarget({ host = '', exe = '', port = 0, network = 'tcp', rules = [], ruleSets = [], defaultTarget = 'direct', lanDirect = true } = {}) {
     const setByTag = new Map((ruleSets || []).filter(s => s && s.tag && s.path).map(s => [s.tag, s]));
     const ctx = {
       dest: String(host).trim(),
@@ -310,6 +310,12 @@ class SingBoxEngine extends EventEmitter {
       port: Number(port) || 0,
       network: String(network || 'tcp').toLowerCase(),
     };
+
+    // 內建「本機與內網」在產生設定時排在所有使用者規則之前，模擬器也必須先比，
+    // 否則測 10.0.0.5 會告訴使用者走代理，實際引擎卻是直連。
+    if (lanDirect && PRIVATE_CIDRS.some(c => cidrContains(c, ctx.dest))) {
+      return { matched: true, builtin: true, by: 'lan', ruleId: null, ruleName: '本機與內網', target: 'direct', detail: 'ip_cidr=private' };
+    }
 
     for (const r of (rules || []).filter(x => x && x.on !== false)) {
       const n = this._normalizeRule(r, setByTag);

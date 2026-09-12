@@ -980,6 +980,7 @@ ipcMain.handle('rule-match', async (_e, { host, exe, port, network } = {}) => {
     rules: split.rules,
     ruleSets: setupRuleSets().resolveForEngine(referencedSetTags(split.rules)),
     defaultTarget: split.defaultTarget,
+    lanDirect: split.lanDirect !== false,
   });
   const rt = config.getRoutes().find(r => r.id === res.target);
   return { ...res, targetLabel: res.target === 'direct' ? '直接連線' : res.target === 'block' ? '封鎖' : (rt ? rt.label || rt.id : '（路由已刪除）') };
