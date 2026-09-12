@@ -51,6 +51,8 @@ const state = {
   splitFilter: '全部', splitSearch: '', splitSheet: false, splitEditing: null,
   splitProcs: [], splitCatalog: [], splitInstalled: [],
   splitSimHost: '', splitSimExe: '', splitSim: null, splitHitId: null,
+  splitHitCounts: {},
+  ksAlertOpen: false,
   splitDraft: { name: '', when: {}, target: 'direct', error: '' }, splitOpenConds: {},
   splitPendingDel: null, splitDrag: null, splitUac: false, splitUacSeen: false,
   setsBusy: null, setsPendingDel: null,
@@ -122,6 +124,8 @@ function mount() {
       <button id="bannerDismiss" class="hvFill2" style="border:none;background:transparent;color:var(--text2);cursor:pointer;font-size:12px;padding:2px 6px;border-radius:6px">關閉</button>
     </div>
 
+    <div id="ksBar"></div>
+
     <div style="flex:1;display:flex;overflow:hidden;position:relative">
       <div id="sidebar" style="width:264px;flex-shrink:0;display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--sep)">
         <div style="padding:12px 14px 8px;display:flex;align-items:center;gap:8px">
@@ -131,7 +135,7 @@ function mount() {
         <div id="routeList" style="flex:1;overflow-y:auto;padding:0 10px 12px;display:flex;flex-direction:column;gap:8px"></div>
       </div>
 
-      <div id="content" style="flex:1;overflow-y:auto;padding:20px 22px 24px;min-width:0">
+      <div id="content" style="flex:1;overflow-y:auto;padding:18px 22px 24px;min-width:0">
         <div id="view-guide" style="height:100%;display:none"></div>
         <div id="view-dash" style="display:none"></div>
         <div id="view-servers" style="display:none"></div>
@@ -1049,7 +1053,14 @@ function buildSettings() {
 
       ${group('關於', `
         <div style="padding:13px 16px;display:flex;align-items:center;gap:14px">
-          <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">RelayClient</div><div id="setVersion" style="font-size:11.5px;color:var(--text2);margin-top:2px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">—</div></div>
+          <svg width="42" height="42" viewBox="0 0 256 256" style="border-radius:11px;flex-shrink:0">
+            <rect x="0" y="0" width="256" height="256" rx="56" fill="var(--accent)"></rect>
+            <circle cx="128" cy="128" r="76" fill="none" stroke="#fff" stroke-opacity=".28" stroke-width="15"></circle>
+            <path d="M128 52 A76 76 0 0 1 204 128" fill="none" stroke="#fff" stroke-width="15" stroke-linecap="round"></path>
+            <path d="M52 128 A76 76 0 0 0 128 204" fill="none" stroke="#7fe3bd" stroke-width="15" stroke-linecap="round"></path>
+            <circle cx="128" cy="128" r="18" fill="#fff"></circle>
+          </svg>
+          <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;white-space:nowrap">RelayClient</div><div id="setVersion" style="font-size:11.5px;color:var(--text2);margin-top:2px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">—</div></div>
           <div style="display:flex;gap:8px">
             <button id="setLogs" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">開啟紀錄檔資料夾</button>
             <button id="setUpdate" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">檢查更新</button>
@@ -1491,7 +1502,9 @@ function renderMenu() {
   $('menuMount').innerHTML = `
     <div id="menuOverlay" style="position:fixed;inset:0;z-index:110"></div>
     <div id="menuBox" style="position:fixed;top:${m.top}px;left:${m.left}px;width:${m.width}px;z-index:120;background:var(--panel);border:1px solid var(--sep);border-radius:12px;box-shadow:0 14px 36px rgba(0,0,0,.26);padding:4px;display:flex;flex-direction:column;gap:1px;animation:fadeUp .16s ease-out;max-height:260px;overflow-y:auto">
-      ${m.items.map((o, i) => `<button data-mi="${i}" class="hvFill2" style="display:flex;align-items:center;gap:9px;padding:8px 9px;border:none;border-radius:9px;background:${o.check ? 'var(--accent-dim)' : 'transparent'};color:var(--text);font-size:12.5px;cursor:pointer;text-align:left;width:100%">
+      ${m.items.map((o, i) => o.header
+        ? `<span style="padding:7px 9px 3px;font-size:10.5px;font-weight:600;color:var(--text3);letter-spacing:.3px">${esc(o.header)}</span>`
+        : `<button data-mi="${i}" class="hvFill2" style="display:flex;align-items:center;gap:9px;padding:8px 9px;border:none;border-radius:9px;background:${o.check ? 'var(--accent-dim)' : 'transparent'};color:var(--text);font-size:12.5px;cursor:pointer;text-align:left;width:100%">
         <span style="width:12px;flex-shrink:0;color:var(--accent);font-size:11px">${o.check ? '✓' : ''}</span>
         ${o.dot ? `<span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${o.dot}"></span>` : ''}
         ${o.badge && !o.dot ? `<span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);flex-shrink:0;width:52px;text-align:center">${o.badge}</span>` : ''}
@@ -1502,6 +1515,7 @@ function renderMenu() {
   $('menuOverlay').onclick = () => closeMenu();
   $('menuBox').onclick = e => e.stopPropagation();
   $('menuBox').querySelectorAll('[data-mi]').forEach(b => b.onclick = () => m.items[+b.dataset.mi].pick());
+  $('menuBox').style.alignItems = 'stretch';
 }
 function closeMenu() { if (state.menu) { state.menu = null; $('menuMount').innerHTML = ''; } }
 
@@ -1541,30 +1555,67 @@ function alertAction() {
 }
 
 // 斷線保護告警（分流引擎異常中止時彈出；不可用 Esc 關閉，必須選擇重連或停用）
+// 跟 main.js 的 KS_MAX_RETRY 保持一致（那邊是真正控制重試次數的地方）
+const KS_MAX_RETRY = 3;
+
 function renderKillswitch() {
-  const k = state.killswitch, m = $('ksMount'); if (!m) return;
-  if (!k || !k.tripped) { m.innerHTML = ''; return; }
+  const k = state.killswitch, m = $('ksMount'), bar = $('ksBar');
+  if (!k || !k.tripped) { m.innerHTML = ''; if (bar) bar.innerHTML = ''; state.ksAlertOpen = false; return; }
+
+  // 設計稿是兩層：觸發時彈對話框讓使用者做決定，
+  // 決定完（或重連失敗）之後仍留一條紅帶，按「查看」可以把對話框叫回來。
+  if (bar) {
+    bar.innerHTML = `<div style="flex-shrink:0;display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--red);color:#fff;font-size:12.5px;font-weight:500;animation:fadeUp .2s ease-out">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z"></path><path d="M12 9v4M12 16.5h.01"></path></svg>
+      <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">斷線保護已啟動 · ${k.blocking ? '依規則分流的連線已暫停' : '封鎖模式未生效，目前沒有保護'}</span>
+      <button id="ksBarOpen" style="height:26px;padding:0 11px;border:1px solid rgba(255,255,255,.5);border-radius:8px;background:transparent;color:#fff;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">查看</button>
+    </div>`;
+    $('ksBarOpen').onclick = () => { state.ksAlertOpen = true; renderKillswitch(); };
+  }
+  if (!state.ksAlertOpen) { m.innerHTML = ''; return; }
+  // 設計稿是「左對齊的橫向標題列 + 資訊方塊 + 兩顆等寬按鈕」，不是置中卡片
   const blockLine = k.blocking
-    ? '受保護程式的連線已<strong>暫停</strong>，不會繞過代理送出。'
-    : '<strong style="color:var(--red)">封鎖模式未能啟動</strong>，受保護程式目前沒有保護，請盡快重新連線或停用。';
+    ? '受保護程式的連線已<strong style="color:var(--text);font-weight:600">暫停</strong>，不會繞過代理外洩；其他程式不受影響。'
+    : '<strong style="color:var(--red);font-weight:600">封鎖模式未能啟動</strong>，受保護程式目前沒有保護，請盡快重新連線或停用。';
+  const t = k.at ? new Date(k.at) : null;
+  const hhmm = t ? `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}` : '剛剛';
+  const retries = Number(k.retries) || 0;
+  const retryText = k.reconnecting ? `第 ${retries + 1} 次重試中…`
+    : retries >= KS_MAX_RETRY ? `已重試 ${retries} 次皆失敗，請手動處理`
+    : retries ? `已重試 ${retries} 次，稍後再試` : '等待重試…';
+  const retryColor = retries >= KS_MAX_RETRY ? 'var(--red)' : k.reconnecting ? 'var(--amber)' : 'var(--text)';
+  const row = (label, value, color) => `<div style="display:flex;align-items:center;gap:8px;font-size:11.5px"><span style="color:var(--text3);width:56px;flex-shrink:0">${label}</span><span style="flex:1;color:${color || 'var(--text)'};word-break:break-all">${value}</span></div>`;
   m.innerHTML = `
-    <div style="position:absolute;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:150">
-      <div style="width:384px;background:var(--panel);border:1px solid var(--red);border-radius:16px;box-shadow:0 20px 50px rgba(0,0,0,.34);padding:22px;display:flex;flex-direction:column;align-items:center;gap:13px;text-align:center;animation:fadeUp .2s ease-out">
-        <div style="width:52px;height:52px;flex-shrink:0;border-radius:15px;background:rgba(217,83,74,.14);display:flex;align-items:center;justify-content:center;color:var(--red);animation:shieldIn .35s cubic-bezier(.32,.72,0,1)">
-          <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z"></path><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"></path></svg>
+    <div style="position:absolute;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:150">
+      <div style="width:440px;background:var(--panel);border:1px solid var(--sep);border-radius:20px;box-shadow:0 28px 70px rgba(0,0,0,.36);padding:26px 26px 22px;display:flex;flex-direction:column;gap:16px;animation:fadeUp .22s ease-out">
+        <div style="display:flex;align-items:center;gap:14px">
+          <div style="width:52px;height:52px;flex-shrink:0;border-radius:15px;background:rgba(217,83,74,.14);display:flex;align-items:center;justify-content:center;color:var(--red);animation:shieldIn .35s cubic-bezier(.32,.72,0,1)">
+            <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z"></path><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"></path></svg>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+            <span style="font-size:17px;font-weight:700;letter-spacing:-.3px;white-space:nowrap">斷線保護已啟動</span>
+            <span style="font-size:12px;color:var(--text2);white-space:nowrap">${hhmm} · 分流引擎異常中止</span>
+          </div>
         </div>
-        <span style="display:flex;align-items:center;gap:8px;font-size:15.5px;font-weight:700;letter-spacing:-.2px"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--red);flex-shrink:0"><path d="M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z"></path><path d="M12 9v4M12 16h.01"></path></svg>斷線保護已啟動</span>
-        <span style="font-size:12.5px;color:var(--text2);line-height:1.7;text-wrap:pretty">${esc(k.reason || '分流引擎中止')}。<br>${blockLine}</span>
-        <div style="display:flex;gap:9px;width:100%;padding-top:4px">
-          <button id="ksClear" class="hvFill2" style="flex:1;height:34px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">停用保護（恢復直連）</button>
-          <button id="ksReconnect" class="hvBright" style="flex:1;height:34px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">重新連線</button>
+        <span style="font-size:12.5px;color:var(--text2);line-height:1.75;text-wrap:pretty">${blockLine}</span>
+        <div style="background:var(--bg);border:1px solid var(--sep);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+          ${row('原因', `<span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">${esc(k.reason || '分流引擎中止')}</span>`)}
+          ${row('已封鎖', k.blocking ? '所有連線（本機與內網除外）' : '未封鎖 — 保護沒有生效', k.blocking ? null : 'var(--red)')}
+          ${row('自動重連', esc(retryText), retryColor)}
         </div>
+        <div style="display:flex;gap:9px">
+          <button id="ksClear" title="停用分流，受保護程式改為直連" style="flex:1;height:38px;border:1px solid var(--sep);border-radius:11px;background:var(--bg);color:var(--red);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">停用分流並直連</button>
+          <button id="ksReconnect" class="hvBright" style="flex:1;height:38px;border:none;border-radius:11px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:7px">${k.reconnecting ? '重新啟動引擎…' : '重新連線'}</button>
+        </div>
+        <span style="font-size:11px;color:var(--text3);text-align:center;line-height:1.5">此視窗無法以 Esc 關閉，必須選擇其一。</span>
       </div>
     </div>`;
   $('ksReconnect').onclick = async () => {
-    const b = $('ksReconnect'); b.textContent = '重新連線中…'; b.disabled = true;
-    try { const r = await window.api.killswitchReconnect(); if (!(r && r.ok)) { flash('重新連線失敗：' + ((r && r.error) || '未知'), 'var(--red)'); b.textContent = '重新連線'; b.disabled = false; } }
-    catch (e) { flash('重新連線失敗：' + e.message, 'var(--red)'); b.textContent = '重新連線'; b.disabled = false; }
+    // 設計稿：選完就收對話框，失敗也只留紅帶，不把使用者鎖在對話框裡
+    const done = () => { state.ksAlertOpen = false; renderKillswitch(); };
+    const b = $('ksReconnect'); b.textContent = '重新啟動引擎…'; b.disabled = true;
+    try { const r = await window.api.killswitchReconnect(); if (!(r && r.ok)) { flash('重新連線失敗：' + ((r && r.error) || '未知'), 'var(--red)'); done(); } }
+    catch (e) { flash('重新連線失敗：' + e.message, 'var(--red)'); done(); }
   };
   $('ksClear').onclick = async () => {
     try { await window.api.killswitchClear(); flash('已停用分流，網路恢復直連', 'var(--amber)'); } catch (e) {}
@@ -1753,6 +1804,7 @@ async function boot() {
   try { const logs = await window.api.getLogs(); state.logs = (logs || []).map(l => ({ ...l, id: ++logSeq })); } catch {}
   try { const sp = await window.api.getSplit(); if (sp) { if (Array.isArray(sp.rules)) state.splitRules = sp.rules; if (sp.defaultTarget != null) state.splitDefaultTarget = sp.defaultTarget; if (typeof sp.udp === 'boolean') state.splitUdp = sp.udp; } } catch {}
   try { const est = await window.api.getEngineStatus(); if (est) applyEngineStatus(est); } catch {}
+  try { const hc = await window.api.getHitCounts(); if (hc) state.splitHitCounts = hc; } catch {}
 
   renderSidebar();
   showTab('dashboard');
@@ -1774,7 +1826,8 @@ async function boot() {
   window.api.onRouteStatus(list => reconcileStatus(list));
 
   if (window.api.onEngineStatus) window.api.onEngineStatus(st => { if (st) applyEngineStatus(st); });
-  if (window.api.onKillswitch) window.api.onKillswitch(k => { if (k) { state.killswitch = k; renderKillswitch(); if (k.tripped) flash('斷線保護啟動：已暫停受保護程式的連線', 'var(--red)'); } });
+  if (window.api.onHitCounts) window.api.onHitCounts(c => { state.splitHitCounts = c || {}; if (state.tab === 'split') renderSplitRules(); });
+  if (window.api.onKillswitch) window.api.onKillswitch(k => { if (k) { if (k.tripped && !(state.killswitch && state.killswitch.tripped)) state.ksAlertOpen = true; state.killswitch = k; renderKillswitch(); if (k.tripped) flash('斷線保護啟動：已暫停受保護程式的連線', 'var(--red)'); } });
   if (window.api.onUpdateStatus) window.api.onUpdateStatus(s => {
     if (!s) return;
     state.update = { status: s.status, version: s.version || state.update.version, percent: s.percent || 0 };
@@ -2125,10 +2178,12 @@ function renderSplitRules() {
     <span style="width:26px;flex-shrink:0"></span><span style="width:26px;flex-shrink:0">#</span>
     <span style="flex:1.3;min-width:0;white-space:nowrap">規則 · 條件</span>
     <span style="flex:1;min-width:0;white-space:nowrap">流量走向</span>
+    <span style="width:64px;flex-shrink:0;text-align:right;white-space:nowrap">命中</span>
     <span style="width:104px;flex-shrink:0"></span>
   </div>`;
 
   const lanOn = state.splitLanDirect;
+  const lanCountable = splitRunning() && lanOn;
   const builtin = `<div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${lanOn ? 'transparent' : 'var(--fill2)'};color:${lanOn ? 'var(--text)' : 'var(--text3)'}">
     <span title="內建規則：固定在最前面，可停用、不可刪除" style="width:26px;flex-shrink:0;display:flex;align-items:center;color:var(--text3)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg></span>
     <span style="width:26px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3)">0</span>
@@ -2138,6 +2193,7 @@ function renderSplitRules() {
     </span>
     <span style="flex:1;min-width:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--text2)"></span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">直接連線（不經代理）</span></span>
     
+    <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:${lanCountable ? 'var(--text2)' : 'var(--text3)'};white-space:nowrap">${lanCountable ? String(state.splitHitCounts.__lan || 0) : '—'}</span>
     <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
       <button data-lan="1" title="${lanOn ? '停用內建保護（不建議：印表機、NAS、路由器管理頁會被送進代理）' : '啟用內建保護'}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${lanOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s"><span style="position:absolute;top:3px;left:${lanOn ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
       <span style="width:58px"></span>
@@ -2155,6 +2211,13 @@ function renderSplitRules() {
     const dot = splitTargetDot(r.target, on);
     const dotAnim = on && active && !isBlock && r.target !== 'direct' ? 'dotBeat 2.2s ease-in-out infinite' : 'none';
     const rowBg = state.splitHitId === r.id ? 'var(--accent-dim)' : on ? 'transparent' : 'var(--fill2)';
+    // 命中數只在「引擎在跑 + 規則啟用 + 規則庫齊全」時才有意義，
+    // 否則顯示破折號，不要讓使用者以為「0」代表規則沒效
+    const countable = active && on && !miss.length;
+    const hits = countable ? String(state.splitHitCounts[r.id] || 0) : '—';
+    const hitTip = countable ? '引擎啟動至今的命中次數'
+      : !active ? '分流引擎未執行，不會統計'
+      : !on ? '規則已停用' : '規則庫未下載，這條規則不會生效';
     return `<div data-srid="${esc(r.id)}" draggable="true" class="hvFill2" style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${rowBg};box-shadow:${miss.length ? 'inset 3px 0 0 var(--amber)' : 'none'};cursor:grab;color:${on ? 'var(--text)' : 'var(--text3)'};transition:background .3s">
       <span style="width:26px;flex-shrink:0;display:flex;align-items:center;color:var(--text3)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7h.01M8 12h.01M8 17h.01M16 7h.01M16 12h.01M16 17h.01"></path></svg></span>
       <span style="width:26px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3)">${idx}</span>
@@ -2170,7 +2233,7 @@ function renderSplitRules() {
         <span title="${esc(targetLabel)}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:${targetColor}">${esc(targetLabel)}</span>
         ${miss.length ? `<button data-sact="dl" class="hvBright" style="flex-shrink:0;height:22px;padding:0 9px;border:none;border-radius:6px;background:var(--amber);color:#fff;font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap">下載規則庫</button>` : ''}
       </span>
-      
+      <span title="${hitTip}" style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:${hits === '—' ? 'var(--text3)' : 'var(--text2)'}">${hits}</span>
       <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
         <button data-sact="toggle" title="${on ? '停用規則：' : '啟用規則：'}${esc(name)}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${on ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${on ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
         <button data-sact="edit" class="hvAcc" title="編輯規則" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
@@ -2194,7 +2257,7 @@ function renderSplitRules() {
       <span style="width:7px;height:7px;border-radius:50%;background:${splitTargetDot(state.splitDefaultTarget)};flex-shrink:0"></span>
       <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(splitTargetLabel(state.splitDefaultTarget))}</span>
     </span>
-    
+    <span style="width:64px;flex-shrink:0;text-align:right;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3);white-space:nowrap">${splitRunning() ? String(state.splitHitCounts.__default || 0) : '—'}</span>
     <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end"><button id="spDefaultChange" class="hvAccDim" style="height:26px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--accent);font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap">變更</button></span>
   </div>`;
 
@@ -2470,7 +2533,11 @@ function splitMenuItems(kind) {
         renderSplitSheet();
       },
     });
-    return [...inst.map(c => mk(c, true)), ...rest.map(c => mk(c, false))];
+    // 設計稿把目錄分成「已下載」與「目錄中」兩組，21 項一長串根本找不到東西
+    return [
+      ...(inst.length ? [{ header: '已下載' }, ...inst.map(c => mk(c, true))] : []),
+      ...(rest.length ? [{ header: '目錄中' }, ...rest.map(c => mk(c, false))] : []),
+    ];
   }
   return [];
 }
@@ -2544,7 +2611,7 @@ function renderSplitSheet() {
         body += `<button id="spRsPick" class="hvFill2" style="display:flex;align-items:center;gap:9px;height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--panel);color:${dTags.length ? 'var(--text)' : 'var(--text3)'};font-size:12.5px;cursor:pointer;text-align:left"><span style="flex:1">${dTags.length ? `已選 ${dTags.length} 個` : '選擇地區或分類…'}</span><span style="color:var(--text3);font-size:9px">▾</span></button>
           ${dTags.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${dTags.map(t => {
             const ok = isInstalled(t);
-            return `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:7px;background:${ok ? 'var(--accent-dim)' : 'rgba(217,139,31,.14)'};color:${ok ? 'var(--accent)' : 'var(--amber)'};font-size:11.5px;white-space:nowrap">${esc(catLabel(t))}<button data-schip="${esc(t)}" title="移除" style="border:none;background:transparent;color:inherit;cursor:pointer;padding:0;display:flex;font-size:11px">✕</button></span>`;
+            return `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 6px 0 9px;border-radius:13px;background:${ok ? 'var(--accent-dim)' : 'rgba(217,139,31,.14)'};color:${ok ? 'var(--accent)' : 'var(--amber)'};font-size:11.5px;font-weight:500;white-space:nowrap">${esc(catLabel(t))}<span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:10px;opacity:.7">${esc(t)}</span><button data-schip="${esc(t)}" title="移除" style="width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.12);color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="8" height="8" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button></span>`;
           }).join('')}</div>` : ''}
           <span style="font-size:11px;color:var(--text3);line-height:1.5;text-wrap:pretty">依「目的地在哪個國家」或「屬於哪類網站」（如 Netflix、廣告）比對，選了才下載對應清單，可複選。</span>`;
       }

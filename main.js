@@ -751,13 +751,33 @@ const hitParser = new HitParser({
   onHit: (conn) => recordHit(conn),
 });
 const consumeEngineLine = line => hitParser.consume(line);
-function resetHits() { hitParser.reset(); }
+function resetHits() { hitParser.reset(); resetHitCounts(); }
+
+// 每條規則的命中次數（設計稿規則表有一欄「命中」）。只活在記憶體，
+// 引擎一重啟就歸零 —— 跨 session 累計沒意義，也不值得寫進設定檔。
+let hitCounts = Object.create(null);
+let hitFlushTimer = null;
+function flushHitCounts() {
+  if (hitFlushTimer) return;                 // 高流量時一秒最多推一次，不要每條連線都重畫 UI
+  hitFlushTimer = setTimeout(() => {
+    hitFlushTimer = null;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('hit-counts', { ...hitCounts });
+  }, 1000);
+}
+function resetHitCounts() {
+  hitCounts = Object.create(null);
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('hit-counts', {});
+}
+ipcMain.handle('get-hit-counts', () => ({ ...hitCounts }));
 
 function recordHit(conn) {
   const info = conn.info;
   if (info && info.kind === 'self') return;   // app 自己的流量不記
   const split = config.getSplit();
   const rule = info && info.kind === 'rule' ? split.rules.find(r => r.id === info.id) : null;
+  // 內建列與預設列也有命中欄，用保留鍵記（規則 id 是 r_xxx，不會撞）
+  const key = rule ? rule.id : !info ? '__default' : info.kind === 'lan' ? '__lan' : null;
+  if (key) { hitCounts[key] = (hitCounts[key] || 0) + 1; flushHitCounts(); }
   addLog('info', 'split', `連線 ${conn.host}`, null, {
     matched: !!info,
     ruleId: rule ? rule.id : null,
@@ -793,7 +813,7 @@ function setupEngine() {
 // 分流引擎「非使用者主動」中止時，若已啟用，立即以封鎖模式重建 TUN，
 // 先擋住受保護程式的連線，避免它們繞過代理外洩；並通知 UI 顯示告警。
 const KS_MAX_RETRY = 3, KS_RETRY_DELAY = 4000;
-let killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false };
+let killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false, at: 0 };
 let ksRetryTimer = null;
 // 自動重連（settings.killSwitchAutoReconnect，預設開）
 function scheduleKillSwitchRetry() {
@@ -815,7 +835,7 @@ function scheduleKillSwitchRetry() {
       const r = await engine.start(engineParams());
       if (r && r.ok) {
         clearTimeout(ksRetryTimer);
-        killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false };
+        killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false, at: 0 };
         addLog('info', 'killswitch', '自動重連成功，受保護程式已恢復連線');
         sendKillSwitch(); sendEngineStatus();
         return;
@@ -832,7 +852,7 @@ function sendKillSwitch() {
 }
 async function triggerKillSwitch(code) {
   const retries = killSwitchState.tripped ? killSwitchState.retries : 0;
-  killSwitchState = { tripped: true, reason: `分流引擎異常中止（code ${code}）`, blocking: false, retries, reconnecting: false };
+  killSwitchState = { tripped: true, reason: `分流引擎異常中止（code ${code}）`, blocking: false, retries, reconnecting: false, at: Date.now() };
   addLog('error', 'killswitch', '斷線保護啟動：已暫停受保護程式的連線，避免它們繞過代理');
   try {
     const r = await engine.startBlock(engineParams());
@@ -849,7 +869,7 @@ ipcMain.handle('killswitch-reconnect', async () => {
   setupEngine();
   await engine.stop();               // 先收掉 block 模式
   const r = await engine.start(engineParams());
-  if (r && r.ok) killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false };
+  if (r && r.ok) killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false, at: 0 };
   sendKillSwitch(); sendEngineStatus();
   return r;
 });
@@ -857,7 +877,7 @@ ipcMain.handle('killswitch-clear', async () => {
   clearTimeout(ksRetryTimer);
   setupEngine();
   await engine.stop();               // 移除 TUN，恢復正常網路（使用者明確接受直連）
-  killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false };
+  killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false, at: 0 };
   sendKillSwitch(); sendEngineStatus();
   return { ok: true };
 });
