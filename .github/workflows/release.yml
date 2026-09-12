@@ -57,10 +57,14 @@ jobs:
           & "engine/sing-box.exe" check -c sbcheck.json
           if ($LASTEXITCODE -ne 0) { throw "sing-box gVisor TUN config check failed — engine incompatible" }
 
-      - name: Build & publish to GitHub Releases
+      - name: Build (tag 才發佈；手動觸發只驗證打包)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run release
+        shell: pwsh
+        run: |
+          npm run make-icon
+          if ("${{ github.ref }}".StartsWith("refs/tags/v")) { npx electron-builder --win --publish always }
+          else { npx electron-builder --win --publish never }
 
       - name: Publish release (un-draft, mark latest)
         if: startsWith(github.ref, 'refs/tags/v')
@@ -110,7 +114,15 @@ jobs:
           JSON
           engine/sing-box check -c sbcheck.json
 
-      - name: Build & publish to GitHub Releases
+      - name: Build (tag 才發佈；手動觸發只驗證打包)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --linux --publish always
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            npx electron-builder --linux --publish always
+          else
+            npx electron-builder --linux --publish never
+          fi
+
+      - name: 列出產物
+        run: ls -lh dist/ | grep -Ei 'appimage|deb' || ls -lh dist/
