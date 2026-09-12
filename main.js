@@ -1096,7 +1096,26 @@ ipcMain.handle('window-maximize', () => {
 });
 ipcMain.handle('window-close', () => mainWindow.close());
 
+// 單一實例鎖。除了避免兩個實例搶同一組本地埠，也是安裝程式能請我們「好好結束」的通道：
+// NSIS 安裝前會跑 "RelayClient.exe --quit"，那個新實例拿不到鎖，
+// 意圖會經由 second-instance 轉給正在執行的這個，走完整的 app.quit()（移除 TUN、還原系統代理）。
+// 不讓安裝程式 taskkill /F 的理由就在這——強殺會跳過清理，使用者裝完會發現上不了網。
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.exit(0);   // 用 exit 不用 quit：這個實例什麼都還沒起，不需要跑清理
+} else if (process.argv.includes('--quit')) {
+  // 拿到鎖代表本來就沒有實例在跑 → --quit 沒有對象，直接結束。
+  // 少了這個判斷，安裝程式在「app 沒在跑」時反而會被我們啟動一個新實例。
+  app.exit(0);
+} else {
+  app.on('second-instance', (_e, argv) => {
+    if (argv.includes('--quit')) { addLog('info', 'system', '收到結束請求（安裝程式或外部呼叫）'); app.quit(); return; }
+    showMainWindow();   // 使用者重複點捷徑 → 把既有視窗叫出來
+  });
+}
+
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return;
   initFileLog();
   createWindow();
   createTray();

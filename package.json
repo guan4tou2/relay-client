@@ -4,7 +4,10 @@
   "version": "1.2.0",
   "description": "Windows 圖形化 proxychains：串接 SOCKS/HTTP 代理、指定程式走代理、斷線保護（SOCKS5 / SOCKS4 / HTTP / HTTPS）",
   "main": "main.js",
-  "author": "guantou",
+  "author": {
+    "name": "guantou",
+    "email": "mole30608@gmail.com"
+  },
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -106,7 +109,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "RelayClient",
-      "artifactName": "RelayClient-Setup-${version}.${ext}"
+      "artifactName": "RelayClient-Setup-${version}.${ext}",
+      "include": "build/installer.nsh"
     },
     "portable": {
       "artifactName": "RelayClient-Portable-${version}.${ext}"
