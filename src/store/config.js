@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = {
   autoStartRoutes: true,
   minimizeToTray: true,
   killSwitch: false,
+  killSwitchAutoReconnect: true,   // 觸發後自動重試 3 次，每次間隔 4 秒
   testTarget: null,
   // 規則庫（依網域 / 地區分流用的 rule-set）：預設不自動連網，使用者按下載才會取用
   rulesetAutoUpdate: false,

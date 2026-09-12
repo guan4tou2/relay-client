@@ -815,44 +815,82 @@ function setupEngine() {
   });
   engine.on('exit', (code) => {
     // block（斷線保護）模式自己中止 → 不遞迴再觸發，只記錄並回報
-    if (engine._blocking) { addLog('error', 'killswitch', `斷線保護(block)模式也中止了（code ${code}）——受保護程式已無 TUN`); killSwitchState.blocking = false; sendKillSwitch(); sendEngineStatus(); return; }
+    if (engine._blocking) { addLog('error', 'killswitch', `斷線保護的封鎖模式也中止了（code ${code}）——受保護程式已失去保護`); killSwitchState.blocking = false; sendKillSwitch(); sendEngineStatus(); return; }
     addLog('warn', 'engine', `分流引擎異常結束（code ${code}）`);
     if (config.getSettings().killSwitch) triggerKillSwitch(code);
     else sendEngineStatus();
   });
 }
 
-// ===== 斷線保護（Kill-switch）=====
-// 分流引擎「非使用者主動」中止時，若已啟用，立即以 fail-closed block 模式重建 TUN，
-// 讓受保護程式無法以真實 IP 外洩；並通知 UI 顯示告警與「重新連線 / 停用保護」。
-let killSwitchState = { tripped: false, reason: '', blocking: false };
+// ===== 斷線保護 =====
+// 分流引擎「非使用者主動」中止時，若已啟用，立即以封鎖模式重建 TUN，
+// 先擋住受保護程式的連線，避免它們繞過代理外洩；並通知 UI 顯示告警。
+const KS_MAX_RETRY = 3, KS_RETRY_DELAY = 4000;
+let killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false };
+let ksRetryTimer = null;
+// 自動重連（settings.killSwitchAutoReconnect，預設開）
+function scheduleKillSwitchRetry() {
+  clearTimeout(ksRetryTimer);
+  if (!config.getSettings().killSwitchAutoReconnect) return;
+  if (killSwitchState.retries >= KS_MAX_RETRY) {
+    addLog('warn', 'killswitch', `已自動重試 ${KS_MAX_RETRY} 次仍失敗，請手動處理`);
+    return;
+  }
+  ksRetryTimer = setTimeout(async () => {
+    if (!killSwitchState.tripped) return;
+    killSwitchState.retries += 1;
+    killSwitchState.reconnecting = true;
+    sendKillSwitch();
+    addLog('info', 'killswitch', `自動重連第 ${killSwitchState.retries} 次…`);
+    try {
+      await engine.stop();
+      await ensureSplitRoutesStarted();
+      const r = await engine.start(engineParams());
+      if (r && r.ok) {
+        clearTimeout(ksRetryTimer);
+        killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false };
+        addLog('info', 'killswitch', '自動重連成功，受保護程式已恢復連線');
+        sendKillSwitch(); sendEngineStatus();
+        return;
+      }
+    } catch (e) { addLog('warn', 'killswitch', `自動重連失敗：${e.message}`); }
+    killSwitchState.reconnecting = false;
+    sendKillSwitch();
+    scheduleKillSwitchRetry();
+  }, KS_RETRY_DELAY);
+}
+
 function sendKillSwitch() {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('killswitch', { ...killSwitchState, enabled: !!config.getSettings().killSwitch });
 }
 async function triggerKillSwitch(code) {
-  killSwitchState = { tripped: true, reason: `分流引擎異常中止（code ${code}）`, blocking: false };
-  addLog('error', 'killswitch', '斷線保護啟動：以 fail-closed 模式封鎖受保護程式，防止流量以真實 IP 外洩');
+  const retries = killSwitchState.tripped ? killSwitchState.retries : 0;
+  killSwitchState = { tripped: true, reason: `分流引擎異常中止（code ${code}）`, blocking: false, retries, reconnecting: false };
+  addLog('error', 'killswitch', '斷線保護啟動：已暫停受保護程式的連線，避免它們繞過代理');
   try {
     const r = await engine.startBlock(engineParams());
     killSwitchState.blocking = !!(r && r.ok);
     if (!(r && r.ok)) addLog('error', 'killswitch', `block 模式啟動失敗：${(r && r.error) || '未知'}`);
-  } catch (e) { addLog('error', 'killswitch', `block 模式例外：${e.message}`); }
+  } catch (e) { addLog('error', 'killswitch', `封鎖模式例外：${e.message}`); }
+  scheduleKillSwitchRetry();
   sendKillSwitch();
   sendEngineStatus();
 }
 ipcMain.handle('get-killswitch', () => ({ ...killSwitchState, enabled: !!config.getSettings().killSwitch }));
 ipcMain.handle('killswitch-reconnect', async () => {
+  clearTimeout(ksRetryTimer);
   setupEngine();
   await engine.stop();               // 先收掉 block 模式
   const r = await engine.start(engineParams());
-  if (r && r.ok) killSwitchState = { tripped: false, reason: '', blocking: false };
+  if (r && r.ok) killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false };
   sendKillSwitch(); sendEngineStatus();
   return r;
 });
 ipcMain.handle('killswitch-clear', async () => {
+  clearTimeout(ksRetryTimer);
   setupEngine();
   await engine.stop();               // 移除 TUN，恢復正常網路（使用者明確接受直連）
-  killSwitchState = { tripped: false, reason: '', blocking: false };
+  killSwitchState = { tripped: false, reason: '', blocking: false, retries: 0, reconnecting: false };
   sendKillSwitch(); sendEngineStatus();
   return { ok: true };
 });
