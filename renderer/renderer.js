@@ -387,14 +387,14 @@ function renderGuide() {
   const firstServer = state.servers[0];
   const G = {
     server: {
-      icon: 'M4 6h16v5H4zM4 13h16v5H4zM7.5 8.5h.01M7.5 15.5h.01',
+      icon: '<path d="M4 6h16v5H4zM4 13h16v5H4zM7.5 8.5h.01M7.5 15.5h.01"></path>',
       title: '先新增一台伺服器',
       body: '伺服器就是你手上的 SOCKS / HTTP 代理。路由再從這裡挑跳點組成鏈路。',
       primary: '新增伺服器', onPrimary: () => openSrv(),
       secondary: '匯入', onSecondary: () => importData(),
     },
     route: {
-      icon: 'M6 3v12a3 3 0 0 0 3 3h9M15 15l3 3-3 3',
+      icon: '<circle cx="5" cy="12" r="2.5"></circle><circle cx="19" cy="12" r="2.5"></circle><circle cx="12" cy="5" r="2.5"></circle><path d="M7.5 12h2M14.5 12h2M12 7.5v2"></path>',
       title: firstServer ? `用「${firstServer.name || firstServer.host}」建一條路由` : '建立第一條路由',
       body: '一條路由 = 一個本地端口 + 一串上游跳點。多條路由可同時執行，各自綁不同端口與線路。',
       primary: '新增路由', onPrimary: () => openRoute(),
@@ -405,15 +405,15 @@ function renderGuide() {
   $('view-guide').innerHTML = `
     <div style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;text-align:center;animation:fadeUp .3s ease-out">
       <div style="width:62px;height:62px;border-radius:18px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;color:var(--accent)">
-        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${G.icon}"></path></svg>
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${G.icon}</svg>
       </div>
       <div style="display:flex;flex-direction:column;gap:7px;max-width:360px">
         <span style="font-size:19px;font-weight:700;letter-spacing:-.3px">${esc(G.title)}</span>
         <span style="font-size:13px;color:var(--text2);line-height:1.65;text-wrap:pretty">${esc(G.body)}</span>
       </div>
       <div style="display:flex;gap:10px">
-        <button id="guideAdd" class="hvBright" style="height:38px;padding:0 20px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(G.primary)}</button>
-        <button id="guideAlt" class="hvFill2" style="height:38px;padding:0 20px;border:1px solid var(--sep);border-radius:10px;background:var(--card);color:var(--text);font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap">${esc(G.secondary)}</button>
+        <button id="guideAdd" class="hvBright" style="height:38px;padding:0 20px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(G.primary)}</button>
+        <button id="guideAlt" class="hvFill2" style="height:38px;padding:0 20px;border:1px solid var(--sep);border-radius:10px;background:var(--card);color:var(--text);font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(G.secondary)}</button>
       </div>
       <span style="font-size:11.5px;color:var(--text3)">⌘/Ctrl + N 新增 · 空白鍵啟動選取的路由</span>
     </div>`;
