@@ -28,7 +28,12 @@ jest.mock('electron', () => ({
   app: {
     whenReady: () => new Promise(() => {}), // never resolves to prevent startup
     on: jest.fn(),
-    exit: jest.fn()
+    exit: jest.fn(),
+    quit: jest.fn(),
+    // 單一實例鎖：測試環境一律視為「拿到鎖」，main.js 才會走正常的初始化路徑
+    requestSingleInstanceLock: jest.fn(() => true),
+    getPath: jest.fn(() => require('os').tmpdir()),
+    getVersion: jest.fn(() => '0.0.0-test'),
   },
   BrowserWindow: jest.fn(() => mockWindow),
   ipcMain: { handle: jest.fn() },
