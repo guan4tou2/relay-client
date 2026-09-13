@@ -265,7 +265,7 @@ class SingBoxEngine extends EventEmitter {
 
   // 斷線保護（Kill-switch）專用設定：受保護程式（原本要走代理者）→ reject（fail-closed 丟棄），
   // 其餘程式 → direct（維持正常上網）。用 sing-box 內建 route action reject，不動防火牆。
-  generateBlockConfig({ rules = [], ruleSets = [], selfNames = [], mode = 'rule', lanDirect = true }) {
+  generateBlockConfig({ rules = [], ruleSets = [], selfNames = [], mode = 'rule', lanDirect = true, scopeApps = [] }) {
     const routeRules = [];
     const setByTag = new Map((ruleSets || []).filter(s => s && s.tag && s.path).map(s => [s.tag, s]));
     // 只擋「原本要走代理」的規則（target 非 direct）；原本就直連的不動，使用者其餘上網照常。
@@ -280,10 +280,18 @@ class SingBoxEngine extends EventEmitter {
     if (self.length) routeRules.push({ process_name: self, outbound: 'direct' });
     // 內網保護在封鎖模式同樣要放在最前面，否則 catch-all 會把使用者的內網也切斷
     if (lanDirect) routeRules.push({ ip_cidr: [...PRIVATE_CIDRS], outbound: 'direct' });
-    for (const r of protectedRules) routeRules.push({ ...this._condObject(r.conds), action: 'reject' });
-    if (mode === 'global') routeRules.push({ inbound: ['tun-in'], action: 'reject' });
+    // MERGE §6：使用者可以把保護範圍收窄到指定程式。
+    // 這時不再依規則表，而是只擋這幾支的連線（不管它們原本走哪），
+    // 其餘程式落到 final: direct，引擎挂掉時還能上網。
+    const apps = (scopeApps || []).map(x => String(x || '').trim()).filter(Boolean);
+    if (apps.length) {
+      routeRules.push({ process_name: apps, action: 'reject' });
+    } else {
+      for (const r of protectedRules) routeRules.push({ ...this._condObject(r.conds), action: 'reject' });
+      if (mode === 'global') routeRules.push({ inbound: ['tun-in'], action: 'reject' });
+    }
 
-    const ruleSetDefs = this._ruleSetDefs(protectedRules, setByTag);
+    const ruleSetDefs = apps.length ? [] : this._ruleSetDefs(protectedRules, setByTag);
 
     return {
       log: { level: 'warn', timestamp: true },  // 封鎖模式不需要命中資訊

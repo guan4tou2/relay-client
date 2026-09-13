@@ -727,10 +727,23 @@ ipcMain.handle('save-route', (_e, route) => {
   return routes;
 });
 
-ipcMain.handle('delete-route', async (_e, id) => {
+// MERGE §4：找不到 Chrome/Edge 時按鈕要 disabled，所以 UI 得先知道有沒有
+ipcMain.handle('browser-info', () => { const b = findBrowser(); return b ? { name: b.name, path: b.path } : null; });
+
+// 這條路由有沒有留下瀏覽器 profile（沒有就不用多問一句）
+ipcMain.handle('route-profile-info', (_e, id) => {
+  try {
+    const dir = path.join(app.getPath('userData'), 'browser-profiles', String(id).replace(/[^\w.-]/g, '_'));
+    return { exists: fs.existsSync(dir) };
+  } catch (e) { return { exists: false }; }
+});
+
+ipcMain.handle('delete-route', async (_e, id, opts) => {
   if (routeManager) await routeManager.stop(id);
   config.setRoutes(config.getRoutes().filter(r => r.id !== id));
-  // 這條路由的瀏覽器 profile（cookie / 登入狀態）也一併清掉，避免遺留可識別的資料
+  // 這條路由的瀏覽器 profile（cookie / 登入狀態）。MERGE §4：要問過才能刪，
+  // 不問就刪等於連帶把使用者在那個視窗裡的登入狀態一起清掉。
+  if (opts && opts.keepProfile) { sendRouteStatus(); return config.getRoutes(); }
   try {
     const dir = path.join(app.getPath('userData'), 'browser-profiles', String(id).replace(/[^\w.-]/g, '_'));
     if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); addLog('info', 'launch', `已清除路由 ${id} 的瀏覽器 profile`); }
@@ -902,6 +915,9 @@ function engineParams() {
     defaultTarget: split.defaultTarget, udp: split.udp,
     mode: split.mode, globalTarget: split.globalTarget, lanDirect: split.lanDirect,
     routes: config.getRoutes(), selfNames: [self],
+    // 只在「只有以下程式」模式下才傳，空陣列 = 所有走代理的程式（依規則表）
+    scopeApps: (() => { const st = config.getSettings();
+      return st.killSwitchScope === 'apps' ? (st.killSwitchApps || []) : []; })(),
   };
 }
 

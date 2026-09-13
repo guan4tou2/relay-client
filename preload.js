@@ -53,10 +53,12 @@ contextBridge.exposeInMainWorld('api', {
   getRoutes: () => ipcRenderer.invoke('get-routes'),
   saveRoutes: (routes) => ipcRenderer.invoke('save-routes', routes),
   saveRoute: (route) => ipcRenderer.invoke('save-route', route),
-  deleteRoute: (id) => ipcRenderer.invoke('delete-route', id),
+  deleteRoute: (id, opts) => ipcRenderer.invoke('delete-route', id, opts),
   routeStart: (id) => ipcRenderer.invoke('route-start', id),
   routeStop: (id) => ipcRenderer.invoke('route-stop', id),
   getRouteStatus: () => ipcRenderer.invoke('get-route-status'),
+  browserInfo: () => ipcRenderer.invoke('browser-info'),
+  routeProfileInfo: (id) => ipcRenderer.invoke('route-profile-info', id),
   launchBrowser: (routeId) => ipcRenderer.invoke('launch-browser', routeId),
 
   // Per-app 分流（sing-box TUN 引擎）

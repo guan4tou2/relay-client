@@ -55,6 +55,7 @@ const state = {
   splitDraft: { name: '', when: {}, target: 'direct', error: '' }, splitOpenConds: {},
   splitPendingDel: null, splitDrag: null, splitUac: false, splitUacSeen: false,
   setsBusy: null, setsPendingDel: null,
+  browser: null,   // { name, path }；找不到 Chrome/Edge 時為 null
 };
 
 // ------- session 小工具 -------
@@ -188,6 +189,7 @@ function mount() {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'l') {
       e.preventDefault();
       const rid = state.sel || (state.routes[0] || {}).id;
+      if (!state.browser) { flash('找不到 Chrome 或 Edge', 'var(--amber)'); return; }
       if (rid) launchBrowser(rid); else flash('請先建立一條路由', 'var(--amber)');
     }
     if (e.code === 'Space' && state.tab !== 'split' && !state.routeSheet && !state.srvSheet && !state.alert && e.target === document.body) { e.preventDefault(); togglePower(); }
@@ -323,7 +325,7 @@ function renderSidebar() {
       ${active ? `<div style="display:flex;gap:6px;padding-top:2px">
         <button class="hvBright" data-act="power" title="${powerTip}（空白鍵）" style="flex:1;height:26px;border:none;border-radius:7px;background:${powerBg};color:${powerColor};cursor:pointer;display:flex;align-items:center;justify-content:center">${POWER_ICON}</button>
         <button class="hvAcc" data-act="edit" title="編輯路由" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
-        <button class="hvAcc" data-act="browser" title="以此路由開啟瀏覽器（Ctrl+L）" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></button>
+        <button class="${state.browser ? 'hvAcc' : ''}" data-act="browser" ${state.browser ? '' : 'disabled'} title="${state.browser ? '以此路由開啟瀏覽器（Ctrl+L）' : '找不到 Chrome 或 Edge，裝了其中一個才能用'}" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></button>
         <button class="hvRed" data-act="del" title="${pend ? '再按一次確認刪除' + (refs ? '（' + refs + '將失效）' : '') : '刪除路由'}" style="flex:1;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
       </div>` : ''}
     </div>`;
@@ -365,11 +367,28 @@ function deleteRoute(id) {
   clearSTimers(id); dropSes(id);
   state.pendingRouteDel = null;
   window.api.routeStop(id).catch(() => {});
-  window.api.deleteRoute(id).then(routes => {
+
+  const finish = routes => {
     state.routes = routes || [];
     if (state.sel === id) state.sel = state.routes[0] ? state.routes[0].id : null;
     renderSidebar(); showTab(state.tab); flash('已刪除路由');
-  }).catch(e => flash('刪除路由失敗：' + (e && e.message || e), 'var(--red)'));
+  };
+  const del = keepProfile => window.api.deleteRoute(id, { keepProfile }).then(finish)
+    .catch(e => flash('刪除路由失敗：' + (e && e.message || e), 'var(--red)'));
+
+  // 這條路由開過瀏覽器的話會留下 profile（cookie / 登入狀態）。
+  // 默默刪掉等於連帶登出，所以先問一句；沒有 profile 就不多這道問題。
+  window.api.routeProfileInfo(id).then(info => {
+    if (!(info && info.exists)) return del(false);
+    state.alert = {
+      tone: 'info', title: '這條路由的瀏覽器資料要一併刪除嗎？',
+      body: '用這條路由開過的瀏覽器視窗有自己的 cookie 與登入狀態。保留的話下次建相同 id 的路由還能用。',
+      primary: '一併刪除', secondary: '保留資料',
+      go: () => { closeAlert(); del(false); },
+      onSecondary: () => { closeAlert(); del(true); },
+    };
+    renderAlert();
+  }).catch(() => del(false));
 }
 
 // =====================================================================================
@@ -1037,6 +1056,7 @@ function buildSettings() {
 
       ${group('斷線保護', `
         ${swRow({ key: 'killswitch', label: '斷線保護', desc: '引擎意外停止時先暫停受保護程式的連線' }, false)}
+        <div id="ksScopeRow"></div>
         <div id="ksAutoRow">${swRow({ key: 'ksauto', label: '自動重連', desc: '觸發後自動重試 3 次，每次間隔 4 秒' }, true)}</div>`)}
 
       ${group('規則庫', '<div id="setRuleSets"></div>', '存在 %APPDATA%\\RelayClient\\rulesets\\，只有按下載時才連網')}
@@ -1135,6 +1155,7 @@ function refreshSettings() {
   });
   renderThemeSeg();
   const ksRow = $('ksAutoRow'); if (ksRow) ksRow.style.display = state.settings.killSwitch ? 'block' : 'none';
+  renderKsScope();
   renderRuleSets();
 }
 
@@ -1145,6 +1166,7 @@ function saveSettings() {
     rulesetAutoUpdate: state.settings.rulesetAutoUpdate, rulesetUpdateDays: state.settings.rulesetUpdateDays,
     rulesetDetourRouteId: state.settings.rulesetDetourRouteId,
     killSwitchAutoReconnect: state.settings.killSwitchAutoReconnect,
+    killSwitchScope: state.settings.killSwitchScope, killSwitchApps: state.settings.killSwitchApps,
   });
 }
 
@@ -1474,7 +1496,14 @@ async function saveSrvSheet() {
 function openMenu(kind, anchor) {
   if (state.menu && state.menu.kind === kind) { closeMenu(); return; }
   let items;
-  if (kind === 'rs-detour') {
+  if (kind === 'ks-app') {
+    const cur = state.settings.killSwitchApps || [];
+    items = state.splitProcs.filter(p => !cur.includes(p)).map(p => ({
+      label: p, dot: 'var(--purple)',
+      pick: () => { state.settings.killSwitchApps = [...cur, p]; closeMenu(); saveSettings(); refreshSettings(); },
+    }));
+    if (!items.length) items = [{ label: '沒有其他執行中的程式', dot: 'var(--text3)', pick: () => closeMenu() }];
+  } else if (kind === 'rs-detour') {
     items = [{ id: null, label: '直連（不繞路由）' }, ...state.routes.map(r => ({ id: r.id, label: r.label || r.id }))]
       .map(o => ({ label: o.label, dot: o.id ? 'var(--accent)' : 'var(--text3)', check: (state.settings.rulesetDetourRouteId || null) === o.id,
         pick: () => { state.settings.rulesetDetourRouteId = o.id; closeMenu(); saveSettings(); refreshSettings(); flash(o.id ? `規則庫將經由「${o.label}」下載` : '規則庫改為直連下載'); } }));
@@ -1805,6 +1834,7 @@ async function boot() {
   try { const logs = await window.api.getLogs(); state.logs = (logs || []).map(l => ({ ...l, id: ++logSeq })); } catch {}
   try { const sp = await window.api.getSplit(); if (sp) { if (Array.isArray(sp.rules)) state.splitRules = sp.rules; if (sp.defaultTarget != null) state.splitDefaultTarget = sp.defaultTarget; if (typeof sp.udp === 'boolean') state.splitUdp = sp.udp; } } catch {}
   try { const est = await window.api.getEngineStatus(); if (est) applyEngineStatus(est); } catch {}
+  try { state.browser = await window.api.browserInfo(); } catch {}
 
   renderSidebar();
   showTab('dashboard');
@@ -2302,7 +2332,7 @@ function renderSplitEmpty() {
     </div>
     <div style="display:flex;gap:9px">
       <button id="spEmptyAdd" class="hvBright" style="height:34px;padding:0 16px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增規則</button>
-      <button id="spEmptyBrowser" class="hvFill2" title="不用規則、不用引擎：用路由開一個只有它走代理的瀏覽器" style="display:flex;align-items:center;gap:6px;height:34px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>用這條路由開瀏覽器</button>
+      <button id="spEmptyBrowser" class="${state.browser ? 'hvFill2' : ''}" ${state.browser ? '' : 'disabled'} title="${state.browser ? '不用規則、不用引擎：用路由開一個只有它走代理的瀏覽器' : '找不到 Chrome 或 Edge，裝了其中一個才能用'}" style="display:flex;align-items:center;gap:6px;height:34px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>用這條路由開瀏覽器</button>
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;width:100%;padding-top:4px">
       ${splitTemplates().map((t, i) => `<button data-stpl="${i}" class="hvFill2" style="display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:14px 15px;border:1px solid var(--sep);border-radius:13px;background:var(--bg);color:var(--text);cursor:pointer;text-align:left;min-width:0">
@@ -2752,6 +2782,46 @@ const setUsage = tag => state.splitRules.filter(r => {
 const kindIcon = kind => kind === 'geoip'
   ? 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18'
   : 'M4 7h16M4 12h10M4 17h6';
+
+// MERGE §6：受保護程式範圍。主開關開才顯示。
+// 'all' = 依規則表（所有走代理的）；'apps' = 只擋選定的幾支程式。
+function renderKsScope() {
+  const el = $('ksScopeRow'); if (!el) return;
+  if (!state.settings.killSwitch) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'block';
+  const scope = state.settings.killSwitchScope === 'apps' ? 'apps' : 'all';
+  const apps = state.settings.killSwitchApps || [];
+  const seg = [['all', '所有走代理的程式'], ['apps', '只有以下程式']].map(([k, label]) =>
+    `<button data-ksscope="${k}" style="border:none;cursor:pointer;height:26px;padding:0 10px;border-radius:6px;font-size:12px;white-space:nowrap;${segCss(scope === k)}">${label}</button>`).join('');
+  const chips = apps.map(a => `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 6px 0 9px;border-radius:13px;background:rgba(122,114,207,.14);color:var(--purple);font-size:11.5px;font-weight:500;white-space:nowrap">${esc(a)}<button data-kschip="${esc(a)}" title="移除" style="width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.12);color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="8" height="8" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button></span>`).join('');
+
+  el.innerHTML = `
+    <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;border-top:1px solid var(--sep)">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:500;white-space:nowrap">受保護程式</div>
+        <div style="font-size:11.5px;color:var(--text2);margin-top:2px">${scope === 'all' ? '依規則表，凡是走代理的都會被暫停' : '只暫停選定的程式，其餘照常上網'}</div>
+      </div>
+      <div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px;flex-shrink:0">${seg}</div>
+    </div>
+    ${scope === 'apps' ? `<div style="padding:0 16px 13px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+      ${chips || '<span style="font-size:11.5px;color:var(--text3)">還沒選程式，目前不會暫停任何連線</span>'}
+      <button id="ksAddApp" class="hvFill2" style="height:26px;padding:0 11px;border:1px dashed var(--sep);border-radius:13px;background:transparent;color:var(--text2);font-size:11.5px;cursor:pointer;white-space:nowrap">＋ 加入程式</button>
+    </div>` : ''}`;
+
+  el.querySelectorAll('[data-ksscope]').forEach(b => b.onclick = () => {
+    state.settings.killSwitchScope = b.dataset.ksscope;
+    saveSettings(); refreshSettings();
+  });
+  el.querySelectorAll('[data-kschip]').forEach(b => b.onclick = () => {
+    state.settings.killSwitchApps = (state.settings.killSwitchApps || []).filter(a => a !== b.dataset.kschip);
+    saveSettings(); refreshSettings();
+  });
+  if ($('ksAddApp')) $('ksAddApp').onclick = async e => {
+    e.stopPropagation();
+    if (!state.splitProcs.length) await loadSplitProcs();
+    openMenu('ks-app', $('ksAddApp'));
+  };
+}
 
 function renderRuleSets() {
   const el = $('setRuleSets'); if (!el) return;

@@ -188,6 +188,44 @@ describe('generateBlockConfig — 斷線保護', () => {
     expect(cfg.route.final).toBe('direct');
   });
 
+  test('MERGE §6 受保護程式：指定程式時只擋這幾支，規則表不再參與', () => {
+    const cfg = mk().generateBlockConfig({
+      rules: [
+        { id: 'a', on: true, target: 'r1', when: { app: { match: 'name', value: 'chrome.exe' } } },
+        { id: 'c', on: true, target: 'r1', when: { dest: { match: 'ruleset', value: 'geoip-tw' } } },
+      ],
+      ruleSets: SETS,
+      scopeApps: ['firefox.exe', 'Code.exe'],
+    });
+    // 只一條：擋選定的程式。chrome.exe 雖然在規則表裡，但不在名單上 → 照常上網
+    expect(nonSelf(cfg)).toEqual([{ process_name: ['firefox.exe', 'Code.exe'], action: 'reject' }]);
+    // 沒用到規則條件，就不該還拉 rule-set 進來
+    expect(cfg.route.rule_set || []).toEqual([]);
+    expect(cfg.route.final).toBe('direct');
+  });
+
+  test('MERGE §6：全域模式下指定程式，不再用 catch-all 擋全部', () => {
+    const cfg = mk().generateBlockConfig({ rules: [], mode: 'global', scopeApps: ['firefox.exe'] });
+    expect(nonSelf(cfg)).toEqual([{ process_name: ['firefox.exe'], action: 'reject' }]);
+  });
+
+  test('MERGE §6：名單空的時候與原本行為一致', () => {
+    const args = { rules: [{ id: 'a', on: true, target: 'r1', when: { app: { match: 'name', value: 'chrome.exe' } } }] };
+    const a = mk().generateBlockConfig(args);
+    const b = mk().generateBlockConfig({ ...args, scopeApps: [] });
+    const c = mk().generateBlockConfig({ ...args, scopeApps: ['  ', ''] });   // 只有空白也算沒選
+    expect(nonSelf(b)).toEqual(nonSelf(a));
+    expect(nonSelf(c)).toEqual(nonSelf(a));
+  });
+
+  test('內網保護在指定程式模式下也要排在前面', () => {
+    const cfg = mk().generateBlockConfig({ rules: [], scopeApps: ['firefox.exe'], lanDirect: true });
+    const idx = cfg.route.rules.findIndex(r => r.ip_cidr);
+    const rej = cfg.route.rules.findIndex(r => r.action === 'reject');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(idx).toBeLessThan(rej);
+  });
+
   test('沒有任何要保護的規則 → 只剩自我 bypass', () => {
     const cfg = mk().generateBlockConfig({ rules: [{ id: 'b', on: true, target: 'direct', when: { app: { match: 'name', value: 'a.exe' } } }], selfNames: ['RelayClient.exe'] });
     expect(nonSelf(cfg)).toEqual([]);

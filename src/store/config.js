@@ -9,6 +9,11 @@ const DEFAULT_SETTINGS = {
   minimizeToTray: true,
   killSwitch: false,
   killSwitchAutoReconnect: true,   // 觸發後自動重試 3 次，每次間隔 4 秒
+  // MERGE §6 受保護程式：'all' = 所有走代理的程式（依規則表），
+  // 'apps' = 只有 killSwitchApps 列的這幾支。收窄範圍是為了讓其餘程式
+  // 在引擎挂掉時繼續上網，代價是這些程式不受保護。
+  killSwitchScope: 'all',
+  killSwitchApps: [],
   testTarget: null,
   // 規則庫（依網域 / 地區分流用的 rule-set）：預設不自動連網，使用者按下載才會取用
   rulesetAutoUpdate: false,

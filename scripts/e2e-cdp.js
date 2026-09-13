@@ -73,11 +73,21 @@ class CDP {
     await new Promise(r => setTimeout(r, 260));
   }
   async clickSel(sel) {
+    // 先捲進畫面再點：Input.dispatchMouseEvent 用的是視窗座標，
+    // 元素在捲動區外面的話點下去會落到別的東西上（而且不會報錯）。
     const box = await this.eval(`(() => { const e = document.querySelector(${JSON.stringify(sel)});
-      if (!e) return null; const r = e.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      if (!e) return null;
+      e.scrollIntoView({ block: 'center', inline: 'center' });
+      const r = e.getBoundingClientRect();
+      const vis = r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= innerHeight;
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, vis }; })()`);
     if (!box) throw new Error('找不到元素 ' + sel);
-    await this.click(box.x, box.y);
+    await new Promise(r => setTimeout(r, 220));   // 等捲動停下來
+    const box2 = await this.eval(`(() => { const e = document.querySelector(${JSON.stringify(sel)});
+      const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2,
+      vis: r.top >= 0 && r.bottom <= innerHeight }; })()`);
+    if (!box2.vis) throw new Error('元素捲不進畫面，點不到 ' + sel);
+    await this.click(box2.x, box2.y);
   }
   async type(text) {
     for (const ch of text) {
@@ -247,6 +257,35 @@ async function T(name, fn) {
   });
 
   await c.shot('08-settings');
+
+  await T('MERGE §6：受保護程式範圍寫得進設定檔', async () => {
+    await c.eval(`showTab('settings')`);
+    await new Promise(r => setTimeout(r, 400));
+    // MERGE §6：主開關開才顯示。全新 profile 預設是關的，先打開。
+    const off = await c.eval(`!document.querySelector('[data-ksscope]')`);
+    if (off) {
+      await c.clickSel('#view-settings [data-sw="killswitch"]');
+      await new Promise(r => setTimeout(r, 800));
+    }
+    const has = await c.eval(`!!document.querySelector('[data-ksscope]')`);
+    if (!has) throw new Error('開了主開關還是沒有受保護程式分段');
+    await c.clickSel('[data-ksscope="apps"]');
+    await new Promise(r => setTimeout(r, 700));
+    const v = await c.eval(`window.api.getSettings().then(s => s.killSwitchScope)`);
+    if (v !== 'apps') throw new Error('後端 killSwitchScope = ' + v);
+    await c.clickSel('[data-ksscope="all"]');
+    await new Promise(r => setTimeout(r, 700));
+    const back = await c.eval(`window.api.getSettings().then(s => s.killSwitchScope)`);
+    if (back !== 'all') throw new Error('切回來 = ' + back);
+  });
+
+  await T('MERGE §4：找不到瀏覽器時按鈕 disabled', async () => {
+    const v = await c.eval(`(() => { const b = document.querySelector('[data-act="browser"]');
+      return b ? { disabled: b.disabled, title: b.title } : null; })()`);
+    if (!v) throw new Error('找不到開瀏覽器鈕');
+    // 這台機器有 Chrome，所以應該是可用的；tooltip 兩種情況都要講人話
+    if (!/瀏覽器|Chrome/.test(v.title)) throw new Error('tooltip = ' + v.title);
+  });
 
   await T('紀錄頁：讀真的 log', async () => {
     await c.eval(`showTab('logs')`);
