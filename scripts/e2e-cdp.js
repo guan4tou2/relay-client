@@ -279,12 +279,71 @@ async function T(name, fn) {
     if (back !== 'all') throw new Error('切回來 = ' + back);
   });
 
-  await T('MERGE §4：找不到瀏覽器時按鈕 disabled', async () => {
-    const v = await c.eval(`(() => { const b = document.querySelector('[data-act="browser"]');
-      return b ? { disabled: b.disabled, title: b.title } : null; })()`);
-    if (!v) throw new Error('找不到開瀏覽器鈕');
-    // 這台機器有 Chrome，所以應該是可用的；tooltip 兩種情況都要講人話
-    if (!/瀏覽器|Chrome/.test(v.title)) throw new Error('tooltip = ' + v.title);
+  await T('v5 啟動器：路由列第三顆開 470px sheet', async () => {
+    await c.eval(`showTab('dashboard')`);
+    await new Promise(r => setTimeout(r, 400));
+    await c.clickSel('[data-act="browser"]');
+    await new Promise(r => setTimeout(r, 700));
+    const v = await c.eval(`(() => { const p = document.getElementById('lsPanel');
+      return p ? { w: getComputedStyle(p).width, go: document.getElementById('lsGo').textContent.trim(),
+                   preview: (document.getElementById('lsPreview') || {}).textContent || '' } : null; })()`);
+    if (!v) throw new Error('sheet 沒開');
+    if (v.w !== '470px') throw new Error('寬度 ' + v.w);
+    if (!/--proxy-server=socks5:\/\/127\.0\.0\.1:/.test(v.preview)) throw new Error('預覽：' + v.preview.slice(0, 80));
+    if (!/host-resolver-rules/.test(v.preview)) throw new Error('預覽沒有防漏參數');
+    await c.shot('10-launcher');
+  });
+
+  await T('v5 啟動器：切到其他程式時按鈕要先 disabled', async () => {
+    await c.clickSel('[data-lsmode="program"]');
+    await new Promise(r => setTimeout(r, 500));
+    const v = await c.eval(`(() => ({ disabled: document.getElementById('lsGo').disabled,
+      hasPath: !!document.getElementById('lsPath'), hasRemember: !!document.querySelector('[data-lsremember]') }))()`);
+    if (!v.hasPath || !v.hasRemember) throw new Error('程式模式的欄位不齊');
+    if (!v.disabled) throw new Error('沒選程式時不該可按');
+    await c.eval(`closeLaunchSheet()`);
+  });
+
+  await T('v5 啟動器：真的啟動瀏覽器 → 出現實例列 → 結束它', async () => {
+    const before = await c.eval(`window.api.listInstances().then(l => l.length)`);
+    const r = await c.eval(`window.api.launchInstance({ routeId: state.routes[0].id, mode: 'browser' })
+      .then(x => JSON.stringify(x))`);
+    const res = JSON.parse(r);
+    if (!res.ok) throw new Error('啟動失敗：' + res.error);
+    await new Promise(r2 => setTimeout(r2, 1500));
+    const after = await c.eval(`window.api.listInstances().then(l => l.length)`);
+    if (after !== before + 1) throw new Error('實例數 ' + before + ' → ' + after);
+    // 實例列要看得到，且依 MERGE §2 副標只寫「獨立視窗」，PID 在 tooltip
+    const ui = await c.eval(`(() => { const el = document.getElementById('dashInstances');
+      const row = el && el.querySelector('[data-killinst]');
+      const sub = el && Array.from(el.querySelectorAll('span')).find(s => s.textContent.trim() === '獨立視窗');
+      return { shown: !!(el && el.style.display !== 'none'), hasRow: !!row,
+               subTip: sub ? sub.title : '', refs: (document.querySelector('#routeList') || {}).textContent || '' }; })()`);
+    if (!ui.shown || !ui.hasRow) throw new Error('實例列沒出現');
+    if (!/PID \d+/.test(ui.subTip)) throw new Error('PID 沒放在 tooltip：' + ui.subTip);
+    if (!/\d+ 個實例/.test(ui.refs)) throw new Error('§3-3 引用數沒有實例：' + ui.refs.slice(0, 60));
+    await c.shot('11-instances');
+    // 馬上收掉，不要把瀏覽器視窗留在使用者桌面上
+    const id = res.instance.id;
+    await c.eval(`window.api.killInstance(${JSON.stringify(id)})`);
+    await new Promise(r2 => setTimeout(r2, 1200));
+    const left = await c.eval(`window.api.listInstances().then(l => l.length)`);
+    if (left !== before) throw new Error('結束後還剩 ' + left);
+  });
+
+  await T('MERGE §4：沒裝的瀏覽器卡片 disabled 且說明原因', async () => {
+    await c.eval(`openLaunchSheet(state.routes[0].id)`);
+    await new Promise(r => setTimeout(r, 800));
+    const v = await c.eval(`Array.from(document.querySelectorAll('[data-lsb]')).map(b =>
+      ({ name: b.dataset.lsb, disabled: b.disabled, title: b.title, sub: b.lastElementChild.textContent.trim() }))`);
+    if (!v.length) throw new Error('沒有瀏覽器卡片');
+    for (const b of v) {
+      const notInstalled = b.sub === '未安裝';
+      if (notInstalled && !b.disabled) throw new Error(b.name + ' 未安裝卻可按');
+      if (notInstalled && !/找不到/.test(b.title)) throw new Error(b.name + ' tooltip 沒說明：' + b.title);
+      if (!notInstalled && b.disabled) throw new Error(b.name + ' 裝了卻不能按');
+    }
+    await c.eval(`closeLaunchSheet()`);
   });
 
   await T('紀錄頁：讀真的 log', async () => {

@@ -56,6 +56,9 @@ const state = {
   splitPendingDel: null, splitDrag: null, splitUac: false, splitUacSeen: false,
   setsBusy: null, setsPendingDel: null,
   browser: null,   // { name, path }；找不到 Chrome/Edge 時為 null
+  browsers: [],        // [{ name, found }]
+  instances: [],       // 由本程式啟動的實例（設計稿 v5）
+  launchSheet: false, launchDraft: null, launchBusy: false, launchPreview: '', pendingKill: null,
 };
 
 // ------- session 小工具 -------
@@ -148,6 +151,7 @@ function mount() {
       <div id="sheetMount"></div>
       <div id="srvSheetMount"></div>
       <div id="splitSheetMount"></div>
+      <div id="launchSheetMount"></div>
       <div id="splitUacMount"></div>
       <div id="alertMount"></div>
       <div id="ksMount"></div>
@@ -189,11 +193,10 @@ function mount() {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'l') {
       e.preventDefault();
       const rid = state.sel || (state.routes[0] || {}).id;
-      if (!state.browser) { flash('找不到 Chrome 或 Edge', 'var(--amber)'); return; }
-      if (rid) launchBrowser(rid); else flash('請先建立一條路由', 'var(--amber)');
+      if (rid) openLaunchSheet(rid); else flash('請先建立一條路由', 'var(--amber)');
     }
     if (e.code === 'Space' && state.tab !== 'split' && !state.routeSheet && !state.srvSheet && !state.alert && e.target === document.body) { e.preventDefault(); togglePower(); }
-    if (e.key === 'Escape') { closeMenu(); if (state.splitUac) closeSplitUac(); else if (state.splitSheet) closeSplitSheet(); else if (state.alert) closeAlert(); else if (state.srvSheet) closeSrvSheet(); else if (state.routeSheet) closeRouteSheet(); }
+    if (e.key === 'Escape') { closeMenu(); if (state.launchSheet) closeLaunchSheet(); else if (state.splitUac) closeSplitUac(); else if (state.splitSheet) closeSplitSheet(); else if (state.alert) closeAlert(); else if (state.srvSheet) closeSrvSheet(); else if (state.routeSheet) closeRouteSheet(); }
   });
   document.addEventListener('click', () => closeMenu(), true);
 }
@@ -271,6 +274,7 @@ function showTab(tab) {
   const sb = $('sidebar'); if (sb) sb.style.display = tab === 'split' ? 'none' : 'flex'; // 分流為全寬版面，隱藏路由側欄
   if (showGuide) renderGuide();
   if (showDash) updateDashboard();
+  if (showDash) renderInstances();
   if (tab === 'servers') renderServers();
   if (tab === 'logs') renderLogList();
   if (tab === 'creds') renderCreds();
@@ -284,9 +288,11 @@ function showTab(tab) {
 // 側邊欄：路由清單
 // =====================================================================================
 // 這條路由被幾條分流規則指到（MERGE §3-3）。刪除時要提醒影響範圍。
+// MERGE §3-3：路由列尾端的引用數「2 條規則 · 1 個實例」（沒引用就不顯示）
 function routeRefLabel(routeId) {
   const n = state.splitRules.filter(r => r.on !== false && r.target === routeId).length;
-  return n ? `${n} 條規則` : '';
+  const inst = state.instances.filter(i => i.routeId === routeId).length;
+  return [n ? `${n} 條規則` : '', inst ? `${inst} 個實例` : ''].filter(Boolean).join(' · ');
 }
 
 function renderSidebar() {
@@ -325,7 +331,7 @@ function renderSidebar() {
       ${active ? `<div style="display:flex;gap:6px;padding-top:2px">
         <button class="hvBright" data-act="power" title="${powerTip}（空白鍵）" style="flex:1;height:26px;border:none;border-radius:7px;background:${powerBg};color:${powerColor};cursor:pointer;display:flex;align-items:center;justify-content:center">${POWER_ICON}</button>
         <button class="hvAcc" data-act="edit" title="編輯路由" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
-        <button class="${state.browser ? 'hvAcc' : ''}" data-act="browser" ${state.browser ? '' : 'disabled'} title="${state.browser ? '以此路由開啟瀏覽器（Ctrl+L）' : '找不到 Chrome 或 Edge，裝了其中一個才能用'}" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></button>
+        <button class="hvAcc" data-act="browser" title="以此路由啟動程式（Ctrl+L）" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></button>
         <button class="hvRed" data-act="del" title="${pend ? '再按一次確認刪除' + (refs ? '（' + refs + '將失效）' : '') : '刪除路由'}" style="flex:1;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
       </div>` : ''}
     </div>`;
@@ -335,7 +341,7 @@ function renderSidebar() {
     const id = row.dataset.rid;
     row.addEventListener('click', e => { if (e.target.closest('[data-act]')) return; selectRoute(id); });
     row.querySelector('[data-act="power"]')?.addEventListener('click', e => { e.stopPropagation(); togglePower(id); });
-    row.querySelector('[data-act="browser"]')?.addEventListener('click', e => { e.stopPropagation(); launchBrowser(id); });
+    row.querySelector('[data-act="browser"]')?.addEventListener('click', e => { e.stopPropagation(); openLaunchSheet(id); });
     row.querySelector('[data-act="edit"]')?.addEventListener('click', e => { e.stopPropagation(); openRoute(id); });
     row.querySelector('[data-act="del"]')?.addEventListener('click', e => { e.stopPropagation(); deleteRoute(id); });
   });
@@ -347,16 +353,6 @@ function selectRoute(id) {
   if (state.tab === 'dashboard') showTab('dashboard');
 }
 
-async function launchBrowser(id) {
-  const r = state.routes.find(x => x.id === id);
-  if (r && (!r.hops || r.hops.length === 0)) { flash('這條路由還沒設跳點，先加一台伺服器', 'var(--red)'); return; }
-  flash('正在開啟瀏覽器…');
-  let res;
-  try { res = await window.api.launchBrowser(id); }
-  catch (e) { res = { ok: false, error: (e && e.message) || e }; }
-  if (res && res.ok) flash(`已用「${(r && r.label) || id}」開啟 ${res.browser || '瀏覽器'}`);
-  else flash('開啟失敗：' + ((res && res.error) || '未知'), 'var(--red)');
-}
 
 function deleteRoute(id) {
   if (state.pendingRouteDel !== id) {
@@ -525,6 +521,7 @@ function buildDashboard() {
           <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:10.5px;color:var(--text3);font-weight:600;letter-spacing:.3px;white-space:nowrap">已執行</span><span id="statUptime" style="font-size:16px;font-weight:600;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">00:00</span></div>
         </div>
       </div>
+      <div id="dashInstances" style="display:none"></div>
     </div>`;
 
   $('powerBtn').onclick = () => togglePower();
@@ -1496,7 +1493,14 @@ async function saveSrvSheet() {
 function openMenu(kind, anchor) {
   if (state.menu && state.menu.kind === kind) { closeMenu(); return; }
   let items;
-  if (kind === 'ks-app') {
+  if (kind === 'ls-route') {
+    const d = state.launchDraft || {};
+    items = state.routes.map(r => ({
+      label: r.label || r.id, port: (r.kind === 'http' ? 'HTTP' : 'SOCKS5') + ' · ' + r.localPort,
+      dot: runningRouteIds().includes(r.id) ? 'var(--good)' : 'var(--text3)', check: d.routeId === r.id,
+      pick: () => { d.routeId = r.id; closeMenu(); renderLaunchSheet(); refreshLaunchPreview(); },
+    }));
+  } else if (kind === 'ks-app') {
     const cur = state.settings.killSwitchApps || [];
     items = state.splitProcs.filter(p => !cur.includes(p)).map(p => ({
       label: p, dot: 'var(--purple)',
@@ -1585,6 +1589,225 @@ function alertAction() {
 }
 
 // 斷線保護告警（分流引擎異常中止時彈出；不可用 Esc 關閉，必須選擇重連或停用）
+// =====================================================================================
+// 實例分流：以路由啟動程式（設計稿 v5；MERGE §1 路由列第三顆鈕開這張 sheet）
+// =====================================================================================
+function openLaunchSheet(routeId) {
+  const rid = routeId || state.sel || (state.routes[0] || {}).id;
+  if (!rid) { flash('請先建立一條路由', 'var(--amber)'); return; }
+  state.launchSheet = true;
+  state.launchDraft = { routeId: rid, mode: 'browser', browserName: null, exePath: '', exeArgs: '', remember: true };
+  state.launchBusy = false; state.launchPreview = '';
+  closeMenu();
+  renderLaunchSheet();
+  loadBrowsersThen();
+  refreshLaunchPreview();
+}
+function closeLaunchSheet() { state.launchSheet = false; closeMenu(); $('launchSheetMount').innerHTML = ''; }
+
+async function loadBrowsersThen() {
+  if (!state.browsers.length) {
+    try { state.browsers = (await window.api.listBrowsers()) || []; } catch { state.browsers = []; }
+  }
+  const d = state.launchDraft; if (!d) return;
+  if (!d.browserName) { const b = state.browsers.find(x => x.found); if (b) d.browserName = b.name; }
+  renderLaunchSheet(); refreshLaunchPreview();
+}
+
+// 「將執行」那段由主行程產生，和實際啟動用同一份參數，不會對不上
+async function refreshLaunchPreview() {
+  const d = state.launchDraft; if (!d) return;
+  try { state.launchPreview = (await window.api.launchPreview(d)) || ''; } catch { state.launchPreview = ''; }
+  const el = $('lsPreview'); if (el) el.textContent = state.launchPreview;
+}
+
+function renderLaunchSheet() {
+  const m = $('launchSheetMount'); if (!m) return;
+  if (!state.launchSheet) { m.innerHTML = ''; return; }
+  const d = state.launchDraft;
+  const route = state.routes.find(r => r.id === d.routeId) || {};
+  const running = runningRouteIds().includes(d.routeId);
+  const isBrowser = d.mode === 'browser';
+  const target = isBrowser ? d.browserName : (d.exePath ? d.exePath.split(/[\\/]/).pop() : '');
+  const canLaunch = !!target && !state.launchBusy;
+
+  const modeSeg = [['browser', '瀏覽器'], ['program', '其他程式']].map(([k, label]) =>
+    `<button data-lsmode="${k}" style="flex:1;border:none;cursor:pointer;height:30px;border-radius:7px;font-size:12px;white-space:nowrap;${segCss(d.mode === k)}">${label}</button>`).join('');
+
+  const browserCards = state.browsers.map(b => {
+    const on = d.browserName === b.name;
+    const tip = b.found ? `以「${esc(route.label || d.routeId)}」開啟 ${esc(b.name)}` : `找不到 ${esc(b.name)}，請先安裝`;
+    return `<button data-lsb="${esc(b.name)}" ${b.found ? '' : 'disabled'} title="${tip}" style="display:flex;flex-direction:column;align-items:center;gap:7px;padding:12px 8px 10px;border:1px solid ${on ? 'var(--accent)' : 'var(--sep)'};border-radius:12px;background:${on ? 'var(--accent-dim)' : 'var(--bg)'};color:var(--text);cursor:${b.found ? 'pointer' : 'not-allowed'};opacity:${b.found ? '1' : '.45'};min-width:0">
+      <span style="width:34px;height:34px;border-radius:10px;background:var(--fill2);color:var(--text2);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">${esc(b.name[0])}</span>
+      <span style="font-size:12px;font-weight:600;white-space:nowrap">${esc(b.name)}</span>
+      <span style="font-size:10px;color:var(--text3);white-space:nowrap">${b.found ? (on ? '已選擇' : '免提權') : '未安裝'}</span>
+    </button>`;
+  }).join('');
+
+  const engineOff = !isBrowser && !!d.exePath && !splitRunning();
+  const programBody = `
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;gap:8px">
+            <input id="lsPath" value="${esc(d.exePath)}" placeholder="程式的完整路徑" style="flex:1;min-width:0;height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12px;outline:none">
+            <button id="lsBrowse" class="hvFill2" style="flex-shrink:0;height:34px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">瀏覽…</button>
+          </div>
+          <input id="lsArgs" value="${esc(d.exeArgs)}" placeholder="啟動參數（選填）" style="height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12px;outline:none">
+          ${engineOff ? '<span style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:9px;background:rgba(217,139,31,.12);font-size:11px;color:var(--amber);line-height:1.5"><span style="flex:1;text-wrap:pretty">分流引擎未執行。這支程式要走代理，得先到分流頁啟動引擎。</span></span>' : ''}
+          <div style="background:var(--bg);border:1px solid var(--sep);border-radius:12px;overflow:hidden">
+            <div style="display:flex;align-items:center;gap:12px;padding:10px 13px">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12.5px;font-weight:500;white-space:nowrap">登記成程式規則</div>
+                <div style="font-size:11px;color:var(--text2);margin-top:2px;line-height:1.45;text-wrap:pretty">引擎只認程式名稱，沒有「只有這次」。關掉的話就只是啟動程式，不會走代理。</div>
+              </div>
+              <button data-lsremember="1" role="switch" aria-label="登記成程式規則" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${d.remember ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${d.remember ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+            </div>
+          </div>
+        </div>`;
+
+  m.innerHTML = `
+  <div id="lsOverlay" style="position:absolute;inset:0;background:rgba(0,0,0,.28);display:flex;justify-content:flex-end;z-index:60">
+    <div id="lsPanel" style="width:470px;height:100%;background:var(--panel);border-left:1px solid var(--sep);box-shadow:-12px 0 40px rgba(0,0,0,.18);display:flex;flex-direction:column;animation:sheetIn .26s cubic-bezier(.32,.72,0,1)">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--sep);display:flex;align-items:center;gap:10px">
+        <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">以路由啟動程式</span>
+        <button id="lsClose" class="hvFill2" title="關閉面板（Esc）" style="margin-left:auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px">
+        <div style="display:flex;flex-direction:column;gap:7px">
+          <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">路由</span>
+          <button id="lsRoute" class="hvFill2" style="display:flex;align-items:center;gap:9px;height:36px;padding:0 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:12.5px;cursor:pointer;text-align:left">
+            <span style="width:7px;height:7px;border-radius:50%;background:${running ? 'var(--good)' : 'var(--text3)'};flex-shrink:0"></span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(route.label || '未命名路由')}</span>
+            <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap">${route.kind === 'http' ? 'HTTP' : 'SOCKS5'} · ${route.localPort || ''}</span>
+            <span style="color:var(--text3);font-size:9px">▾</span>
+          </button>
+          ${running ? '' : '<span style="font-size:11px;color:var(--text3);line-height:1.5">此路由尚未啟動，啟動程式時會先自動啟動路由。</span>'}
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">要啟動什麼</span>
+          <div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:9px">${modeSeg}</div>
+          <span style="font-size:11px;color:var(--text3);line-height:1.5;text-wrap:pretty">${isBrowser ? '只有這個視窗走代理，關掉即結束；不需引擎或權限。' : '登記成程式規則後由分流引擎比對，需引擎執行中。'}</span>
+        </div>
+
+        ${isBrowser ? `<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">${browserCards || '<span style="font-size:11.5px;color:var(--text3)">找不到可用的瀏覽器</span>'}</div>` : programBody}
+
+        <div style="background:var(--fill2);border-radius:12px;padding:13px 15px;display:flex;flex-direction:column;gap:7px">
+          <span style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;white-space:nowrap">將執行</span>
+          <span id="lsPreview" style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text;white-space:pre-wrap">${esc(state.launchPreview)}</span>
+        </div>
+      </div>
+
+      <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
+        <span style="font-size:11.5px;color:var(--text3);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isBrowser ? '關掉視窗即結束；不影響平常的瀏覽器' : (d.exePath ? '規則對這支程式一律生效，不只這次' : '選擇瀏覽器或程式')}</span>
+        <button id="lsCancel" class="hvFill2" style="height:32px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>
+        <button id="lsGo" ${canLaunch ? '' : 'disabled'} class="${canLaunch ? 'hvBright' : ''}" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:${canLaunch ? 'pointer' : 'not-allowed'};white-space:nowrap;opacity:${canLaunch ? '1' : '.5'}">${state.launchBusy ? '啟動中…' : target ? '啟動 ' + esc(target) : '啟動'}</button>
+      </div>
+    </div>
+  </div>`;
+
+  $('lsOverlay').onclick = () => closeLaunchSheet();
+  $('lsPanel').onclick = e => e.stopPropagation();
+  $('lsClose').onclick = () => closeLaunchSheet();
+  $('lsCancel').onclick = () => closeLaunchSheet();
+  $('lsRoute').onclick = e => { e.stopPropagation(); openMenu('ls-route', $('lsRoute')); };
+  m.querySelectorAll('[data-lsmode]').forEach(b => b.onclick = () => { d.mode = b.dataset.lsmode; renderLaunchSheet(); refreshLaunchPreview(); });
+  m.querySelectorAll('[data-lsb]').forEach(b => { if (!b.disabled) b.onclick = () => { d.browserName = b.dataset.lsb; renderLaunchSheet(); refreshLaunchPreview(); }; });
+  const rem = m.querySelector('[data-lsremember]');
+  if (rem) rem.onclick = () => { d.remember = !d.remember; renderLaunchSheet(); };
+  if ($('lsPath')) {
+    $('lsPath').addEventListener('input', e => { d.exePath = e.target.value; refreshLaunchPreview(); });
+    $('lsArgs').addEventListener('input', e => { d.exeArgs = e.target.value; refreshLaunchPreview(); });
+    $('lsBrowse').onclick = async () => {
+      try { const p = await window.api.browseExe(); if (p) { d.exePath = p; renderLaunchSheet(); refreshLaunchPreview(); } } catch {}
+    };
+  }
+  $('lsGo').onclick = () => runLaunch();
+}
+
+async function runLaunch() {
+  const d = state.launchDraft; if (!d || state.launchBusy) return;
+  state.launchBusy = true; renderLaunchSheet();
+  try {
+    const r = await window.api.launchInstance(d);
+    if (r && r.ok) {
+      closeLaunchSheet();
+      flash(r.ruleAdded ? `已啟動，並登記規則「${r.ruleAdded}」` : '已啟動');
+      if (r.ruleAdded) { try { const sp = await window.api.getSplit(); if (sp && Array.isArray(sp.rules)) state.splitRules = sp.rules; } catch {} }
+      renderSidebar();
+    } else {
+      state.launchBusy = false; renderLaunchSheet();
+      flash((r && r.error) || '啟動失敗', 'var(--red)');
+    }
+  } catch (e) { state.launchBusy = false; renderLaunchSheet(); flash('啟動失敗：' + e.message, 'var(--red)'); }
+}
+
+// ---- 實例列（只有真的有實例時才出現，平常不佔版面）----
+// MERGE §2 克制：副標只寫「獨立視窗／N 個子程序」，PID 與 profile 放 tooltip。
+function renderInstances() {
+  const el = $('dashInstances'); if (!el) return;
+  const list = state.instances;
+  if (!list.length) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  el.style.display = 'block';
+
+  const rows = list.map(i => {
+    const route = state.routes.find(r => r.id === i.routeId);
+    const on = runningRouteIds().includes(i.routeId);
+    const pend = state.pendingKill === i.id;
+    const isB = i.mode === 'browser';
+    const meta = `PID ${i.pid}` + (isB && i.profile ? ` · profile ${i.profile}` : '');
+    return `<div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${pend ? 'rgba(217,83,74,.06)' : 'transparent'}">
+      <span style="width:176px;flex-shrink:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:9px;min-width:0">
+        <span style="width:26px;height:26px;flex-shrink:0;border-radius:7px;background:var(--fill2);color:var(--text2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${esc((i.name || '?').slice(0, 2).toUpperCase())}</span>
+        <span style="display:flex;flex-direction:column;min-width:0;gap:1px">
+          <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(i.name)}</span>
+          <span title="${esc(meta)}" style="font-size:10.5px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isB ? '獨立視窗' : '引擎接管'}</span>
+        </span>
+      </span>
+      <span style="width:78px;flex-shrink:0"><span title="${isB ? '啟動參數綁定代理，免提權' : '分流引擎依程式名稱比對'}" style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:${isB ? 'var(--accent-dim)' : 'rgba(122,114,207,.14)'};color:${isB ? 'var(--accent)' : 'var(--purple)'};white-space:nowrap">${isB ? '獨立實例' : '引擎接管'}</span></span>
+      <span style="flex:1;min-width:0;display:flex;align-items:center;gap:7px">
+        <span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${on ? 'var(--good)' : 'var(--amber)'};animation:${on ? 'dotBeat 2.2s ease-in-out infinite' : 'none'}"></span>
+        <span style="display:flex;flex-direction:column;min-width:0;gap:1px">
+          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:${on ? 'var(--text)' : 'var(--amber)'}">${esc(route ? (route.label || i.routeId) : '（路由已刪除）')}</span>
+          <span style="font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap">${route ? '127.0.0.1:' + route.localPort : ''}</span>
+        </span>
+      </span>
+      <span style="width:64px;flex-shrink:0;display:flex;justify-content:flex-end">
+        <button data-killinst="${esc(i.id)}" class="hvRed" title="${pend ? '再按一次確認結束' : '結束此實例'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${pend
+          ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 13l4 4L19 7"></path></svg>'
+          : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>'}</button>
+      </span>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:flex-end;gap:12px;margin-bottom:14px">
+      <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+        <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">實例分流</span>
+        <span style="font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">只有從這裡啟動的實例走代理，平常開的同名程式照常</span>
+      </div>
+      <span style="margin-left:auto;font-size:11.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap">${list.filter(i => i.mode === 'browser').length} 獨立 · ${list.filter(i => i.mode !== 'browser').length} 引擎</span>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden">
+      <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px">
+        <span style="width:176px;flex-shrink:0">程式</span><span style="width:78px;flex-shrink:0">方式</span><span style="flex:1;min-width:0">路由</span><span style="width:64px;flex-shrink:0"></span>
+      </div>
+      ${rows}
+    </div>`;
+
+  el.querySelectorAll('[data-killinst]').forEach(b => b.onclick = () => killInstance(b.dataset.killinst));
+}
+
+function killInstance(id) {
+  if (state.pendingKill !== id) {
+    state.pendingKill = id; renderInstances();
+    setTimeout(() => { if (state.pendingKill === id) { state.pendingKill = null; renderInstances(); } }, 2500);
+    return;
+  }
+  state.pendingKill = null;
+  window.api.killInstance(id).then(() => flash('已結束實例')).catch(e => flash('結束失敗：' + e.message, 'var(--red)'));
+}
+
 // 跟 main.js 的 KS_MAX_RETRY 保持一致（那邊是真正控制重試次數的地方）
 const KS_MAX_RETRY = 3;
 
@@ -1835,6 +2058,7 @@ async function boot() {
   try { const sp = await window.api.getSplit(); if (sp) { if (Array.isArray(sp.rules)) state.splitRules = sp.rules; if (sp.defaultTarget != null) state.splitDefaultTarget = sp.defaultTarget; if (typeof sp.udp === 'boolean') state.splitUdp = sp.udp; } } catch {}
   try { const est = await window.api.getEngineStatus(); if (est) applyEngineStatus(est); } catch {}
   try { state.browser = await window.api.browserInfo(); } catch {}
+  try { state.instances = (await window.api.listInstances()) || []; } catch {}
 
   renderSidebar();
   showTab('dashboard');
@@ -1856,6 +2080,7 @@ async function boot() {
   window.api.onRouteStatus(list => reconcileStatus(list));
 
   if (window.api.onEngineStatus) window.api.onEngineStatus(st => { if (st) applyEngineStatus(st); });
+  if (window.api.onInstances) window.api.onInstances(list => { state.instances = list || []; renderInstances(); renderSidebar(); });
   if (window.api.onKillswitch) window.api.onKillswitch(k => { if (k) { if (k.tripped && !(state.killswitch && state.killswitch.tripped)) state.ksAlertOpen = true; state.killswitch = k; renderKillswitch(); if (k.tripped) flash('斷線保護啟動：已暫停受保護程式的連線', 'var(--red)'); } });
   if (window.api.onUpdateStatus) window.api.onUpdateStatus(s => {
     if (!s) return;
@@ -2344,11 +2569,8 @@ function renderSplitEmpty() {
   </div>`;
   el.querySelectorAll('[data-stpl]').forEach(b => b.onclick = () => applyTemplate(+b.dataset.stpl));
   $('spEmptyAdd').onclick = () => openSplitSheet();
-  $('spEmptyBrowser').onclick = async () => {
-    const rid = state.sel || (state.routes[0] || {}).id;
-    if (!rid) { flash('請先建立一條路由', 'var(--amber)'); return; }
-    try { const r = await window.api.launchBrowser(rid); flash(r && r.ok ? '已用該路由開啟瀏覽器' : (r && r.error) || '啟動失敗', r && r.ok ? undefined : 'var(--red)'); } catch { flash('啟動失敗', 'var(--red)'); }
-  };
+  $('spEmptyBrowser').onclick = () => openLaunchSheet();
+
 }
 
 // ---- 規則模擬器 ----

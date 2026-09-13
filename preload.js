@@ -58,6 +58,16 @@ contextBridge.exposeInMainWorld('api', {
   routeStop: (id) => ipcRenderer.invoke('route-stop', id),
   getRouteStatus: () => ipcRenderer.invoke('get-route-status'),
   browserInfo: () => ipcRenderer.invoke('browser-info'),
+  listBrowsers: () => ipcRenderer.invoke('list-browsers'),
+  listInstances: () => ipcRenderer.invoke('list-instances'),
+  killInstance: (id) => ipcRenderer.invoke('kill-instance', id),
+  launchPreview: (d) => ipcRenderer.invoke('launch-preview', d),
+  launchInstance: (d) => ipcRenderer.invoke('launch-instance', d),
+  onInstances: (callback) => {
+    const listener = (_e, list) => callback(list);
+    ipcRenderer.on('instances', listener);
+    return () => ipcRenderer.removeListener('instances', listener);
+  },
   routeProfileInfo: (id) => ipcRenderer.invoke('route-profile-info', id),
   launchBrowser: (routeId) => ipcRenderer.invoke('launch-browser', routeId),
 
