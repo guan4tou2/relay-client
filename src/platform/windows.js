@@ -161,6 +161,7 @@ module.exports = {
   id: 'win32', label: 'Windows',
   engineBinName, tunInterfaceName, selfProcessNames, isElevated, engineElevation,
   staleEngineCleanupCommand, killTree,
+  path,   // 讓共用模組跟這個 adapter 用同一種路徑語意（不看執行主機）
   exeFilters, listProcesses, listProcessesCommand, parseProcessList, normalizeApp, appNameEquals,
   systemProxy, autostart, browserCandidates,
 };

@@ -2,6 +2,7 @@ const { Launcher } = require('../src/launcher');
 
 // 假的 platform：只回目錄，存不存在由 _exists 的 stub 決定
 const platform = {
+  path: require('path').win32,   // 這個假 adapter 模擬 Windows，路徑語意就要固定成 win32
   browserCandidates: () => [
     { name: 'Chrome', path: 'C:\\PF\\Google\\Chrome\\Application\\chrome.exe' },
     { name: 'Chrome', path: 'C:\\PFx86\\Google\\Chrome\\Application\\chrome.exe' },
@@ -49,8 +50,9 @@ describe('Launcher — 啟動參數', () => {
 
   test('profile 目錄依 routeId 隔離，且會把不安全的字元換掉', () => {
     const L = mk();
-    expect(L.profileDir('r1')).toBe(require('path').join('C:\\UD', 'browser-profiles', 'r1'));
-    expect(L.profileDir('a/b:c')).toBe(require('path').join('C:\\UD', 'browser-profiles', 'a_b_c'));
+    // 寫死 win32 結果，不要用執行主機的 path.join——那會讓這條測試在 Linux 上假性失敗
+    expect(L.profileDir('r1')).toBe('C:\\UD\\browser-profiles\\r1');
+    expect(L.profileDir('a/b:c')).toBe('C:\\UD\\browser-profiles\\a_b_c');
   });
 
   test('關掉 profile / dnsGuard 時對應參數就不出現', () => {
@@ -77,6 +79,25 @@ describe('Launcher — 將執行預覽', () => {
   test('沒選東西時不要吐半截指令', () => {
     const L = mk();
     expect(L.preview({ mode: 'program', route: ROUTE, localPort: 1081 })).toBe('（尚未選擇程式）');
+  });
+});
+
+describe('Launcher — 路徑語意跟 adapter，不跟執行主機', () => {
+  test('在任何 OS 上都能正確拆出 Windows 路徑的檔名', () => {
+    const L = mk();
+    expect(L.preview({ mode: 'browser', route: ROUTE, localPort: 1081, browserName: 'Chrome' }).startsWith('chrome.exe ')).toBe(true);
+  });
+
+  test('POSIX adapter 則用 POSIX 語意', () => {
+    const posixPlatform = {
+      path: require('path').posix,
+      browserCandidates: () => [{ name: 'Chromium', path: '/usr/bin/chromium' }],
+      killTree: () => {},
+    };
+    const L = new Launcher({ platform: posixPlatform, userDataDir: '/home/u/.config/RelayClient' });
+    L._exists = () => true;
+    expect(L.profileDir('r1')).toBe('/home/u/.config/RelayClient/browser-profiles/r1');
+    expect(L.preview({ mode: 'browser', route: ROUTE, localPort: 1081, browserName: 'Chromium' }).startsWith('chromium ')).toBe(true);
   });
 });
 

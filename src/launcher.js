@@ -16,6 +16,9 @@ class Launcher {
   // deps：{ platform, userDataDir, mkdirp, log, onChange }
   constructor(deps = {}) {
     this.platform = deps.platform;
+    // 路徑語意跟著 adapter 走，不跟著執行主機。
+    // 不然在 Linux 上跑 Windows adapter 時，basename('C:\x\a.exe') 會回整串。
+    this.path = (deps.platform && deps.platform.path) || require('path');
     this.userDataDir = deps.userDataDir || '';
     this.mkdirp = deps.mkdirp || (() => {});
     this.log = deps.log || (() => {});
@@ -41,8 +44,7 @@ class Launcher {
   _exists(p) { try { return require('fs').existsSync(p); } catch (e) { return false; } }
 
   profileDir(routeId) {
-    const path = require('path');
-    return path.join(this.userDataDir, 'browser-profiles', String(routeId).replace(/[^\w.-]/g, '_'));
+    return this.path.join(this.userDataDir, 'browser-profiles', String(routeId).replace(/[^\w.-]/g, '_'));
   }
 
   // 瀏覽器的啟動參數。抽出來是為了讓「將執行」預覽與實際啟動用同一份，不會對不上。
@@ -66,11 +68,11 @@ class Launcher {
     if (mode === 'browser') {
       if (!browserName) return '（尚未選擇瀏覽器)';
       const b = this.browsers().find(x => x.name === browserName);
-      const exe = b ? require('path').basename(b.path) : browserName;
+      const exe = b ? this.path.basename(b.path) : browserName;
       return [exe, ...this.browserArgs({ route, localPort, profile, dnsGuard })].join(' ');
     }
     if (!exePath) return '（尚未選擇程式）';
-    return `${exePath}${exeArgs ? ' ' + exeArgs : ''}\n→ 登記程式規則：${require('path').basename(exePath)} → ${route.label || route.id}`;
+    return `${exePath}${exeArgs ? ' ' + exeArgs : ''}\n→ 登記程式規則：${this.path.basename(exePath)} → ${route.label || route.id}`;
   }
 
   launchBrowser({ route, localPort, browserName, profile = true, dnsGuard = true }) {
@@ -84,14 +86,13 @@ class Launcher {
     catch (e) { return { ok: false, error: e.message }; }
     child.on('error', () => {});
     child.unref();
-    const inst = this._add({ name: b.name, exe: require('path').basename(b.path), mode: 'browser', routeId: route.id, pid: child.pid, profile: profile ? route.id : null });
+    const inst = this._add({ name: b.name, exe: this.path.basename(b.path), mode: 'browser', routeId: route.id, pid: child.pid, profile: profile ? route.id : null });
     this.log('info', 'launch', `用路由「${route.label || route.id}」開啟 ${b.name}`, `127.0.0.1:${localPort} · PID ${child.pid}`);
     return { ok: true, instance: inst, browser: b.name };
   }
 
   launchProgram({ route, exePath, exeArgs }) {
     if (!exePath) return { ok: false, error: '請先選擇程式' };
-    const path = require('path');
     const argv = String(exeArgs || '').trim();
     let child;
     try {
@@ -99,8 +100,8 @@ class Launcher {
     } catch (e) { return { ok: false, error: e.message }; }
     child.on('error', () => {});
     child.unref();
-    const name = path.basename(exePath).replace(/\.exe$/i, '');
-    const inst = this._add({ name, exe: path.basename(exePath), mode: 'engine', routeId: route.id, pid: child.pid, exePath });
+    const name = this.path.basename(exePath).replace(/\.exe$/i, '');
+    const inst = this._add({ name, exe: this.path.basename(exePath), mode: 'engine', routeId: route.id, pid: child.pid, exePath });
     this.log('info', 'launch', `用路由「${route.label || route.id}」啟動 ${name}`, `PID ${child.pid}`);
     return { ok: true, instance: inst };
   }
