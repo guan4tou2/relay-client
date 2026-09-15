@@ -156,13 +156,26 @@ const systemProxy = {
   },
 };
 
+// 通知 WinInet 立即套用新的代理設定。不做的話登錄檔雖然寫了，
+// 已經開著的程式（瀏覽器等）要等重啟才會讀到。
+//
+// 舊版有兩個毛病，導致它一直失敗：
+//   1. 把整段 PowerShell 拼成字串丟給 shell，@" here-string 後面變成字面的反斜線 n，
+//      PowerShell 直接報 parser error。改用 execFileSync + 陣列參數，換行就是真換行。
+//   2. MemberDefinition 沒帶 [DllImport]，Add-Type 也不會成功。
+// 失敗不拋錯：登錄檔已經寫了，只是生效時機往後延。
 function refresh() {
-  try {
-    execSync(
-      'powershell -NoProfile -Command "[System.Runtime.InteropServices.RuntimeEnvironment]::FromGlobalAccessCache($null); $signature = @\\"\\npublic static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);\\n\\"@; $type = Add-Type -MemberDefinition $signature -Name WinInet -Namespace Pinvoke -PassThru; $type::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0); $type::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0)"',
-      { windowsHide: true, timeout: 5000 }
-    );
-  } catch (e) { /* Fallback: settings will take effect on next app start */ }
+  const script = [
+    '$sig = @"',
+    '[DllImport("wininet.dll", SetLastError = true)]',
+    'public static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);',
+    '"@',
+    '$t = Add-Type -MemberDefinition $sig -Name WinInet -Namespace Pinvoke -PassThru',
+    '$t::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0) | Out-Null',
+    '$t::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null',
+  ].join('\n');
+  try { execFileSync('powershell', ['-NoProfile', '-Command', script], { windowsHide: true, timeout: 10000 }); return true; }
+  catch (e) { return false; }
 }
 
 // ---- 開機自動啟動（Electron 登入項目）----
