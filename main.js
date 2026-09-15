@@ -492,11 +492,14 @@ ipcMain.handle('get-app-info', () => ({
 // 開機自動啟動（Windows 登入項目）。可攜版須指回外層 exe（PORTABLE_EXECUTABLE_FILE），
 // 否則會登記到 %TEMP% 的解壓路徑，重開機後失效。
 function appLaunchPath() { return platform.autostart.launchPath(); }
+// 舊名字（productName 改名前）留下的登入項目也算數 —— 否則設定頁顯示「關」，
+// OS 每次登入卻照樣去啟動舊的那顆，而且使用者從這個開關永遠關不掉。
+const legacyLoginItems = () => (platform.autostart.listLegacy ? platform.autostart.listLegacy() : []);
+
 ipcMain.handle('get-login-item', () => {
   try {
-    return platform.autostart.usesElectronLoginItem
-      ? app.getLoginItemSettings({ path: appLaunchPath() }).openAtLogin
-      : platform.autostart.get();
+    if (!platform.autostart.usesElectronLoginItem) return platform.autostart.get();
+    return app.getLoginItemSettings({ path: appLaunchPath() }).openAtLogin || legacyLoginItems().length > 0;
   } catch (e) { return false; }
 });
 ipcMain.handle('set-login-item', (_e, enable) => {
@@ -504,9 +507,28 @@ ipcMain.handle('set-login-item', (_e, enable) => {
     // Electron 的 setLoginItemSettings 在 Linux 沒有實作 → adapter 自己寫 XDG autostart .desktop
     if (!platform.autostart.usesElectronLoginItem) return platform.autostart.set(!!enable);
     app.setLoginItemSettings({ openAtLogin: !!enable, path: appLaunchPath(), args: [] });
+    // 開或關都把舊名字那一筆收掉：開的時候避免同時存在兩筆（會開兩個實例），
+    // 關的時候使用者要的就是「別再自動啟動」，不能只關掉新的那一筆。
+    if (platform.autostart.clearLegacy) platform.autostart.clearLegacy();
     return { ok: true, enabled: !!enable };
   } catch (e) { addLog('error', 'system', `set-login-item failed: ${e.message}`); return { ok: false, error: e.message }; }
 });
+
+// 啟動時清掉「指向已不存在的檔案」的舊登入項目。那種一定是垃圾（檔案都沒了，
+// 開機時 OS 也只會安靜地失敗），收掉不會動到任何還有用的設定。
+// 還指得到檔案的就留著 —— 那代表使用者真的有設過，交給上面的開關處理。
+function sweepDeadLegacyLoginItems() {
+  try {
+    if (!platform.autostart.clearLegacy) return;
+    const dead = legacyLoginItems().filter(it => {
+      const target = platform.autostart.entryTarget(it.data);
+      return target && !fs.existsSync(target);   // 解析不出路徑就不動它
+    });
+    if (!dead.length) return;
+    platform.autostart.clearLegacy(dead.map(d => d.name));
+    addLog('info', 'system', `清掉 ${dead.length} 筆失效的舊開機啟動項目（指向已刪除的檔案）`);
+  } catch (e) { /* 清不掉不影響啟動 */ }
+}
 
 // ===== 自動更新（electron-updater → GitHub Releases）=====
 // 延遲載入：electron-updater 一 require 就會實例化並呼叫 app.getVersion()，
@@ -1223,6 +1245,7 @@ app.whenReady().then(async () => {
     setTimeout(() => autoStartEngineElevated().catch(err => addLog('error', 'engine', err.message)), 1800);
   }
 
+  sweepDeadLegacyLoginItems(); // 收掉改名前留下、且檔案已不存在的登入項目
   checkUpdatesOnStartup(); // 啟動後靜默檢查更新（僅安裝版）
   // 規則庫自動更新（預設關閉；開啟時才連網，延後執行避免拖慢啟動）
   setTimeout(() => maybeAutoUpdateRuleSets().catch(err => addLog('warn', 'ruleset', err.message)), 8000);

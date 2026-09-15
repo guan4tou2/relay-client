@@ -180,9 +180,92 @@ function refresh() {
 
 // ---- 開機自動啟動（Electron 登入項目）----
 // 可攜版須指回外層 exe（PORTABLE_EXECUTABLE_FILE），否則會登記到 %TEMP% 的解壓路徑，重開機後失效。
+
+// 改名之前（productName 還叫「代理客戶端」）建立的登入項目。
+//
+// Electron 的 setLoginItemSettings 是拿「當下的 productName」當登錄檔值的名字，
+// 所以一改名，舊名字那一筆就變成沒人管得到的孤兒：設定頁讀不到它（顯示「關」），
+// 關閉開關也刪不掉它，但 OS 每次登入照樣去啟動那個路徑。
+// 實際在這台機器上就有一筆，指著一個已經被刪掉的 Portable-1.1.1.exe。
+//
+// 這是我們自己留下來的東西，所以由我們自己收 —— 只收這幾個確定是本 app 的名字。
+const LEGACY_LOGIN_ITEM_NAMES = ['electron.app.代理客戶端', '代理客戶端'];
+
+// 中文名字兩個方向都不走命令列的明碼，也不走 stdout 的明碼。
+//
+// 這裡踩過兩次，兩次症狀相反，值得寫清楚：
+//   1. reg.exe 讀「參數」是照行程的 ANSI 代碼頁。從 Git Bash 呼叫時
+//      reg query /v 代理客戶端 會回「找不到」—— 明明那一筆就在。
+//   2. 改成 reg query 整把撈、在 JS 裡比名字之後，換成打包的 app 找不到：
+//      reg.exe 的「輸出」編碼跟主控台代碼頁綁在一起，Git Bash 是 UTF-8，
+//      但 Electron 底下沒有主控台，出來的是系統 ANSI，用 utf8 解就成亂碼。
+//
+// 所以：整件事交給 PowerShell，指令用 -EncodedCommand（base64 的 UTF-16）送進去，
+// 結果用 base64 的 UTF-8 JSON 送出來。命令列與 stdout 上都只有 ASCII，
+// 跟代碼頁完全無關。
+const PS_RUN = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const psLit = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+const encodeCmd = (script) => Buffer.from(script, 'utf16le').toString('base64');
+
+function runPs(script) {
+  return execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodeCmd(script)],
+    { encoding: 'ascii', windowsHide: true, timeout: 10000 });
+}
+
+// 回 base64(UTF-8 JSON)，不是明碼
+function psEmitJson(expr) {
+  return `$ProgressPreference = 'SilentlyContinue'
+$j = ConvertTo-Json -InputObject ${expr} -Compress
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$j))`;
+}
+
+function legacyLoginItems() {
+  const names = LEGACY_LOGIN_ITEM_NAMES.map(psLit).join(',');
+  const script = `$ErrorActionPreference = 'SilentlyContinue'
+$p = Get-ItemProperty -Path ${psLit(PS_RUN)}
+$out = @()
+foreach ($n in @(${names})) {
+  if ($p -and ($p.PSObject.Properties.Name -contains $n)) {
+    $out += [pscustomobject]@{ name = $n; data = [string]$p.$n }
+  }
+}
+${psEmitJson('@($out)')}`;
+  try {
+    const b64 = String(runPs(script)).trim();
+    if (!b64) return [];
+    const arr = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+    return Array.isArray(arr) ? arr : [arr];
+  } catch (e) { return []; }
+}
+
+// names 省略時清掉全部；給了就只清那幾筆（啟動時只收「指向已刪除檔案」的那種）。
+function clearLegacyLoginItems(names) {
+  const want = Array.isArray(names) ? new Set(names) : null;
+  const targets = legacyLoginItems().filter(it => !want || want.has(it.name)).map(it => it.name);
+  if (!targets.length) return 0;
+  const script = targets
+    .map(n => `Remove-ItemProperty -Path ${psLit(PS_RUN)} -Name ${psLit(n)} -Force -ErrorAction SilentlyContinue`)
+    .join('\n');
+  try { runPs(script); } catch (e) { return 0; } // 刪不掉就算了，不值得為它中斷啟動
+  // 不信回傳值：-ErrorAction SilentlyContinue 會把失敗吞掉，離開碼照樣是 0。重讀確認。
+  const left = new Set(legacyLoginItems().map(it => it.name));
+  return targets.filter(n => !left.has(n)).length;
+}
+
+// Run 的值可能是 "C:\有空白的路徑\app.exe" --arg，也可能沒引號：C:\path\app.exe --arg。
+// 取到 .exe 為止。解析不出來就回空字串 —— 呼叫端據此當「判斷不出，別動它」。
+function runEntryTarget(data) {
+  const m = String(data || '').trim().replace(/^"/, '').match(/^(.*?\.exe)/i);
+  return m ? m[1] : '';
+}
+
 const autostart = {
   usesElectronLoginItem: true,
   launchPath: () => process.env.PORTABLE_EXECUTABLE_FILE || process.execPath,
+  legacyNames: LEGACY_LOGIN_ITEM_NAMES,
+  listLegacy: legacyLoginItems,
+  clearLegacy: clearLegacyLoginItems,
+  entryTarget: runEntryTarget,
 };
 
 // ---- 瀏覽器（「用路由開瀏覽器」用）----
