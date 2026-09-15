@@ -37,7 +37,16 @@ const ps = (cmd) => {
   try { return execFileSync('powershell', ['-NoProfile', '-Command', cmd], { encoding: 'utf8', timeout: 20000 }); }
   catch (e) { return ''; }
 };
-const appPids = () => ps("(Get-Process RelayClient -EA 0 | % Id) -join ','").trim();
+// 只算「真的還活著」的。這裡很容易騙到自己：
+// 強制結束過的 Electron 會留下 threads=0 的殭屍行程，Get-Process 跟 Win32_Process
+// 都照樣列得出來，而且它「還握著單一實例鎖」。拿那種清單去判斷「舊實例退場了沒」，
+// 會把自己的收尾方式誤判成產品的 bug —— 我在這支測試上被騙過三次。
+// 執行緒數是唯一可靠的活性指標。
+const appPids = () => ps(
+  "((Get-Process RelayClient -EA 0 | Where-Object { $_.Threads.Count -gt 0 }) | % Id) -join ','").trim();
+// 主行程＝沒有 --type= 的那個。單一實例鎖握在它手上。
+const appMainPid = () => ps(
+  "(Get-CimInstance Win32_Process -Filter \"Name='RelayClient.exe'\" | Where-Object { $_.CommandLine -notmatch '--type=' -and (Get-Process -Id $_.ProcessId -EA 0).Threads.Count -gt 0 } | Select-Object -First 1 -ExpandProperty ProcessId)").trim();
 const tunCount = () => ps("(Get-NetAdapter -EA 0 | Where-Object { $_.Name -like '*proxyclient*' -or $_.InterfaceDescription -like '*sing-box*' } | Measure-Object).Count").trim();
 const singboxCount = () => ps("(Get-Process sing-box -EA 0 | Measure-Object).Count").trim();
 const routeSnapshot = () => ps("(Get-NetRoute -EA 0 | Sort-Object DestinationPrefix,ifIndex | % { \"$($_.ifIndex) $($_.DestinationPrefix) $($_.NextHop)\" }) -join \"`n\"").trim();
@@ -114,8 +123,8 @@ async function T(name, fn) {
       if (tunCount() !== tunBefore) throw new Error('被擋下來了卻還是建了 TUN');
     });
 
-    const oldPids = appPids();
-    console.log('提權前的 app 行程:', oldPids);
+    const oldMain = appMainPid();
+    console.log('提權前的 app 主行程:', oldMain, '（全部：' + appPids() + '）');
     console.log('');
     console.log('  >>> 接下來會跳 UAC，請按「是」<<<');
     console.log('');
@@ -137,13 +146,41 @@ async function T(name, fn) {
       if (code !== 0) throw new Error('離開碼 ' + code + (code === -2 ? '（等 UAC 逾時）' : ''));
     });
 
-    // 真實流程在這個時間點會把舊實例收掉。
-    // 注意要收「整組」——單一實例鎖握在主行程手上，只殺清單第一個（很可能是 renderer）
-    // 的話鎖還在，提權實例會被擠掉，然後就會把測試殼層的毛病誤判成產品的 bug。
+    // 真實流程在這個時間點會把舊實例收掉：app.exit(0)，是優雅退出。
+    //
+    // 這裡千萬不能用 Stop-Process -Force。強制結束 Electron 會留下一個
+    // threads=0 的殭屍主行程，而它「還握著單一實例鎖」——於是提權實例拿不到鎖、
+    // 自己退場，看起來就像產品壞了。我在這支測試上被自己這樣騙過兩次。
+    // taskkill 不帶 /F 送的是 WM_CLOSE，跟 app.exit(0) 同一類，鎖會正常釋放。
     await new Promise(r => setTimeout(r, 700));
-    try { await old.eval(`window.close()`); } catch (e) {}
-    ps(`Get-Process -Id ${oldPids} -EA 0 | Stop-Process -Force -EA 0`);
-    for (let i = 0; i < 20 && appPids(); i++) await new Promise(r => setTimeout(r, 300));
+    // 用「CDP 埠還回不回應」判斷舊實例死透了沒。
+    // 行程清單在這件事上不可信：強制結束過的 Electron 會留下 threads=0 的殭屍，
+    // Get-Process / Win32_Process 都照樣列得出來，而且殭屍主行程「還握著單一實例鎖」。
+    // 我被這個騙過三次，每次都差點把自己收尾的毛病寫成產品的 bug。
+    const alive = (port) => new Promise(res => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/json/version', timeout: 2000 }, r => { r.resume(); res(true); });
+      req.on('error', () => res(false)); req.on('timeout', () => { req.destroy(); res(false); });
+    });
+
+    // 先走 app 自己準備的結束通道（NSIS 安裝程式用的同一條）：--quit 的意圖
+    // 經由 second-instance 轉給在跑的實例，那邊做完整的 app.quit()。
+    //
+    // --user-data-dir 一定要跟著帶：單一實例鎖是「綁 userData 目錄」的，
+    // 不帶的話 --quit 那個實例會在預設命名空間裡拿到鎖、自己退場，
+    // 根本沒跟隔離設定檔裡的實例講到話。這就是我先前以為「--quit 壞掉」的原因。
+    ps(`Start-Process '${EXE}' -ArgumentList '--quit','--user-data-dir=${UD}' -WindowStyle Hidden`);
+    let quitWorked = false;
+    for (let i = 0; i < 40; i++) {
+      if (!await alive(OLD_PORT)) { quitWorked = true; break; }
+      await new Promise(r => setTimeout(r, 250));
+    }
+    if (!quitWorked && oldMain) {
+      console.log('  （--quit 沒收掉它，改用強制結束——這會留殭屍，下面若失敗要先懷疑這裡）');
+      ps(`Stop-Process -Id ${oldMain} -Force -EA 0`);
+      for (let i = 0; i < 40 && await alive(OLD_PORT); i++) await new Promise(r => setTimeout(r, 250));
+    }
+    console.log('舊實例退場方式:', quitWorked ? '--quit（優雅）' : '強制結束', ' 舊埠還活著:', await alive(OLD_PORT));
+    if (await alive(OLD_PORT)) throw new Error('舊實例沒退場——鎖還握著，後面測什麼都不算數');
 
     await T('提權實例活得下來（沒有被單一實例鎖擋掉而自己退場）', async () => {
       elevated = await attach(NEW_PORT, 60000);

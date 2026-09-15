@@ -1151,7 +1151,14 @@ function relaunchElevated() {
       const { cmd, args } = el.relaunchCommand(platform.autostart.launchPath(), ['--engine-autostart']);
       const cp = spawn(cmd, args, { windowsHide: true });
       cp.on('exit', (code) => {
-        if (code === 0) { finish({ ok: true }); setTimeout(() => app.exit(0), 700); }
+        if (code === 0) {
+          finish({ ok: true });
+          // 先把鎖放掉，再等 700ms 退場。提權實例會在它自己啟動後一兩秒問鎖，
+          // 我們還握著的話它就會自己退場 —— 使用者眼中是 app 整個消失。
+          // 提權實例那邊也有重試（見 acquireSingleInstanceLock），兩邊各做一半。
+          try { app.releaseSingleInstanceLock(); } catch (e) {}
+          setTimeout(() => app.exit(0), 700);
+        }
         else { finish({ ok: false, error: '提權被拒或被公司政策封鎖，分流引擎無法啟動（app 其餘功能不受影響）。' }); }
       });
       cp.on('error', (e) => finish({ ok: false, error: e.message }));
@@ -1205,7 +1212,29 @@ ipcMain.handle('window-close', () => mainWindow.close());
 // NSIS 安裝前會跑 "RelayClient.exe --quit"，那個新實例拿不到鎖，
 // 意圖會經由 second-instance 轉給正在執行的這個，走完整的 app.quit()（移除 TUN、還原系統代理）。
 // 不讓安裝程式 taskkill /F 的理由就在這——強殺會跳過清理，使用者裝完會發現上不了網。
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+//
+// 提權重啟進來的實例（帶 --engine-autostart）要肯等：舊實例是「先把我們拉起來，
+// 700ms 後才自己退場」，我們比它早一步問鎖就拿不到 → app.exit(0) → 兩邊都退場，
+// 使用者按下「啟動分流引擎」會看到整個 app 直接消失。
+//
+// 這不是「一定會發生」，是會飄的競態：實測讓舊實例分別在新實例啟動後
+// 1295ms / 1700ms / 2129ms 退場，結果是 活 / 死 / 活 —— 新實例問鎖的時刻
+// 剛好落在同一個區間，誰先誰後看當下的磁碟快取與負載。
+// 所以這裡不是把延遲調大就好，要真的重試到拿得到為止。
+const sleepSync = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) {} };
+function acquireSingleInstanceLock() {
+  if (app.requestSingleInstanceLock()) return true;
+  // 只有提權重啟這條路要等；一般情況下「已經有實例在跑」就是該退場。
+  if (!process.argv.includes('--engine-autostart')) return false;
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    sleepSync(250);
+    if (app.requestSingleInstanceLock()) return true;
+  }
+  return false;
+}
+
+const gotSingleInstanceLock = acquireSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.exit(0);   // 用 exit 不用 quit：這個實例什麼都還沒起，不需要跑清理
 } else if (process.argv.includes('--quit')) {
