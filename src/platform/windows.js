@@ -2,7 +2,7 @@
 // 在 macOS/Linux 上跑時 path.basename('C:\x\a.exe') 會回傳整串。
 // adapter 的邏輯必須與執行主機無關，否則在別的 OS 上測 Windows adapter 就是假的。
 const path = require('path').win32;
-const { execSync, execFile } = require('child_process');
+const { execSync, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const execFileP = promisify(execFile);
 
@@ -95,6 +95,35 @@ function normalizeApp(fullPath) {
 const appNameEquals = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
 
 // ---- 系統代理（HKCU 登錄檔 + WinInet 立即生效）----
+// TUN 拉起來「之前」的系統 DNS。拿來當 sing-box 的上游。
+//
+// 為什麼不能用 sing-box 的 type:'local'：auto_route 會把 TUN 自己設成系統 DNS，
+// local 會去讀系統清單、讀到 TUN 自己 → 查詢繞回 sing-box → 沒人回答 → 逾時。
+// 症狀是引擎一開，整台機器就解析不到任何沒快取過的網域。
+//
+// 也不能寫死 8.8.8.8：公司內部名稱要靠公司 DNS，而且把內部查詢送去公開解析器
+// 本身就是洩漏。所以抓「現在實際在用的」，並排掉我們自己的 TUN。
+function systemDnsServers() {
+  try {
+    // 一行一個位址，避免在命令列裡跟 -join 的引號纏鬥
+    const out = execFileSync('powershell', ['-NoProfile', '-Command',
+      'Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses } | ' +
+      'Select-Object -ExpandProperty ServerAddresses'],
+      { encoding: 'utf8', windowsHide: true, timeout: 8000 });
+    return dedupeDns(String(out).split(/\r?\n/));
+  } catch (e) { return []; }
+}
+
+// 共用的清洗：去空白、去重、排掉 TUN 自己那段（172.19.0.x）與 loopback
+function dedupeDns(list) {
+  const seen = new Set();
+  return (list || [])
+    .map(x => String(x || '').trim())
+    .filter(x => /^\d{1,3}(\.\d{1,3}){3}$/.test(x))
+    .filter(x => !x.startsWith('172.19.0.') && !x.startsWith('127.'))
+    .filter(x => (seen.has(x) ? false : (seen.add(x), true)));
+}
+
 const systemProxy = {
   get() {
     try {
@@ -163,5 +192,5 @@ module.exports = {
   staleEngineCleanupCommand, killTree,
   path,   // 讓共用模組跟這個 adapter 用同一種路徑語意（不看執行主機）
   exeFilters, listProcesses, listProcessesCommand, parseProcessList, normalizeApp, appNameEquals,
-  systemProxy, autostart, browserCandidates,
+  systemProxy, autostart, browserCandidates, systemDnsServers,
 };

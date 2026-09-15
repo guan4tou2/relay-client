@@ -17,6 +17,7 @@ const gen = (rules, extra = {}) => mk().generateConfig({ rules, ruleSets: SETS, 
 // 濾掉每份設定都有的 sniff、「自我 bypass」與內建的「本機與內網 → 直連」，只留下真正被測的規則
 const LAN_FIRST = '127.0.0.0/8';
 const isBuiltin = r => r.action === 'sniff'
+  || r.action === 'hijack-dns'                       // DNS 拦截也是內建的，不是使用者規則
   || (r.process_name || []).includes('sing-box.exe')
   || (r.ip_cidr || []).includes(LAN_FIRST);
 const nonSelf = cfg => cfg.route.rules.filter(r => !isBuiltin(r));
@@ -371,8 +372,10 @@ describe('三種模式：規則 / 全域 / 直連', () => {
   test('全域模式仍保留自我 bypass 與內網保護', () => {
     const cfg = gen(RULES, { mode: 'global', globalTarget: 'r2', selfNames: ['RelayClient.exe'] });
     expect(cfg.route.rules[0].process_name).toContain('RelayClient.exe');
-    expect(cfg.route.rules[1].ip_cidr).toContain('127.0.0.0/8');
-    expect(cfg.route.rules).toHaveLength(2);
+    const iLan = cfg.route.rules.findIndex(r => (r.ip_cidr || []).includes('127.0.0.0/8'));
+    expect(iLan).toBeGreaterThan(0);
+    // 內建的：self bypass + hijack-dns + 內網保護，全域模式不再多出使用者規則
+    expect(nonSelf(cfg)).toHaveLength(0);
   });
 
   test('全域模式沒指定路由 → 退回 direct，不產生無效 outbound', () => {

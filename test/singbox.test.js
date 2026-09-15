@@ -8,11 +8,108 @@ const WIN = forPlatform('win32');
 const mk = () => new SingBoxEngine({ platform: WIN });
 // 每份設定都會有的內建規則：sniff、自我 bypass、「本機與內網 → 直連」
 const isBuiltinLan = r => (r.ip_cidr || []).includes('127.0.0.0/8');
-const userRules = cfg => cfg.route.rules.filter(r => !isBuiltinLan(r));
+const isHijackDns = r => r.action === 'hijack-dns';
+const userRules = cfg => cfg.route.rules.filter(r => !isBuiltinLan(r) && !isHijackDns(r));
 const ROUTES = [
   { id: 'r1', kind: 'socks5', localPort: 10810 },
   { id: 'r2', kind: 'http', localPort: 10820 },
 ];
+
+describe('DNS 設定', () => {
+  const SB = require('../src/engine/singbox');
+  const gen = (dnsServers) => new SB().generateConfig({ rules: [], ruleSets: [], defaultTarget: 'direct', routes: [], mode: 'direct', dnsServers });
+
+  test('用傳進來的系統 DNS 當上游，不自己讀系統清單', () => {
+    const cfg = gen(['10.0.0.53', '10.0.0.54']);
+    expect(cfg.dns.servers.map(x => x.server)).toEqual(['10.0.0.53', '10.0.0.54']);
+    // 不能加 detour：sing-box 啟動時會 FATAL（detour to an empty direct outbound）
+    expect(cfg.dns.servers.every(x => x.detour === undefined)).toBe(true);
+    expect(cfg.dns.final).toBe(cfg.dns.servers[0].tag);
+  });
+
+  test('沒拉到系統 DNS 時用公開解析器當退路，不能留空', () => {
+    for (const v of [undefined, [], [null, '']]) {
+      const cfg = gen(v);
+      expect(cfg.dns.servers.length).toBeGreaterThan(0);
+      expect(cfg.dns.servers.every(x => x.detour === undefined)).toBe(true);
+    }
+  });
+
+  test('route 要指定 default_domain_resolver（1.14 起沒寫會報錯）', () => {
+    const cfg = gen(['10.0.0.53']);
+    expect(cfg.route.default_domain_resolver).toBe(cfg.dns.final);
+    const blk = new SB().generateBlockConfig({ rules: [], dnsServers: ['10.0.0.53'] });
+    expect(blk.route.default_domain_resolver).toBe(blk.dns.final);
+  });
+
+  test('一定要有 dns 區塊 —— 沒有的話 auto_route 把 DNS 導到 TUN 上，查詢會進黑洞', () => {
+    for (const cfg of [
+      new SB().generateConfig({ rules: [], ruleSets: [], defaultTarget: 'direct', routes: [], mode: 'direct' }),
+      new SB().generateBlockConfig({ rules: [] }),
+    ]) {
+      expect(cfg.dns).toBeTruthy();
+      expect(cfg.dns.servers.length).toBeGreaterThan(0);
+      expect(cfg.dns.final).toBe(cfg.dns.servers[0].tag);
+    }
+  });
+
+  test('用 1.12 的新 server 格式（舊格式 1.14 會被移除）', () => {
+    const cfg = new SB().generateConfig({ rules: [], ruleSets: [], defaultTarget: 'direct', routes: [], mode: 'direct' });
+    expect(cfg.dns.servers[0].type).toBe('udp');
+    expect(cfg.dns.servers[0].address).toBeUndefined();   // 舊格式的 address 欄位不該再出現
+  });
+});
+
+describe('DNS 拦截', () => {
+  const SB = require('../src/engine/singbox');
+  const gen = (o = {}) => new SB().generateConfig({ rules: [], ruleSets: [], defaultTarget: 'direct', routes: [], mode: 'direct', dnsServers: ['1.1.1.1'], ...o });
+
+  test('一定要有 hijack-dns，否則查詢只是普通封包，會被內網規則抓走進黑洞', () => {
+    const rules = gen().route.rules;
+    expect(rules.some(r => r.action === 'hijack-dns')).toBe(true);
+  });
+
+  test('hijack 要排在內網規則之前 —— TUN 位址 172.19.0.2 落在 172.16.0.0/12 裡', () => {
+    const rules = gen().route.rules;
+    const hj = rules.findIndex(r => r.action === 'hijack-dns');
+    const lan = rules.findIndex(r => Array.isArray(r.ip_cidr));
+    expect(hj).toBeGreaterThanOrEqual(0);
+    expect(lan).toBeGreaterThanOrEqual(0);
+    expect(hj).toBeLessThan(lan);
+  });
+
+  test('hijack 要排在自我 bypass 之後 —— 否則 sing-box 問上游 DNS 也會被拦，就迴圈了', () => {
+    const rules = gen({ selfNames: ['RelayClient.exe'] }).route.rules;
+    const self = rules.findIndex(r => Array.isArray(r.process_name));
+    const hj = rules.findIndex(r => r.action === 'hijack-dns');
+    expect(self).toBeGreaterThanOrEqual(0);
+    expect(self).toBeLessThan(hj);
+  });
+
+  test('封鎖模式也要有 —— 未被保護的程式還要能上網', () => {
+    const cfg = new SB().generateBlockConfig({ rules: [], dnsServers: ['1.1.1.1'] });
+    expect(cfg.route.rules.some(r => r.action === 'hijack-dns')).toBe(true);
+  });
+
+  test('ruleIndex 要跟 route.rules 逐項對齊（命中標記靠它）', () => {
+    const e = new SB();
+    const cfg = e.generateConfig({ rules: [{ id: 'r1', on: true, target: 'direct', when: { dest: { match: 'suffix', value: 'a.com' } } }],
+      ruleSets: [], defaultTarget: 'direct', routes: [], selfNames: ['x'], mode: 'rule', lanDirect: true, dnsServers: ['1.1.1.1'] });
+    expect(e.ruleIndex.length).toBe(cfg.route.rules.length);
+    const hj = cfg.route.rules.findIndex(r => r.action === 'hijack-dns');
+    expect(e.ruleIndex[hj].kind).toBe('dns');
+  });
+});
+
+describe('TUN MTU', () => {
+  test('不能用 sing-box 預設的 9000 —— 一般出口是 1500 或更低，9000 會讓 TLS 半路被重置', () => {
+    const SB = require('../src/engine/singbox');
+    const cfg = new SB().generateConfig({ rules: [], ruleSets: [], defaultTarget: 'direct', routes: [], mode: 'direct' });
+    const mtu = cfg.inbounds[0].mtu;
+    expect(mtu).toBeLessThanOrEqual(1500);
+    expect(mtu).toBeGreaterThanOrEqual(1280);   // 低於 IPv6 最小 MTU 就太小了
+  });
+});
 
 describe('SingBoxEngine.generateConfig — 基本結構', () => {
   test('空規則 → 只有 direct outbound、final=direct、僅剩 sing-box 自我 bypass', () => {
@@ -107,9 +204,13 @@ describe('SingBoxEngine.generateConfig — 防迴圈 self bypass', () => {
     });
     expect(cfg.route.rules[0]).toMatchObject({ outbound: 'direct' });
     expect(cfg.route.rules[0].process_name).toEqual(expect.arrayContaining(['RelayClient.exe', 'sing-box.exe']));
-    expect(cfg.route.rules[1]).toMatchObject({ outbound: 'direct' });     // 內建內網保護
-    expect(cfg.route.rules[1].ip_cidr).toContain('127.0.0.0/8');
-    expect(cfg.route.rules[2].process_name).toContain('chrome.exe');     // 使用者規則再之後
+    // 用相對順序而不是寫死索引：中間可能再插內建規則（例如 hijack-dns）
+    const iSelf = cfg.route.rules.findIndex(r => (r.process_name || []).includes('sing-box.exe'));
+    const iLan = cfg.route.rules.findIndex(r => (r.ip_cidr || []).includes('127.0.0.0/8'));
+    const iUser = cfg.route.rules.findIndex(r => (r.process_name || []).includes('chrome.exe'));
+    expect(cfg.route.rules[iLan]).toMatchObject({ outbound: 'direct' });
+    expect(iSelf).toBeLessThan(iLan);
+    expect(iLan).toBeLessThan(iUser);
   });
 
   test('沒有 selfNames 時仍不會漏掉 sing-box.exe 的 bypass', () => {
@@ -147,7 +248,9 @@ describe('SingBoxEngine.generateBlockConfig — 斷線保護 fail-closed', () =>
     });
     expect(cfg.route.rules[0].outbound).toBe('direct'); // self bypass 第一條
     expect(cfg.route.rules[0].process_name).toEqual(expect.arrayContaining(['RelayClient.exe', 'sing-box.exe']));
-    expect(cfg.route.rules[1].ip_cidr).toContain('127.0.0.0/8');        // 封鎖模式也保留內網保護
+    // 封鎖模式也保留內網保護，且要在 self bypass 之後
+    const iLanB = cfg.route.rules.findIndex(r => (r.ip_cidr || []).includes('127.0.0.0/8'));
+    expect(iLanB).toBeGreaterThan(0);
     expect(cfg.route.rules).toContainEqual({ process_name: ['chrome.exe'], action: 'reject' });
     expect(cfg.route.rules).toContainEqual({ process_path: ['C:\\x\\y.exe'], action: 'reject' });
     expect(cfg.route.rules.find(r => r.process_name && r.process_name.includes('safe.exe'))).toBeUndefined();

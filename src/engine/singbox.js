@@ -17,6 +17,35 @@ const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 //
 // 用寫死的 CIDR 而不是 geoip-private 規則庫：離線可用、零下載。
 // 內容用 `sing-box rule-set match` 逐一驗過（含 mDNS 224.0.0.251；8.8.8.8 / 1.1.1.1 / 2001:db8::1 不命中）。
+// TUN 的 MTU。改動前先讀 _tunInbound() 裡的說明。
+const TUN_MTU = 1400;
+
+// sing-box 的 auto_route 會把 TUN 設成系統的 DNS 伺服器，所有查詢都走到
+// TUN 位址的 53 埠、由 sing-box 自己回答。設定裡沒有 dns 區塊時，它沒有
+// 伺服器可用，會把查詢當成普通流量丟給 route → 送回 TUN 自己 → 黑洞。
+// 後果是引擎一開，整台機器的名稱解析就死掉（症狀是逐時，不是被拒）。
+//
+// 不能用 type:'local'：它會去讀系統 DNS 清單，而 auto_route 已經把 TUN 自己
+// 塞進那份清單了 → 查詢繞回 sing-box → 沒人回答 → 逐時。
+// 所以改成「把 TUN 拉起來之前的系統 DNS」當成明確的上游，配 detour: 'direct'。
+//
+// 這裡只用系統原本的解析器。走代理的連線不會因此漏出網域：
+// 我們有開 sniff，域名會隨連線一起交給 outbound，由上游自己解析。
+// （全域模式下本地解析仍會讓內網看到你查了哪些網域，這是後續要處理的題目。）
+function dnsSection(upstreams) {
+  const list = (upstreams || []).filter(Boolean);
+  // 抓不到系統 DNS 時的退路。不預期會走到，但沒有伺服器等於整台機器解析全死，
+  // 寧可用公開解析器也不要讓使用者連不上網。
+  // 不加 detour：sing-box 會拒絕「detour 到一個空的 direct outbound」（啟動時 FATAL，
+  // 而且 check 時不會報）。不加也安全：這些是明確 IP，sing-box 自己的外送
+  // 流量本來就會繞過自家 TUN。迴圈風險只存在於 type:'local'（那會去讀
+  // 含 TUN 位址的系統清單），所以我們才改成把上游寫死。
+  const servers = (list.length ? list : ['1.1.1.1', '8.8.8.8']).map((ip, n) => ({
+    type: 'udp', tag: 'up' + n, server: ip,
+  }));
+  return { servers, final: servers[0].tag, strategy: 'prefer_ipv4' };
+}
+
 const PRIVATE_CIDRS = [
   '127.0.0.0/8',       // loopback
   '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', // RFC1918
@@ -77,7 +106,12 @@ class SingBoxEngine extends EventEmitter {
       type: 'tun', tag: 'tun-in',
       ...(name ? { interface_name: name } : {}),
       address: ['172.19.0.1/30'],
-      mtu: 9000, auto_route: true, strict_route: false, stack: 'gvisor',
+      // MTU 1400 而不是 sing-box 預設的 9000。9000 是為「整條路徑都支援 jumbo frame」
+      // 的環境準備的；一般用戶端的出口是 1500（乙太／Wi-Fi）、1492（PPPoE）或更低
+      // （WireGuard 常見 1280–1420）。TUN 報 9000，本機程式就會협商出超大 MSS，
+      // 送出去的封包在真實路徑上過不去 —— 連線建得起來，TLS 傳到一半被對端重置。
+      // 實測：Wi-Fi 1500 / WireGuard 1280 的機器上，9000 會讓 HTTPS 大量失敗。
+      mtu: TUN_MTU, auto_route: true, strict_route: false, stack: 'gvisor',
     };
   }
 
@@ -87,7 +121,7 @@ class SingBoxEngine extends EventEmitter {
   //   mode         — 'rule' 照規則表 | 'global' 全部走 globalTarget | 'direct' TUN 在但全部直連
   //   lanDirect    — 內建「本機與內網 → 直連」保護規則（三種模式都適用）
   generateConfig({ rules = [], ruleSets = [], defaultTarget = 'direct', udp = false, routes = [], selfNames = [],
-                   mode = 'rule', globalTarget = null, lanDirect = true }) {
+                   mode = 'rule', globalTarget = null, lanDirect = true, dnsServers = [] }) {
     const routeById = new Map(routes.map(r => [r.id, r]));
     const tagFor = target => (target === 'direct' || !routeById.has(target)) ? 'direct' : 'route-' + target;
     const setByTag = new Map((ruleSets || []).filter(s => s && s.tag && s.path).map(s => [s.tag, s]));
@@ -122,6 +156,14 @@ class SingBoxEngine extends EventEmitter {
     const self = Array.from(new Set([...selfNames, ...this.platform.selfProcessNames].filter(Boolean)));
     if (self.length) routeRules.push({ process_name: self, outbound: 'direct' });
 
+
+    // 1.4) DNS 拦截。auto_route 會把 TUN 設成系統 DNS，查詢全會送到 TUN 位址的 53 埠；
+    //      但 sing-box 不會自己把它們當 DNS——沒有這條規則就只是普通封包，
+    //      被下一條內網規則（172.19.0.2 落在 172.16.0.0/12）抓成 direct，送回 TUN 自己 → 黑洞。
+    //      結果是引擎一開，整台機器解析不到任何沒快取過的網域。
+    //      用 port 53 而不是 protocol:'dns'：後者要靠 sniff 才認得出來，而 sniff 不一定有開。
+    //      排在自我 bypass 之後：sing-box 自己去問上游 DNS 的封包不能再被拦，否則就迴圈了。
+    routeRules.push({ port: 53, action: 'hijack-dns' });
     // 1.5) 內建保護規則：本機與內網一律直連。排在使用者規則「之前」，
     //      否則任何較寬鬆的規則（例如「Chrome → 代理」）都會把 LAN 流量搶走。
     if (lanDirect) routeRules.push({ ip_cidr: [...PRIVATE_CIDRS], outbound: 'direct' });
@@ -143,6 +185,7 @@ class SingBoxEngine extends EventEmitter {
     let i = 0;
     if (active.some(r => r.domainLike)) this.ruleIndex[i++] = { kind: 'sniff' };
     if (self.length) this.ruleIndex[i++] = { kind: 'self' };
+    this.ruleIndex[i++] = { kind: 'dns' };   // hijack-dns，跟 route.rules 的順序要對齊
     if (lanDirect) this.ruleIndex[i++] = { kind: 'lan' };
     for (const r of active) this.ruleIndex[i++] = { kind: 'rule', id: r.id, target: r.target };
 
@@ -150,6 +193,7 @@ class SingBoxEngine extends EventEmitter {
       // debug 才會印 `router: match[N] ... => ...`——命中標記與命中次數都靠它。
       // main.js 只解析不落地，避免把 app.log 灌爆。
       log: { level: 'debug', timestamp: true },
+      dns: dnsSection(dnsServers),
       inbounds: [this._tunInbound()],
       outbounds,
       route: {
@@ -157,6 +201,8 @@ class SingBoxEngine extends EventEmitter {
         ...(ruleSetDefs.length ? { rule_set: ruleSetDefs } : {}),
         final: tagFor(finalTarget),
         auto_detect_interface: true,
+        // outbound 拨號時要用哪個解析器。1.14 起沒寫會直接報錯。
+        default_domain_resolver: dnsSection(dnsServers).final,
       },
       // UDP：TUN 本身可帶 UDP；能否真的走取決於上游 SOCKS5 是否支援 UDP ASSOCIATE。
       // udp=false 時不特別阻擋（維持簡單），UI 端顯示提示。
@@ -265,7 +311,7 @@ class SingBoxEngine extends EventEmitter {
 
   // 斷線保護（Kill-switch）專用設定：受保護程式（原本要走代理者）→ reject（fail-closed 丟棄），
   // 其餘程式 → direct（維持正常上網）。用 sing-box 內建 route action reject，不動防火牆。
-  generateBlockConfig({ rules = [], ruleSets = [], selfNames = [], mode = 'rule', lanDirect = true, scopeApps = [] }) {
+  generateBlockConfig({ rules = [], ruleSets = [], selfNames = [], mode = 'rule', lanDirect = true, scopeApps = [], dnsServers = [] }) {
     const routeRules = [];
     const setByTag = new Map((ruleSets || []).filter(s => s && s.tag && s.path).map(s => [s.tag, s]));
     // 只擋「原本要走代理」的規則（target 非 direct）；原本就直連的不動，使用者其餘上網照常。
@@ -278,6 +324,9 @@ class SingBoxEngine extends EventEmitter {
     if (protectedRules.some(r => r.domainLike)) routeRules.push({ action: 'sniff' });
     const self = Array.from(new Set([...selfNames, ...this.platform.selfProcessNames].filter(Boolean)));
     if (self.length) routeRules.push({ process_name: self, outbound: 'direct' });
+    // DNS 拦截（同 generateConfig）：未被保護的程式還要能上網，解析不能斷
+    routeRules.push({ port: 53, action: 'hijack-dns' });
+
     // 內網保護在封鎖模式同樣要放在最前面，否則 catch-all 會把使用者的內網也切斷
     if (lanDirect) routeRules.push({ ip_cidr: [...PRIVATE_CIDRS], outbound: 'direct' });
     // MERGE §6：使用者可以把保護範圍收窄到指定程式。
@@ -295,12 +344,14 @@ class SingBoxEngine extends EventEmitter {
 
     return {
       log: { level: 'warn', timestamp: true },  // 封鎖模式不需要命中資訊
+      dns: dnsSection(dnsServers),
       inbounds: [this._tunInbound()],
       outbounds: [{ type: 'direct', tag: 'direct' }],
       route: {
         rules: routeRules,
         ...(ruleSetDefs.length ? { rule_set: ruleSetDefs } : {}),
         final: 'direct', auto_detect_interface: true,
+        default_domain_resolver: dnsSection(dnsServers).final,
       },
       _blocking: true,
     };

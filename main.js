@@ -831,7 +831,8 @@ function resetHits() { hitParser.reset(); }
 
 function recordHit(conn) {
   const info = conn.info;
-  if (info && info.kind === 'self') return;   // app 自己的流量不記
+  // app 自己的流量不記；DNS 拦截也不記（每查一次就一行，會把紀錄灌爆）
+  if (info && (info.kind === 'self' || info.kind === 'dns')) return;
   const split = config.getSplit();
   const rule = info && info.kind === 'rule' ? split.rules.find(r => r.id === info.id) : null;
   addLog('info', 'split', `連線 ${conn.host}`, null, {
@@ -978,6 +979,8 @@ function engineParams() {
     defaultTarget: split.defaultTarget, udp: split.udp,
     mode: split.mode, globalTarget: split.globalTarget, lanDirect: split.lanDirect,
     routes: config.getRoutes(), selfNames: [self],
+    // TUN 拉起來前先抓系統 DNS，當成 sing-box 的上游（不能讓它自己讀系統清單，那裡面有 TUN 自己）
+    dnsServers: platform.systemDnsServers ? platform.systemDnsServers() : [],
     // 只在「只有以下程式」模式下才傳，空陣列 = 所有走代理的程式（依規則表）
     scopeApps: (() => { const st = config.getSettings();
       return st.killSwitchScope === 'apps' ? (st.killSwitchApps || []) : []; })(),

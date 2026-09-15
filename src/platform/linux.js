@@ -149,6 +149,25 @@ const autostart = {
   },
 };
 
+// 同 Windows：TUN 之前的系統 DNS，拿來當上游。讀 resolv.conf。
+// systemd-resolved 的機器上 resolv.conf 常指向 127.0.0.53，那是本機 stub，
+// 走 detour direct 打得到，不會像 TUN 那樣繞回自己，所以保留。
+function systemDnsServers() {
+  try {
+    const txt = require('fs').readFileSync('/etc/resolv.conf', 'utf8');
+    const list = txt.split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l.startsWith('nameserver'))
+      .map(l => l.split(/\s+/)[1]);
+    const seen = new Set();
+    return list
+      .map(x => String(x || '').trim())
+      .filter(x => /^\d{1,3}(\.\d{1,3}){3}$/.test(x))
+      .filter(x => !x.startsWith('172.19.0.'))
+      .filter(x => (seen.has(x) ? false : (seen.add(x), true)));
+  } catch (e) { return []; }
+}
+
 function browserCandidates() {
   return [
     { name: 'Chrome', path: '/usr/bin/google-chrome' },
@@ -165,6 +184,6 @@ module.exports = {
   staleEngineCleanupCommand, killTree,
   path,   // 讓共用模組跟這個 adapter 用同一種路徑語意（不看執行主機）
   exeFilters, listProcesses, listProcessesCommand, normalizeApp, appNameEquals,
-  systemProxy, autostart, browserCandidates,
+  systemProxy, autostart, browserCandidates, systemDnsServers,
   _internal: { parseProxyState, unquote, parseGetcap, setcapCommand, desktopEntry },
 };

@@ -156,6 +156,7 @@ module.exports = {
   path,   // 讓共用模組跟這個 adapter 用同一種路徑語意（不看執行主機）
   exeFilters, listProcesses, listProcessesCommand, parseProcessList, normalizeApp, appNameEquals,
   systemProxy, autostart, browserCandidates,
+  systemDnsServers: () => [],   // macOS 本版本不支援引擎
   // 匯出給測試用的純函式
   _internal: { parseNetworkServices, parseWebProxy, appLabel },
 };
