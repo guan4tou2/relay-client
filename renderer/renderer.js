@@ -240,8 +240,10 @@ function renderDashStatus(runIds, actIds) {
   const segs = [
     { label: runIds.length ? `${runIds.length} 條路由執行中` : actIds.length ? '路由連線中' : '沒有路由執行',
       color: runIds.length ? 'var(--good)' : actIds.length ? 'var(--amber)' : 'var(--text2)', tab: 'dashboard' },
-    { label: runIds.length ? '系統代理' + (state.sysProxy ? '已開' : '關閉') : '系統代理關閉',
-      color: state.sysProxy && runIds.length ? 'var(--good)' : 'var(--text2)', tab: 'dashboard' },
+    // 欄位是 state.sys（sysToggle 也讀它）。這裡原本寫成 state.sysProxy ——
+    // 那個名字全檔案沒有任何地方賦值過，所以這一段永遠顯示「關閉」。
+    { label: runIds.length ? '系統代理' + (state.sys ? '已開' : '關閉') : '系統代理關閉',
+      color: state.sys && runIds.length ? 'var(--good)' : 'var(--text2)', tab: 'dashboard' },
     state.killswitch && state.killswitch.tripped
       ? { label: '斷線保護已觸發', color: 'var(--red)', tab: 'split' }
       : { label: state.settings.killSwitch ? '斷線保護就緒' : '斷線保護停用',
@@ -2079,6 +2081,13 @@ async function boot() {
   });
   window.api.onRouteStatus(list => reconcileStatus(list));
 
+  // 系統代理也可能從系統匣被切換。少了這個訂閱，從系統匣切換之後
+  // 主視窗的開關還停在舊狀態，使用者看到的跟實際的不一樣。
+  if (window.api.onSystemProxy) window.api.onSystemProxy(s => {
+    if (!s) return;
+    state.sys = !!s.enabled;
+    if (state.tab === 'dashboard') updateDashboard();
+  });
   if (window.api.onEngineStatus) window.api.onEngineStatus(st => { if (st) applyEngineStatus(st); });
   if (window.api.onInstances) window.api.onInstances(list => { state.instances = list || []; renderInstances(); renderSidebar(); });
   if (window.api.onKillswitch) window.api.onKillswitch(k => { if (k) { if (k.tripped && !(state.killswitch && state.killswitch.tripped)) state.ksAlertOpen = true; state.killswitch = k; renderKillswitch(); if (k.tripped) flash('斷線保護啟動：已暫停受保護程式的連線', 'var(--red)'); } });

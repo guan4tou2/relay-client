@@ -21,9 +21,7 @@ const { connectViaProxy, connectViaChain } = require('./src/proxy/connect');
 })();
 
 const config = require('./src/store/config');
-const SocksRelay = require('./src/proxy/socks-relay');
-const HttpBridge = require('./src/proxy/http-bridge');
-const RouteManager = require('./src/proxy/route-manager');
+const RouteManager = require('./src/proxy/route-manager');   // SocksRelay / HttpBridge 由它持有，main.js 不直接碰
 const SingBoxEngine = require('./src/engine/singbox');
 const { RuleSetStore } = require('./src/engine/ruleset');
 const { HitParser } = require('./src/engine/hit-parser');
@@ -34,12 +32,9 @@ const { execSync, spawn } = require('child_process');
 
 let mainWindow = null;
 let tray = null;
-let socksRelay = null;
-let httpBridge = null;
 let routeManager = null;
 let engine = null;
 let ruleSets = null;
-let proxyRunning = false;
 let systemProxyEnabled = false;
 let startTime = null;
 
@@ -171,39 +166,48 @@ function createTray() {
   tray.on('double-click', () => showMainWindow());
 }
 
+// 系統代理該指向哪個埠：跑著的路由裡挑一個，優先 http（Windows 的系統代理欄位
+// 是 HTTP 代理，指到 socks5 埠的話瀏覽器連不上）。沒有路由在跑就回 null。
+//
+// 以前系統匣是寫死 settings.httpPort（10808，舊的單一主連線用的埠）。
+// 主視窗早就改成用「當下路由的埠」了，兩邊對「系統代理」的定義不一樣 ——
+// 從系統匣按下去會把整台機器指到一個沒人在聽的埠，然後就全部上不了網。
+function systemProxyPort() {
+  const running = routeManager ? routeManager.status().filter(r => r.running) : [];
+  if (!running.length) return null;
+  return (running.find(r => r.kind === 'http') || running[0]).localPort;
+}
+
+// 系統代理狀態變了就告訴視窗一聲。少了這個，從系統匣切換之後主視窗的開關
+// 還停在舊狀態，使用者看到的跟實際的不一樣。
+function sendSystemProxyState() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('system-proxy', { enabled: systemProxyEnabled });
+  }
+}
+
 function updateTrayMenu() {
-  if (tray) tray.setImage(createTrayIcon(proxyRunning));
+  if (!tray) return;   // 匣還沒建好就被呼叫（啟動早期 / 測試）——下面每一行都要 tray
+  const port = systemProxyPort();
+  tray.setImage(createTrayIcon(!!port));
   const menu = Menu.buildFromTemplate([
     { label: 'RelayClient', enabled: false },
     { type: 'separator' },
     {
-      label: proxyRunning ? '⬤ 已連線' : '○ 未連線',
+      label: port ? `⬤ 路由執行中 · 127.0.0.1:${port}` : '○ 沒有路由在跑',
       enabled: false
     },
     {
-      label: proxyRunning ? '中斷連線' : '連線',
-      click: async () => {
-        if (proxyRunning) {
-          await stopProxyServers();
-        } else {
-          const activeId = config.getActiveServerId();
-          if (activeId) await startProxyServers(activeId);
-        }
-      }
-    },
-    {
       label: systemProxyEnabled ? '關閉系統代理' : '啟用系統代理',
+      // 沒有路由在跑就不給開——跟主視窗那句「請先啟動路由」是同一個規則
+      enabled: systemProxyEnabled || !!port,
       click: () => {
-        if (systemProxyEnabled) {
-          systemProxy.disable();
-          systemProxyEnabled = false;
-        } else {
-          const settings = config.getSettings();
-          systemProxy.enable(settings.httpPort);
-          systemProxyEnabled = true;
-        }
+        try {
+          if (systemProxyEnabled) { systemProxy.disable(); systemProxyEnabled = false; }
+          else if (port) { systemProxy.enable(port); systemProxyEnabled = true; }
+        } catch (e) { addLog('error', 'system', `系統匣切換系統代理失敗：${e.message}`); }
         updateTrayMenu();
-        sendStatusToRenderer();
+        sendSystemProxyState();
       }
     },
     { type: 'separator' },
@@ -244,86 +248,11 @@ function showPortConflictDialog(detail) {
   }
 }
 
-async function startProxyServers(serverId) {
-  const server = config.getServer(serverId);
-  if (!server) throw new Error('Server not found');
-
-  const settings = config.getSettings();
-
-  // 埠衝突守衛：兩個本地埠若被占用（其他程式或既有路由），彈告警並阻擋，不硬啟動
-  const busy = [];
-  if (!(await checkPortFree(settings.httpPort))) busy.push(settings.httpPort);
-  if (!(await checkPortFree(settings.socksPort))) busy.push(settings.socksPort);
-  if (busy.length) {
-    const detail = `本地連接埠 ${busy.join('、')} 已被占用。\n請關閉占用該埠的程式，或到設定改用其他連接埠後再試。`;
-    addLog('error', 'system', `port conflict on ${busy.join(', ')} — connection blocked`);
-    showPortConflictDialog(detail);
-    throw new Error(`Local port in use: ${busy.join(', ')}`);
-  }
-
-  const remoteProxy = {
-    host: server.host,
-    port: server.port,
-    type: server.type || 'socks5',
-    username: server.username || undefined,
-    password: server.password || undefined
-  };
-
-  socksRelay = new SocksRelay();
-  httpBridge = new HttpBridge();
-
-  const onStats = (stats) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('proxy-stats', {
-        ...stats,
-        uptime: startTime ? Date.now() - startTime : 0
-      });
-    }
-  };
-
-  socksRelay.on('stats', onStats);
-  httpBridge.on('stats', onStats);
-
-  socksRelay.on('log', (level, msg, detail) => addLog(level, 'socks-relay', msg, detail));
-  httpBridge.on('log', (level, msg, detail) => addLog(level, 'http-bridge', msg, detail));
-  socksRelay.on('error', err => addLog('error', 'socks-relay', err.message));
-  httpBridge.on('error', err => addLog('error', 'http-bridge', err.message));
-
-  addLog('info', 'system', `Starting proxy to ${server.host}:${server.port}`);
-
-  await httpBridge.start(settings.httpPort, remoteProxy);
-  addLog('info', 'http-bridge', `Listening on 127.0.0.1:${settings.httpPort}`);
-
-  await socksRelay.start(settings.socksPort, remoteProxy);
-  addLog('info', 'socks-relay', `Listening on 127.0.0.1:${settings.socksPort}`);
-
-  proxyRunning = true;
-  startTime = Date.now();
-  config.setActiveServerId(serverId);
-  updateTrayMenu();
-  sendStatusToRenderer();
-}
-
-async function stopProxyServers() {
-  if (!proxyRunning && !socksRelay && !httpBridge) return;
-  addLog('info', 'system', 'Stopping proxy servers');
-  if (socksRelay) { await socksRelay.stop(); socksRelay = null; }
-  if (httpBridge) { await httpBridge.stop(); httpBridge = null; }
-  proxyRunning = false;
-  startTime = null;
-  updateTrayMenu();
-  sendStatusToRenderer();
-}
-
-function sendStatusToRenderer() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('proxy-status-change', {
-      proxyRunning,
-      systemProxyEnabled,
-      activeServerId: config.getActiveServerId()
-    });
-  }
-}
+// 舊的「單一主連線」路徑（socksRelay + httpBridge 綁 settings.httpPort / socksPort）
+// 在這裡整段拿掉了。介面早就改成「每條路由各自一個本地埠」，主視窗沒有這個概念，
+// 唯一還叫得到它的是系統匣那個「連線 / 中斷連線」——而它啟動的東西主視窗看不到、
+// 也顯示不出來。留著只會讓人以為還有一條主連線。
+// SocksRelay / HttpBridge 本身沒有消失，是 RouteManager 在用。
 
 function testProxyHandshake(server) {
   const type = server.type || 'socks5';
@@ -395,47 +324,22 @@ ipcMain.handle('delete-server', (_e, id) => {
   config.deleteServer(id);
   return true;
 });
-ipcMain.handle('reorder-servers', (_e, ids) => config.reorderServers(ids));
-
-ipcMain.handle('start-proxy', async (_e, serverId) => {
-  try {
-    if (proxyRunning) await stopProxyServers();
-    await startProxyServers(serverId);
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle('stop-proxy', async () => {
-  await stopProxyServers();
-  if (systemProxyEnabled) {
-    systemProxy.disable();
-    systemProxyEnabled = false;
-  }
-  return { success: true };
-});
-
-ipcMain.handle('get-proxy-status', () => ({
-  proxyRunning,
-  systemProxyEnabled,
-  activeServerId: config.getActiveServerId()
-}));
-
 ipcMain.handle('toggle-system-proxy', (_e, enable, port) => {
-  const settings = config.getSettings();
   if (enable) {
-    systemProxy.enable(port || settings.httpPort);
+    // 呼叫端沒指定就自己找一個跑著的路由；再找不到就不動手，
+    // 免得把整台機器指到一個沒人在聽的埠。
+    const target = port || systemProxyPort();
+    if (!target) return { systemProxyEnabled, error: '沒有路由在跑' };
+    systemProxy.enable(target);
     systemProxyEnabled = true;
   } else {
     systemProxy.disable();
     systemProxyEnabled = false;
   }
+  sendSystemProxyState();
   updateTrayMenu();
   return { systemProxyEnabled };
 });
-
-ipcMain.handle('get-system-proxy-state', () => systemProxy.get());
 
 ipcMain.handle('test-server', async (_e, serverId, testTarget) => {
   const server = config.getServer(serverId);
@@ -604,8 +508,6 @@ async function applyRoutes() {
   setupRouteManager();
   await routeManager.stopAll(); // 乾淨重來，便於重新做埠衝突檢查
 
-  const settings = config.getSettings();
-  const primaryPorts = proxyRunning ? [settings.httpPort, settings.socksPort] : [];
   const enabled = config.getRoutes().filter(r => r.enabled !== false);
 
   // 先解析路由並剔除無跳點者（不算衝突，僅記錄）
@@ -617,11 +519,13 @@ async function applyRoutes() {
     resolved.push(r);
   }
 
-  // 純邏輯偵測「與主連線埠衝突 / 路由間重複」（已抽成可測試的 RouteManager.detectPortConflicts）
-  const { clear, conflicts: portConflicts } = RouteManager.detectPortConflicts(resolved, primaryPorts);
+  // 純邏輯偵測「路由間埠重複」（已抽成可測試的 RouteManager.detectPortConflicts）。
+  // 第二個參數是「主連線占用的埠」——舊的單一主連線拿掉之後就沒有那種東西了，
+  // 但函式簽名保留（有單元測試守著 primary 那條分支，將來要再加保留埠也用得上）。
+  const { clear, conflicts: portConflicts } = RouteManager.detectPortConflicts(resolved, []);
   const nameOf = id => { const r = resolved.find(x => x.id === id); return r ? r._name : id; };
   const conflicts = portConflicts.map(c => c.reason === 'primary'
-    ? `• ${nameOf(c.id)}：埠 ${c.port} 與主連線衝突`
+    ? `• ${nameOf(c.id)}：埠 ${c.port} 已被保留`
     : `• ${nameOf(c.id)}：埠 ${c.port} 與路由「${nameOf(c.with)}」重複`);
 
   const started = [];
@@ -651,11 +555,6 @@ function sendRouteStatus() {
 }
 
 ipcMain.handle('get-routes', () => config.getRoutes());
-ipcMain.handle('save-routes', async (_e, routes) => {
-  config.setRoutes(routes);
-  const results = await applyRoutes();
-  return { results, status: routeManager ? routeManager.status() : [] };
-});
 ipcMain.handle('get-route-status', () => (routeManager ? routeManager.status() : []));
 
 // 找已安裝的 Chromium 系瀏覽器（Chrome 優先、再 Edge），供「用路由開瀏覽器」用
@@ -663,50 +562,6 @@ function findBrowser() {
   for (const c of platform.browserCandidates()) { try { if (fs.existsSync(c.path)) return c; } catch (e) {} }
   return null;
 }
-
-// 用某條路由開一個「隔離 profile + 指向該路由本地埠」的瀏覽器實例：
-// 只有這個視窗走代理，其餘系統瀏覽照常。免 TUN、免提權——TUN 分流的替代做法。
-ipcMain.handle('launch-browser', async (_e, routeId) => {
-  try {
-    const def = config.getRoutes().find(r => r.id === routeId);
-    if (!def) return { ok: false, error: '找不到該路由' };
-    const r = resolveRoute(def);
-    if (!r.hops || r.hops.length === 0) return { ok: false, error: '此路由沒有有效跳點（先在路由裡加伺服器）' };
-
-    // 確保路由在跑（本地埠有在聽），瀏覽器才連得上
-    setupRouteManager();
-    if (!routeManager.isRunning(routeId)) {
-      if (!(await checkPortFree(r.localPort))) return { ok: false, error: `本地埠 ${r.localPort} 已被占用，無法啟動路由` };
-      try { await routeManager.start(r); sendRouteStatus(); }
-      catch (e) { return { ok: false, error: '路由啟動失敗：' + e.message }; }
-    }
-
-    const browser = findBrowser();
-    if (!browser) return { ok: false, error: '找不到 Chrome / Edge，請確認已安裝' };
-
-    const scheme = def.kind === 'http' ? 'http' : 'socks5';
-    const profileDir = path.join(app.getPath('userData'), 'browser-profiles', String(routeId).replace(/[^\w.-]/g, '_'));
-    try { fs.mkdirSync(profileDir, { recursive: true }); } catch (e) {}
-    const args = [
-      `--proxy-server=${scheme}://127.0.0.1:${r.localPort}`,
-      `--user-data-dir=${profileDir}`,
-      // 防洩漏（這兩個是安全性，不是體感功能）：
-      //   host-resolver-rules：不讓瀏覽器自己用系統 DNS 解析，全部交給代理解析。
-      //     少了它，即使連線走代理，DNS 查詢仍會從真實 IP 發出，等於暴露你在看哪些網站。
-      //     EXCLUDE 127.0.0.1 是必要的——否則連本地中繼自己都解析不到。
-      //   force-webrtc-ip-handling-policy：擋掉 WebRTC 的非代理 UDP 通道，
-      //     那是繞過 proxy 直接洩漏真實 IP 最經典的一條路。
-      '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1',
-      '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
-      '--no-first-run', '--no-default-browser-check', 'about:blank',
-    ];
-    const child = spawn(browser.path, args, { detached: true, stdio: 'ignore', windowsHide: false });
-    child.on('error', () => {}); // spawn 失敗別變成未處理錯誤
-    child.unref();
-    addLog('info', 'launch', `用路由「${def.label || routeId}」開啟 ${browser.name}`, `${scheme}://127.0.0.1:${r.localPort}`);
-    return { ok: true, browser: browser.name };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
 
 // 啟動單一路由（runtime）；衝突時回傳 {ok:false, conflict:{title,body}} 讓 renderer 顯示 in-app alert
 ipcMain.handle('route-start', async (_e, id) => {
@@ -1234,13 +1089,49 @@ function acquireSingleInstanceLock() {
   return false;
 }
 
+// 結束請求的備援通道：userData 底下的一個檔案。
+//
+// 為什麼需要它：second-instance 那條路走的是視窗訊息，而 Windows 的 UIPI
+// 不讓低完整性的行程送訊息給高完整性的行程。分流引擎一開，app 就是提權的，
+// 於是安裝程式（一般權限）的 "RelayClient.exe --quit" 根本到不了 ——
+// 實測確認過。安裝程式因此會在「app 還開著、TUN 還在、系統代理還開著」
+// 的情況下繼續裝，裝完使用者就上不了網。檔案沒有這個限制。
+const QUIT_SENTINEL = () => path.join(app.getPath('userData'), 'quit-request');
+function requestQuitViaFile() {
+  try { fs.writeFileSync(QUIT_SENTINEL(), String(Date.now())); return true; } catch (e) { return false; }
+}
+function watchQuitSentinel() {
+  try { fs.unlinkSync(QUIT_SENTINEL()); } catch (e) {}   // 開機先清掉上一輪留下的（沒對象的請求）
+  setInterval(() => {
+    try {
+      if (!fs.existsSync(QUIT_SENTINEL())) return;
+      fs.unlinkSync(QUIT_SENTINEL());
+      addLog('info', 'system', '收到結束請求（檔案通道）');
+      app.quit();
+    } catch (e) {}
+  }, 800).unref();
+}
+
 const gotSingleInstanceLock = acquireSingleInstanceLock();
-if (!gotSingleInstanceLock) {
-  app.exit(0);   // 用 exit 不用 quit：這個實例什麼都還沒起，不需要跑清理
-} else if (process.argv.includes('--quit')) {
-  // 拿到鎖代表本來就沒有實例在跑 → --quit 沒有對象，直接結束。
-  // 少了這個判斷，安裝程式在「app 沒在跑」時反而會被我們啟動一個新實例。
+if (process.argv.includes('--quit')) {
+  // 兩條路都走：拿不到鎖時 requestSingleInstanceLock 已經把意圖送給執行中的實例了
+  // （同完整性等級才到得了），檔案通道則是提權實例唯一收得到的那條。
+  // 沒有任何實例在跑的話，檔案會留著，由下一次啟動清掉。
+  requestQuitViaFile();
   app.exit(0);
+} else if (!gotSingleInstanceLock) {
+  // 拿不到鎖通常就是「已經有一個在跑」，Electron 會把既有視窗叫出來，安靜退場即可。
+  // 但也可能是「被強制結束的殭屍主行程還握著鎖」—— 那種情況下使用者點圖示
+  // 不會有任何反應，也不會有任何訊息，只會以為 app 壞了。只在「找不到任何
+  // 活著的同伴」時才出聲，正常的重複啟動不受影響。
+  try {
+    if (platform.liveMainInstances && platform.liveMainInstances() <= 1) {
+      dialog.showErrorBox('RelayClient 無法啟動',
+        '偵測到先前的 RelayClient 被強制結束，殘留的行程還佔著單一實例鎖，'
+        + '但它已經沒有在運作了。\n\n請等一下再試，或到工作管理員把殘留的 RelayClient 結束後重開。');
+    }
+  } catch (e) {}
+  app.exit(0);   // 用 exit 不用 quit：這個實例什麼都還沒起，不需要跑清理
 } else {
   app.on('second-instance', (_e, argv) => {
     if (argv.includes('--quit')) { addLog('info', 'system', '收到結束請求（安裝程式或外部呼叫）'); app.quit(); return; }
@@ -1255,12 +1146,8 @@ app.whenReady().then(async () => {
   createTray();
 
   const settings = config.getSettings();
-  if (settings.autoConnect) {
-    const activeId = config.getActiveServerId();
-    if (activeId) { try { await startProxyServers(activeId); } catch (e) {} } // 先把主連線起好，applyRoutes 的埠衝突檢查才看得到 primaryPorts
-  }
 
-  // 啟動 config 中定義的多端口路由（各自綁定 proxy/串鏈，獨立於主連線）
+  // 啟動 config 中定義的多端口路由（各自綁定 proxy/串鏈）
   // 受「啟動時自動套用路由」開關控制（settings.autoStartRoutes，預設開）
   if (settings.autoStartRoutes !== false) {
     applyRoutes().catch(err => addLog('error', 'route', err.message));
@@ -1274,6 +1161,7 @@ app.whenReady().then(async () => {
     setTimeout(() => autoStartEngineElevated().catch(err => addLog('error', 'engine', err.message)), 1800);
   }
 
+  watchQuitSentinel();         // 結束請求的備援通道（提權時 UIPI 擋掉視窗訊息，只剩這條）
   sweepDeadLegacyLoginItems(); // 收掉改名前留下、且檔案已不存在的登入項目
   checkUpdatesOnStartup(); // 啟動後靜默檢查更新（僅安裝版）
   // 規則庫自動更新（預設關閉；開啟時才連網，延後執行避免拖慢啟動）
@@ -1299,11 +1187,30 @@ app.on('before-quit', (e) => {
   if (_quitting) return;                              // 第二次進來（清理已完成）→ 放行結束
   _quitting = true;
   e.preventDefault();
-  const force = setTimeout(() => app.exit(0), 5000);  // 保險：清理逾時也一定結束
+  const force = setTimeout(() => app.exit(0), 8000);  // 保險：清理逾時也一定結束
   (async () => {
     try { if (engine) await engine.stop(); } catch (err) {}          // 先關引擎 → 讓 sing-box 移除 TUN
     try { if (routeManager) await routeManager.stopAll(); } catch (err) {}
-    try { if (proxyRunning) await stopProxyServers(); } catch (err) {}
-    try { if (systemProxyEnabled) systemProxy.disable(); } catch (err) {}
+    if (systemProxyEnabled) restoreSystemProxy();
   })().finally(() => { clearTimeout(force); app.exit(0); });
 });
+
+// 結束時把系統代理關回去。這一步失敗的後果是「關掉 app 之後整台機器上不了網」，
+// 所以不能像其他清理那樣 try/catch 吞掉就算了 —— 失敗是要讓使用者知道的。
+//
+// 三件事：寫完讀回來確認（不信回傳值）、失敗就重試、最後真的不行就留下
+// 一則寫得出手動步驟的紀錄。同一類的安靜失敗已經在 refresh() 上咬過一次。
+function restoreSystemProxy() {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try { systemProxy.disable(); } catch (e) { addLog('warn', 'system', `還原系統代理第 ${attempt} 次失敗：${e.message}`); }
+    try {
+      if (!systemProxy.get().enabled) { systemProxyEnabled = false; return true; }
+    } catch (e) { /* 讀不回來就當沒成功，繼續重試 */ }
+    sleepSync(250);
+  }
+  addLog('error', 'system',
+    '結束時無法關閉系統代理 —— 這台機器可能會上不了網',
+    '請手動關閉：Windows 設定 → 網路和網際網路 → Proxy → 手動設定 Proxy → 關閉；'
+    + '或執行 reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f');
+  return false;
+}

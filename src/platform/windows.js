@@ -16,6 +16,24 @@ const engineBinName = 'sing-box.exe';
 const tunInterfaceName = 'proxyclient-tun'; // Windows 可自訂 TUN 介面名
 const selfProcessNames = ['sing-box.exe'];  // 一律 bypass，避免 relay→上游 被 TUN 抓回造成迴圈
 
+// 還「真的活著」的自家主行程數（含呼叫者自己）。
+//
+// 用來分辨「已經有一個 app 在跑」與「被強制結束的殭屍還握著單一實例鎖」。
+// 強制結束掉的 Electron 會留下 threads=0 的行程物件，Get-Process 與
+// Win32_Process 都照樣列得出來，而且它還握著鎖 —— 使用者點圖示不會有任何反應。
+// 執行緒數是唯一可靠的活性指標；--type= 的是 renderer/gpu 等子行程，不算。
+function liveMainInstances() {
+  try {
+    const exe = path.basename(process.execPath).replace(/'/g, "''");
+    const out = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      "@(Get-CimInstance Win32_Process -Filter \"Name='" + exe + "'\" | " +
+      "Where-Object { $_.CommandLine -notmatch '--type=' -and (Get-Process -Id $_.ProcessId -EA 0).Threads.Count -gt 0 }).Count"],
+      { encoding: 'ascii', windowsHide: true, timeout: 8000 });
+    const n = parseInt(String(out).trim(), 10);
+    return Number.isFinite(n) ? n : 1;   // 判不出來就回 1（＝別出聲），寧可少講也不要誤報
+  } catch (e) { return 1; }
+}
+
 function isElevated() {
   try { execSync('net session', { stdio: 'ignore', windowsHide: true }); return true; }
   catch (e) { return false; }
@@ -288,5 +306,5 @@ module.exports = {
   staleEngineCleanupCommand, killTree,
   path,   // 讓共用模組跟這個 adapter 用同一種路徑語意（不看執行主機）
   exeFilters, listProcesses, listProcessesCommand, parseProcessList, normalizeApp, appNameEquals,
-  systemProxy, autostart, browserCandidates, systemDnsServers,
+  systemProxy, autostart, browserCandidates, systemDnsServers, liveMainInstances,
 };

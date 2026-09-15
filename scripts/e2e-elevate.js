@@ -232,6 +232,25 @@ async function T(name, fn) {
       }
     });
 
+    // 這一條本身就是測試：--quit 送得到「提權中的實例」嗎？
+    // second-instance 走的是視窗訊息，UIPI 不讓一般權限的行程送給高完整性的行程，
+    // 所以純靠那條路是到不了的（實測確認過）。安裝程式用的就是這條 ——
+    // 到不了的話，它會在 TUN 還在、系統代理還開著的情況下繼續裝，裝完就上不了網。
+    // 現在多一條檔案通道（userData/quit-request），不受完整性等級限制。
+    await T('--quit 送得到提權中的實例（安裝程式靠這條讓 app 先清乾淨）', async () => {
+      const alive = () => new Promise(res => {
+        const req = http.get({ host: '127.0.0.1', port: NEW_PORT, path: '/json/version', timeout: 1500 }, r => { r.resume(); res(true); });
+        req.on('error', () => res(false)); req.on('timeout', () => { req.destroy(); res(false); });
+      });
+      if (!await alive()) throw new Error('提權實例本來就不在，這條測不到');
+      ps(`Start-Process '${EXE}' -ArgumentList '--quit','--user-data-dir=${UD}' -WindowStyle Hidden`);
+      for (let i = 0; i < 60; i++) {
+        if (!await alive()) return;
+        await new Promise(r => setTimeout(r, 250));
+      }
+      throw new Error('15 秒後提權實例還在 —— --quit 沒送到');
+    });
+
     await T('收尾：關掉提權實例、網路恢復', async () => {
       ps("Get-Process RelayClient -EA 0 | Stop-Process -Force -EA 0");
       await new Promise(r => setTimeout(r, 2000));

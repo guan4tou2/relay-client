@@ -6,16 +6,15 @@ contextBridge.exposeInMainWorld('api', {
   addServer: (server) => ipcRenderer.invoke('add-server', server),
   updateServer: (id, updates) => ipcRenderer.invoke('update-server', id, updates),
   deleteServer: (id) => ipcRenderer.invoke('delete-server', id),
-  reorderServers: (ids) => ipcRenderer.invoke('reorder-servers', ids),
-
-  // Proxy control
-  startProxy: (serverId) => ipcRenderer.invoke('start-proxy', serverId),
-  stopProxy: () => ipcRenderer.invoke('stop-proxy'),
-  getProxyStatus: () => ipcRenderer.invoke('get-proxy-status'),
 
   // System proxy
   toggleSystemProxy: (enable, port) => ipcRenderer.invoke('toggle-system-proxy', enable, port),
-  getSystemProxyState: () => ipcRenderer.invoke('get-system-proxy-state'),
+  // 系統代理也可能從系統匣被切換，視窗要跟著更新，否則畫面上的開關會跟實際不一致
+  onSystemProxy: (callback) => {
+    const listener = (_e, s) => callback(s);
+    ipcRenderer.on('system-proxy', listener);
+    return () => ipcRenderer.removeListener('system-proxy', listener);
+  },
 
   // Connection test
   testServer: (serverId, testTarget) => ipcRenderer.invoke('test-server', serverId, testTarget),
@@ -51,7 +50,6 @@ contextBridge.exposeInMainWorld('api', {
 
   // Multi-port routes（每個 localPort → 各自的 proxy 或多跳串鏈）
   getRoutes: () => ipcRenderer.invoke('get-routes'),
-  saveRoutes: (routes) => ipcRenderer.invoke('save-routes', routes),
   saveRoute: (route) => ipcRenderer.invoke('save-route', route),
   deleteRoute: (id, opts) => ipcRenderer.invoke('delete-route', id, opts),
   routeStart: (id) => ipcRenderer.invoke('route-start', id),
@@ -69,7 +67,6 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('instances', listener);
   },
   routeProfileInfo: (id) => ipcRenderer.invoke('route-profile-info', id),
-  launchBrowser: (routeId) => ipcRenderer.invoke('launch-browser', routeId),
 
   // Per-app 分流（sing-box TUN 引擎）
   getSplit: () => ipcRenderer.invoke('get-split'),
@@ -108,11 +105,6 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('engine-status', listener);
     return () => ipcRenderer.removeListener('engine-status', listener);
   },
-  onEngineStats: (callback) => {
-    const listener = (_e, s) => callback(s);
-    ipcRenderer.on('engine-stats', listener);
-    return () => ipcRenderer.removeListener('engine-stats', listener);
-  },
   onRouteStatus: (callback) => {
     const listener = (_event, status) => callback(status);
     ipcRenderer.on('route-status', listener);
@@ -128,16 +120,4 @@ contextBridge.exposeInMainWorld('api', {
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),
-
-  // Events
-  onStats: (callback) => {
-    const listener = (_event, stats) => callback(stats);
-    ipcRenderer.on('proxy-stats', listener);
-    return () => ipcRenderer.removeListener('proxy-stats', listener);
-  },
-  onStatusChange: (callback) => {
-    const listener = (_event, status) => callback(status);
-    ipcRenderer.on('proxy-status-change', listener);
-    return () => ipcRenderer.removeListener('proxy-status-change', listener);
-  }
 });

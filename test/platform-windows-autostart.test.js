@@ -144,3 +144,29 @@ describe('Run 值裡的執行檔路徑', () => {
     expect(t(null)).toBe('');
   });
 });
+
+// 分辨「已經有一個 app 在跑」與「被強制結束的殭屍還握著單一實例鎖」。
+// 後者的話使用者點圖示不會有任何反應，也沒有任何訊息 —— 只會以為 app 壞了。
+describe('liveMainInstances()：活著的自家主行程', () => {
+  const win = require('../src/platform/windows');
+
+  test('回傳 PowerShell 數出來的數字', () => {
+    execFileSync.mockReturnValue('2\r\n');
+    expect(win.liveMainInstances()).toBe(2);
+  });
+
+  test('數不出來就回 1（＝別出聲），寧可少講也不要誤報', () => {
+    execFileSync.mockReturnValue('\r\n');
+    expect(win.liveMainInstances()).toBe(1);
+    execFileSync.mockImplementation(() => { throw new Error('no powershell'); });
+    expect(win.liveMainInstances()).toBe(1);
+  });
+
+  test('只數主行程，而且要求執行緒數大於 0', () => {
+    execFileSync.mockReturnValue('1');
+    win.liveMainInstances();
+    const script = execFileSync.mock.calls[0][1].join(' ');
+    expect(script).toContain("--type=");        // 排掉 renderer / gpu 子行程
+    expect(script).toContain('Threads.Count');  // 殭屍的執行緒數是 0
+  });
+});

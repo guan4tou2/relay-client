@@ -52,12 +52,12 @@ class CDP {
     };
     return c;
   }
-  send(method, params = {}) {
+  send(method, params = {}, timeoutMs = 15000) {
     const id = ++this.id;
     return new Promise((res, rej) => {
       this.pending.set(id, { res, rej });
       this.ws.send(JSON.stringify({ id, method, params }));
-      setTimeout(() => { if (this.pending.has(id)) { this.pending.delete(id); rej(new Error('timeout ' + method)); } }, 15000);
+      setTimeout(() => { if (this.pending.has(id)) { this.pending.delete(id); rej(new Error('timeout ' + method)); } }, timeoutMs);
     });
   }
   async eval(expr) {
@@ -96,9 +96,14 @@ class CDP {
     }
     await new Promise(r => setTimeout(r, 150));
   }
+  // 截圖是附帶產物，不是斷言。沒設 SHOT_DIR 就跳過；
+  // captureScreenshot 在視窗被遮住／沒合成時會整個卡住，不能讓它把整輪測試拖垮。
   async shot(name) {
-    const r = await this.send('Page.captureScreenshot', { format: 'png' });
-    fs.writeFileSync(`${OUT}/${name}.png`, Buffer.from(r.data, 'base64'));
+    if (!OUT) return;
+    try {
+      const r = await this.send('Page.captureScreenshot', { format: 'png' }, 8000);
+      fs.writeFileSync(`${OUT}/${name}.png`, Buffer.from(r.data, 'base64'));
+    } catch (e) { console.log('    （截圖略過：' + e.message + '）'); }
   }
 }
 

@@ -76,15 +76,24 @@ require('../main');
 describe('main.js — IPC handler registration', () => {
   test('registers all expected IPC channels', () => {
     const expected = [
-      'get-servers', 'add-server', 'update-server', 'delete-server', 'reorder-servers',
-      'start-proxy', 'stop-proxy', 'get-proxy-status',
-      'toggle-system-proxy', 'get-system-proxy-state',
+      'get-servers', 'add-server', 'update-server', 'delete-server',
+      'toggle-system-proxy',
       'test-server', 'get-logs', 'clear-logs', 'open-logs-folder',
       'get-settings', 'update-settings',
+      'get-routes', 'save-route', 'route-start', 'route-stop', 'get-route-status',
       'window-minimize', 'window-maximize', 'window-close'
     ];
     for (const ch of expected) {
       expect(ipcHandlers[ch]).toBeDefined();
+    }
+  });
+
+  // 拿掉的那些：舊的「單一主連線」（start-proxy / stop-proxy / get-proxy-status）
+  // 與幾個 renderer 從來沒叫過的。留著只會讓人以為還有一條主連線。
+  test('舊的單一主連線相關 channel 已經不存在', () => {
+    for (const ch of ['start-proxy', 'stop-proxy', 'get-proxy-status',
+                      'get-system-proxy-state', 'save-routes', 'reorder-servers', 'launch-browser']) {
+      expect(ipcHandlers[ch]).toBeUndefined();
     }
   });
 });
@@ -100,32 +109,6 @@ describe('main.js — get-logs / clear-logs', () => {
     expect(result).toBe(true);
     const logs = await ipcHandlers['get-logs']();
     expect(logs).toHaveLength(0);
-  });
-});
-
-describe('main.js — get-proxy-status', () => {
-  test('returns status object with expected fields', async () => {
-    const status = await ipcHandlers['get-proxy-status']();
-    expect(status).toHaveProperty('proxyRunning');
-    expect(status).toHaveProperty('systemProxyEnabled');
-    expect(status).toHaveProperty('activeServerId');
-    expect(typeof status.proxyRunning).toBe('boolean');
-    expect(typeof status.systemProxyEnabled).toBe('boolean');
-  });
-});
-
-describe('main.js — stop-proxy when not running', () => {
-  test('stop-proxy returns success even when not running', async () => {
-    const result = await ipcHandlers['stop-proxy'](null);
-    expect(result.success).toBe(true);
-  });
-});
-
-describe('main.js — start-proxy with invalid server', () => {
-  test('start-proxy with nonexistent server returns error', async () => {
-    const result = await ipcHandlers['start-proxy'](null, 'nonexistent-id');
-    expect(result.success).toBe(false);
-    expect(result.error).toBeTruthy();
   });
 });
 
@@ -185,5 +168,21 @@ describe('main.js — server CRUD IPC', () => {
     await ipcHandlers['delete-server'](null, server.id);
     const after = (await ipcHandlers['get-servers']()).length;
     expect(after).toBe(before - 1);
+  });
+});
+
+// 系統代理指向哪個埠，是「會不會整台機器上不了網」等級的事。
+// 以前系統匣寫死 settings.httpPort（舊主連線的 10808），主視窗卻用當下路由的埠，
+// 兩邊定義不一樣 —— 從系統匣按下去就把機器指到一個沒人在聽的埠。
+describe('main.js — toggle-system-proxy 的埠來源', () => {
+  test('沒有路由在跑時不動手，而且明講原因', async () => {
+    const r = await ipcHandlers['toggle-system-proxy'](null, true);
+    expect(r.systemProxyEnabled).toBe(false);
+    expect(r.error).toBeTruthy();
+  });
+
+  test('關閉不需要路由在跑（殘留的設定一定要關得掉）', async () => {
+    const r = await ipcHandlers['toggle-system-proxy'](null, false);
+    expect(r.systemProxyEnabled).toBe(false);
   });
 });
