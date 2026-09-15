@@ -7,6 +7,27 @@
 
 const { EventEmitter } = require('events');
 
+// 系統代理換成假的。理由有兩個，都不只是「讓測試好寫」：
+//   - 真的打下去會有副作用：Windows 上寫使用者的 HKCU、Linux 上呼叫 gsettings。
+//     單元測試不該改執行它的那台機器的設定。
+//   - 會變成看主機臉色：CI 的 ubuntu runner 沒有 GNOME schema，
+//     真的 gsettings 直接拋 "No such schema"，測試就紅了（實際發生過）。
+// adapter 其餘部分保持真的，這裡只換掉會碰到系統狀態的那一塊。
+jest.mock('../src/platform', () => {
+  const actual = jest.requireActual('../src/platform');
+  return {
+    ...actual,
+    current: {
+      ...actual.current,
+      systemProxy: {
+        get: () => ({ enabled: false, server: '' }),
+        enable: jest.fn((port) => ({ enabled: true, server: `127.0.0.1:${port}` })),
+        disable: jest.fn(() => ({ enabled: false, server: '' })),
+      },
+    },
+  };
+});
+
 // Mock Electron modules
 const mockWebContents = { send: jest.fn() };
 const mockWindow = {
