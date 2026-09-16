@@ -161,12 +161,58 @@ const cmp = (a, b) => {
     });
 
     if (DO_INSTALL) {
-      await T('quitAndInstall 真的把新版裝上去', async () => {
+      const exe = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'RelayClient', 'RelayClient.exe');
+      const exeVersion = () => {
+        try {
+          return require('child_process').execFileSync('powershell', ['-NoProfile', '-Command',
+            `(Get-Item '${exe}').VersionInfo.ProductVersion`], { encoding: 'utf8', timeout: 10000 }).trim();
+        } catch (e) { return ''; }
+      };
+      const vBefore = exeVersion();
+      console.log('    安裝前 exe 版本:', vBefore);
+
+      await T('quitAndInstall：app 先好好結束（不是被強殺）', async () => {
         await c.eval(`window.api.quitAndInstall()`).catch(() => {});
-        console.log('    已觸發安裝，等 NSIS 跑完…');
-        await new Promise(r => setTimeout(r, 45000));
-        const exe = path.join(process.env.LOCALAPPDATA, 'Programs', 'RelayClient', 'RelayClient.exe');
-        if (!fs.existsSync(exe)) throw new Error('安裝後找不到 exe');
+        console.log('    已觸發安裝。installer 是有 UI 的（oneClick:false），請點完精靈…');
+        for (let i = 0; i < 40; i++) {                    // 最多等 200 秒
+          const alive = await getJSON('/json/version').then(() => true).catch(() => false);
+          if (!alive) return;
+          await new Promise(r => setTimeout(r, 5000));
+        }
+        throw new Error('app 沒有結束 —— 安裝程式會在 app 還開著的情況下覆蓋檔案');
+      });
+
+      await T('安裝完成：exe 版本真的變成新版', async () => {
+        for (let i = 0; i < 60; i++) {                    // 最多等 5 分鐘（含使用者點精靈的時間）
+          const v = exeVersion();
+          if (v && v.startsWith(newVersion)) { console.log('    ' + vBefore + ' → ' + v); return; }
+          await new Promise(r => setTimeout(r, 5000));
+        }
+        throw new Error(`exe 版本還是 ${exeVersion()}，沒有升到 ${newVersion}`);
+      });
+
+      // 裝完之後 pending 裡那支安裝檔還在。重點不是「檔案在不在」，
+      // 而是「關掉 app 會不會又裝一次」——autoInstallOnAppQuit 是 true。
+      // 實測是不會（下次啟動檢查到已是最新版，就不會把它排進 will-quit 的安裝流程），
+      // 所以它只是磁碟浪費，由 sweepStaleUpdateCache() 在啟動時收掉。
+      await T('關掉新裝好的 app 不會又跑一次安裝', async () => {
+        const exeTime = () => { try { return fs.statSync(exe).mtimeMs; } catch (e) { return 0; } };
+        const before2 = exeTime();
+        require('child_process').spawn(exe, ['--quit'], { detached: true, stdio: 'ignore' }).unref();
+        await new Promise(r => setTimeout(r, 30000));
+        const setup = require('child_process')
+          .execFileSync('powershell', ['-NoProfile', '-Command',
+            "(Get-Process -Name 'RelayClient-Setup-*' -EA 0 | Measure-Object).Count"], { encoding: 'utf8' }).trim();
+        if (setup !== '0') throw new Error('安裝程式又跑起來了');
+        if (exeTime() !== before2) throw new Error('exe 被重寫了 —— 真的重裝了一次');
+      });
+
+      await T('啟動時會把已安裝完成的更新快取收掉（不然一直佔著上百 MB）', async () => {
+        const { clearStaleUpdateCache } = require('../src/update-cache');
+        const removed = clearStaleUpdateCache(CACHE, newVersion);
+        const left = lsPending().filter(f => /\.exe$/i.test(f));
+        if (left.length) throw new Error('清不掉：' + JSON.stringify(left));
+        console.log('    清掉 ' + removed.length + ' 個檔案');
       });
     } else {
       console.log('UP skip: 安裝那一步（要跑請帶 E2E_INSTALL=1；會真的升級這台機器）');

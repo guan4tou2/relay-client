@@ -26,6 +26,7 @@ const SingBoxEngine = require('./src/engine/singbox');
 const { RuleSetStore } = require('./src/engine/ruleset');
 const { HitParser } = require('./src/engine/hit-parser');
 const { Launcher } = require('./src/launcher');
+const updateCache = require('./src/update-cache');
 const platform = require('./src/platform').current;  // 平台差異一律走 adapter，main.js 不做 process.platform 判斷
 const systemProxy = platform.systemProxy;            // 系統代理開關（Windows 登錄檔 / macOS networksetup / Linux gsettings）
 const { execSync, spawn } = require('child_process');
@@ -470,6 +471,19 @@ ipcMain.handle('quit-and-install', () => { try { ensureAutoUpdater().quitAndInst
 function checkUpdatesOnStartup() {
   if (!app.isPackaged) return;
   setTimeout(() => { try { ensureAutoUpdater().checkForUpdates().catch(() => {}); } catch (e) {} }, 4000);
+}
+
+// 更新裝完之後，pending 底下那支一百多 MB 的安裝檔會一直留著。
+// 實測過它不會害使用者「關掉 app 又裝一次」——下次啟動檢查到已是最新版，
+// 就不會把它排進 will-quit 的安裝流程 —— 但一直佔著磁碟也沒有道理。
+function sweepStaleUpdateCache() {
+  try {
+    if (!app.isPackaged) return;
+    const dir = updateCache.cacheDirFrom(
+      path.join(process.resourcesPath, 'app-update.yml'), process.env.LOCALAPPDATA);
+    const removed = updateCache.clearStaleUpdateCache(dir, app.getVersion());
+    if (removed.length) addLog('info', 'update', `清掉已安裝完成的更新快取（${removed.length} 個檔案）`);
+  } catch (e) { /* 清不掉不影響任何功能 */ }
 }
 
 // ===== 多端口路由（每個 localPort → 各自的 proxy 或多跳串鏈）=====
@@ -1164,6 +1178,7 @@ app.whenReady().then(async () => {
   watchQuitSentinel();         // 結束請求的備援通道（提權時 UIPI 擋掉視窗訊息，只剩這條）
   sweepDeadLegacyLoginItems(); // 收掉改名前留下、且檔案已不存在的登入項目
   checkUpdatesOnStartup(); // 啟動後靜默檢查更新（僅安裝版）
+  sweepStaleUpdateCache();  // 更新裝完之後 pending 會留著上百 MB 的安裝檔
   // 規則庫自動更新（預設關閉；開啟時才連網，延後執行避免拖慢啟動）
   setTimeout(() => maybeAutoUpdateRuleSets().catch(err => addLog('warn', 'ruleset', err.message)), 8000);
 });
