@@ -2,6 +2,17 @@ const net = require('net');
 const { EventEmitter } = require('events');
 const { connectViaProxy, connectViaChain } = require('./connect');
 
+// 統計事件的最小間隔。
+//
+// 原本是「每一個資料 chunk 都 emit 一次」，而那個事件在 app 裡會一路轉成
+// webContents.send('route-stats') —— 等於每一個網路封包做一次跨行程 IPC
+// 加一次結構化複製。實測 256 MB 的傳輸會送出四千多次，行程內就慢 10%，
+// 跨行程的代價還在那之上。
+//
+// 數字本身是累計值，中間漏掉幾次完全沒有資訊損失：使用者看的是「現在多少」，
+// 不是「每一個封包」。250ms 對人眼來說已經是即時。
+const STATS_INTERVAL_MS = 250;
+
 class SocksRelay extends EventEmitter {
   constructor() {
     super();
@@ -10,6 +21,29 @@ class SocksRelay extends EventEmitter {
     this.bytesUp = 0;
     this.bytesDown = 0;
     this.activeSockets = new Set();
+    this._statsTimer = null;
+    this._statsDirty = false;
+  }
+
+  // 累計值先記著，最多每 STATS_INTERVAL_MS 送一次。
+  // 計時器用 unref()：它不該讓行程因為「還有一個 timer」而不肯結束。
+  _touchStats() {
+    this._statsDirty = true;
+    if (this._statsTimer) return;
+    this._statsTimer = setTimeout(() => {
+      this._statsTimer = null;
+      if (!this._statsDirty) return;
+      this._statsDirty = false;
+      this.emit('stats', this._getStats());
+    }, STATS_INTERVAL_MS);
+    if (this._statsTimer.unref) this._statsTimer.unref();
+  }
+
+  // 連線數這種「一次一件」的變化要馬上送，不然使用者按下去要等 250ms 才看到
+  _flushStats() {
+    this._statsDirty = false;
+    if (this._statsTimer) { clearTimeout(this._statsTimer); this._statsTimer = null; }
+    this.emit('stats', this._getStats());
   }
 
   start(localPort, upstream) {
@@ -33,7 +67,14 @@ class SocksRelay extends EventEmitter {
 
   async _handleClient(clientSocket) {
     this.connections++;
-    this.emit('stats', this._getStats());
+    this._flushStats();
+
+    // 一進來就先掛 error。下面每一步都有 await（讀問候、讀請求、連上游），
+    // 在那期間客戶端斷線的話，這個 socket 還沒有任何 error 監聽 ——
+    // Node 會把它升成 uncaughtException。實測拿瀏覽器開開關關就會看到
+    // 一串 "uncaughtException: read ECONNRESET"。
+    // 真正的收尾在下面的 cleanup，這裡只負責「不要炸到行程層級」。
+    clientSocket.on('error', () => {});
 
     try {
       const authMethods = await this._readGreeting(clientSocket);
@@ -55,14 +96,8 @@ class SocksRelay extends EventEmitter {
       reply.writeUInt16BE(port, 8);
       clientSocket.write(reply);
 
-      remoteSocket.on('data', chunk => {
-        this.bytesDown += chunk.length;
-        this.emit('stats', this._getStats());
-      });
-      clientSocket.on('data', chunk => {
-        this.bytesUp += chunk.length;
-        this.emit('stats', this._getStats());
-      });
+      remoteSocket.on('data', chunk => { this.bytesDown += chunk.length; this._touchStats(); });
+      clientSocket.on('data', chunk => { this.bytesUp += chunk.length; this._touchStats(); });
 
       this.emit('log', 'info', `ESTABLISHED ${host}:${port}`);
       this.activeSockets.add(clientSocket);
@@ -78,7 +113,7 @@ class SocksRelay extends EventEmitter {
         this.connections = Math.max(0, this.connections - 1); // 計數永不為負（防重複遞減顯示 -1）
         this.activeSockets.delete(clientSocket);
         this.activeSockets.delete(remoteSocket);
-        this.emit('stats', this._getStats());
+        this._flushStats();
         this.emit('log', 'debug', `CLOSED ${host}:${port}`);
         clientSocket.destroy();
         remoteSocket.destroy();
@@ -91,7 +126,7 @@ class SocksRelay extends EventEmitter {
 
     } catch (err) {
       this.connections = Math.max(0, this.connections - 1); // 計數永不為負（防重複遞減顯示 -1）
-      this.emit('stats', this._getStats());
+      this._flushStats();
       this.emit('log', 'error', `FAILED ${err.message}`);
       const errReply = Buffer.from([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
       clientSocket.write(errReply);
@@ -178,6 +213,7 @@ class SocksRelay extends EventEmitter {
   }
 
   stop() {
+    if (this._statsTimer) { clearTimeout(this._statsTimer); this._statsTimer = null; }
     for (const socket of this.activeSockets) {
       socket.destroy();
     }

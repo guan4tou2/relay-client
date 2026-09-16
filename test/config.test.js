@@ -106,7 +106,7 @@ describe('config — server CRUD', () => {
   test('multiple addServer calls create unique ids', () => {
     const ids = [];
     for (let i = 0; i < 20; i++) {
-      ids.push(config.addServer({ host: 'h', port: i }).id);
+      ids.push(config.addServer({ host: 'h', port: i + 1 }).id);   // 從 1 開始：0 不是合法的連接埠
     }
     expect(new Set(ids).size).toBe(20);
   });
@@ -272,5 +272,34 @@ describe('config — schema 1 → 2 遷移', () => {
     const s = config.getSplit();
     expect(s.rules).toHaveLength(1);
     expect(s.rules[0].name).toBe('chrome.exe'); // 舊資料沒有 name → 用 exe 補
+  });
+});
+
+// 埠沒驗的話，打錯的值會存進設定檔，之後每次連線都失敗，
+// 而使用者看到的是 net.connect 丟出來的原文
+// 「Port should be >= 0 and < 65536. Received type number (10108080)」，
+// 看不出是設定有問題。真的在開發機的紀錄裡出現過。
+describe('伺服器連接埠的驗證', () => {
+  test('合法範圍', () => {
+    expect(config.validPort(1)).toBe(true);
+    expect(config.validPort(1080)).toBe(true);
+    expect(config.validPort(65535)).toBe(true);
+  });
+
+  test('不合法的一律擋掉', () => {
+    for (const bad of [0, -1, 65536, 10108080, 1.5, NaN, null, undefined, '', 'abc', {}]) {
+      expect(config.validPort(bad)).toBe(false);
+    }
+  });
+
+  test('addServer 擋下壞掉的埠，而且訊息說得出範圍', () => {
+    expect(() => config.addServer({ host: 'x', port: 10108080 })).toThrow(/1 到 65535/);
+    expect(() => config.addServer({ host: 'x' })).toThrow(/連接埠/);
+  });
+
+  test('updateServer 只在有帶 port 時檢查（改別的欄位不受影響）', () => {
+    const s = config.addServer({ host: 'x', port: 1080 });
+    expect(() => config.updateServer(s.id, { port: 70000 })).toThrow(/1 到 65535/);
+    expect(() => config.updateServer(s.id, { label: '改名字' })).not.toThrow();
   });
 });

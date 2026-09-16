@@ -38,7 +38,16 @@ function getServer(id) {
   return getServers().find(s => s.id === id);
 }
 
+// 埠要是 1..65535 的整數。介面那層也會擋，但存檔是最後一道 ——
+// 一個壞掉的埠存進設定檔之後，之後每次連線都會失敗，而錯誤訊息是
+// net.connect 丟出來的原文，看不出是設定有問題。
+function validPort(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= 65535;
+}
+
 function addServer(server) {
+  if (!validPort(server && server.port)) throw new Error(`連接埠不合法：${server && server.port}（要介於 1 到 65535）`);
   const servers = getServers();
   server.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   server.createdAt = Date.now();
@@ -49,6 +58,9 @@ function addServer(server) {
 }
 
 function updateServer(id, updates) {
+  if (updates && 'port' in updates && !validPort(updates.port)) {
+    throw new Error(`連接埠不合法：${updates.port}（要介於 1 到 65535）`);
+  }
   const servers = getServers();
   const idx = servers.findIndex(s => s.id === id);
   if (idx === -1) return null;
@@ -175,7 +187,7 @@ function reorderServers(orderedIds) {
 }
 
 module.exports = {
-  getServers, getServer, addServer, updateServer, deleteServer,
+  getServers, getServer, addServer, updateServer, deleteServer, validPort,
   getActiveServerId, setActiveServerId,
   getSettings, updateSettings, reorderServers,
   getRoutes, setRoutes,

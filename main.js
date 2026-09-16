@@ -399,22 +399,31 @@ ipcMain.handle('get-app-info', () => ({
 function appLaunchPath() { return platform.autostart.launchPath(); }
 // 舊名字（productName 改名前）留下的登入項目也算數 —— 否則設定頁顯示「關」，
 // OS 每次登入卻照樣去啟動舊的那顆，而且使用者從這個開關永遠關不掉。
-const legacyLoginItems = () => (platform.autostart.listLegacy ? platform.autostart.listLegacy() : []);
+// 查舊登入項目要跑一次 PowerShell（冷啟動約 300ms）。同步做的話主行程就凍住
+// 那麼久，而 renderer 一開機就會問「開機自動啟動」開著沒有 —— 等於每次啟動
+// 都固定卡一下。一律走非同步版，沒有非同步版才退回同步的。
+const legacyLoginItems = () => (platform.autostart.listLegacyAsync
+  ? platform.autostart.listLegacyAsync()
+  : Promise.resolve(platform.autostart.listLegacy ? platform.autostart.listLegacy() : []));
+const clearLegacyLoginItems = (names) => (platform.autostart.clearLegacyAsync
+  ? platform.autostart.clearLegacyAsync(names)
+  : Promise.resolve(platform.autostart.clearLegacy ? platform.autostart.clearLegacy(names) : 0));
 
-ipcMain.handle('get-login-item', () => {
+ipcMain.handle('get-login-item', async () => {
   try {
     if (!platform.autostart.usesElectronLoginItem) return platform.autostart.get();
-    return app.getLoginItemSettings({ path: appLaunchPath() }).openAtLogin || legacyLoginItems().length > 0;
+    if (app.getLoginItemSettings({ path: appLaunchPath() }).openAtLogin) return true;
+    return (await legacyLoginItems()).length > 0;
   } catch (e) { return false; }
 });
-ipcMain.handle('set-login-item', (_e, enable) => {
+ipcMain.handle('set-login-item', async (_e, enable) => {
   try {
     // Electron 的 setLoginItemSettings 在 Linux 沒有實作 → adapter 自己寫 XDG autostart .desktop
     if (!platform.autostart.usesElectronLoginItem) return platform.autostart.set(!!enable);
     app.setLoginItemSettings({ openAtLogin: !!enable, path: appLaunchPath(), args: [] });
     // 開或關都把舊名字那一筆收掉：開的時候避免同時存在兩筆（會開兩個實例），
     // 關的時候使用者要的就是「別再自動啟動」，不能只關掉新的那一筆。
-    if (platform.autostart.clearLegacy) platform.autostart.clearLegacy();
+    await clearLegacyLoginItems();
     return { ok: true, enabled: !!enable };
   } catch (e) { addLog('error', 'system', `set-login-item failed: ${e.message}`); return { ok: false, error: e.message }; }
 });
@@ -422,15 +431,17 @@ ipcMain.handle('set-login-item', (_e, enable) => {
 // 啟動時清掉「指向已不存在的檔案」的舊登入項目。那種一定是垃圾（檔案都沒了，
 // 開機時 OS 也只會安靜地失敗），收掉不會動到任何還有用的設定。
 // 還指得到檔案的就留著 —— 那代表使用者真的有設過，交給上面的開關處理。
-function sweepDeadLegacyLoginItems() {
+// 非同步，而且不擋啟動：這件事一年也用不到一次，沒有理由讓它排在
+// 「使用者看到視窗」前面。原本是同步跑 PowerShell，等於每次啟動固定多 300ms。
+async function sweepDeadLegacyLoginItems() {
   try {
-    if (!platform.autostart.clearLegacy) return;
-    const dead = legacyLoginItems().filter(it => {
+    if (!platform.autostart.entryTarget) return;
+    const dead = (await legacyLoginItems()).filter(it => {
       const target = platform.autostart.entryTarget(it.data);
       return target && !fs.existsSync(target);   // 解析不出路徑就不動它
     });
     if (!dead.length) return;
-    platform.autostart.clearLegacy(dead.map(d => d.name));
+    await clearLegacyLoginItems(dead.map(d => d.name));
     addLog('info', 'system', `清掉 ${dead.length} 筆失效的舊開機啟動項目（指向已刪除的檔案）`);
   } catch (e) { /* 清不掉不影響啟動 */ }
 }
@@ -470,6 +481,10 @@ ipcMain.handle('quit-and-install', () => { try { ensureAutoUpdater().quitAndInst
 // 啟動時靜默檢查（僅安裝版；失敗不擾民）
 function checkUpdatesOnStartup() {
   if (!app.isPackaged) return;
+  // 沒有 app-update.yml 就代表這不是安裝版（--dir 打包出來的、或可攜版解壓後）。
+  // 少了這個判斷，每次啟動都會在紀錄裡留一則紅色的 ENOENT —— 看起來像壞了，
+  // 其實只是「這種包本來就不支援自動更新」。
+  try { if (!fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))) return; } catch (e) { return; }
   setTimeout(() => { try { ensureAutoUpdater().checkForUpdates().catch(() => {}); } catch (e) {} }, 4000);
 }
 
@@ -889,7 +904,8 @@ ipcMain.handle('save-split', async (_e, patch) => {
   if (engine && engine.state === 'running') { await engine.stop(); await ensureSplitRoutesStarted(); await engine.start(engineParams()); sendEngineStatus(); } // 立即套用（先帶起規則要用的路由）
   return s;
 });
-ipcMain.handle('list-processes', () => platform.listProcesses());
+// 列舉行程要跑 PowerShell（實測 448ms）。同步做的話整個 app 會凍住那麼久。
+ipcMain.handle('list-processes', () => (platform.listProcessesAsync ? platform.listProcessesAsync() : platform.listProcesses()));
 ipcMain.handle('browse-exe', async () => {
   const r = await dialog.showOpenDialog(mainWindow, { title: '選擇程式', filters: platform.exeFilters, properties: ['openFile'] });
   if (r.canceled || !r.filePaths[0]) return null;
@@ -1153,18 +1169,29 @@ if (process.argv.includes('--quit')) {
   });
 }
 
+// 主行程的開機時間點。跟 renderer 那組（window.__boot）配起來看，才分得出
+// 「首屏慢」是 renderer 自己慢，還是主行程忙著別的、IPC 排不進去。
+const mainMarks = { t0: Date.now() };
+const mainMark = (k) => { mainMarks[k] = Date.now() - mainMarks.t0; };
+ipcMain.handle('perf-marks', () => mainMarks);
+
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
+  mainMark('ready');
   initFileLog();
+  mainMark('fileLog');
   createWindow();
+  mainMark('window');
   createTray();
+  mainMark('tray');
 
   const settings = config.getSettings();
+  mainMark('settings');
 
   // 啟動 config 中定義的多端口路由（各自綁定 proxy/串鏈）
   // 受「啟動時自動套用路由」開關控制（settings.autoStartRoutes，預設開）
   if (settings.autoStartRoutes !== false) {
-    applyRoutes().catch(err => addLog('error', 'route', err.message));
+    applyRoutes().then(() => mainMark('routesApplied')).catch(err => addLog('error', 'route', err.message));
   } else {
     setupRouteManager(); // 仍建立 route manager（只是不自動起路由），避免其他路徑存取 null
     addLog('info', 'route', '「啟動時自動套用路由」已關閉，略過自動啟動（可到「總覽」手動啟用）');
@@ -1176,11 +1203,13 @@ app.whenReady().then(async () => {
   }
 
   watchQuitSentinel();         // 結束請求的備援通道（提權時 UIPI 擋掉視窗訊息，只剩這條）
-  sweepDeadLegacyLoginItems(); // 收掉改名前留下、且檔案已不存在的登入項目
+  // 這兩件事都不急，也都會 spawn 子行程 —— 排在視窗畫出來之後，不要擋啟動
+  setTimeout(() => { sweepDeadLegacyLoginItems().catch(() => {}); }, 3000);
   checkUpdatesOnStartup(); // 啟動後靜默檢查更新（僅安裝版）
   sweepStaleUpdateCache();  // 更新裝完之後 pending 會留著上百 MB 的安裝檔
   // 規則庫自動更新（預設關閉；開啟時才連網，延後執行避免拖慢啟動）
   setTimeout(() => maybeAutoUpdateRuleSets().catch(err => addLog('warn', 'ruleset', err.message)), 8000);
+  mainMark('readyDone');
 });
 
 // 顯示主視窗：若視窗已被銷毀（minimizeToTray 關閉時關窗會銷毀它）就重建，避免 show() 一個已銷毀物件而拋錯。

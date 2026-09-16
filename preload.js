@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // App 資訊 + 開機自動啟動（OS 登入項目）
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  perfMarks: () => ipcRenderer.invoke('perf-marks'),
   getLoginItem: () => ipcRenderer.invoke('get-login-item'),
   setLoginItem: (enable) => ipcRenderer.invoke('set-login-item', enable),
 

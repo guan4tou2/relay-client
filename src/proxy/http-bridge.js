@@ -3,6 +3,11 @@ const { EventEmitter } = require('events');
 const { URL } = require('url');
 const { connectViaProxy, connectViaChain, openSocketToProxy } = require('./connect');
 
+// 跟 SocksRelay 同一個理由：原本每個資料 chunk 都 emit 一次，
+// 那個事件在 app 裡會變成每個網路封包一次跨行程 IPC。
+// 累計值漏送幾次沒有資訊損失，使用者看的是「現在多少」。
+const STATS_INTERVAL_MS = 250;
+
 class HttpBridge extends EventEmitter {
   constructor() {
     super();
@@ -11,6 +16,28 @@ class HttpBridge extends EventEmitter {
     this.bytesUp = 0;
     this.bytesDown = 0;
     this.activeSockets = new Set();
+    this._statsTimer = null;
+    this._statsDirty = false;
+  }
+
+  // 資料流量：最多每 STATS_INTERVAL_MS 送一次
+  _touchStats() {
+    this._statsDirty = true;
+    if (this._statsTimer) return;
+    this._statsTimer = setTimeout(() => {
+      this._statsTimer = null;
+      if (!this._statsDirty) return;
+      this._statsDirty = false;
+      this.emit('stats', this._getStats());
+    }, STATS_INTERVAL_MS);
+    if (this._statsTimer.unref) this._statsTimer.unref();
+  }
+
+  // 連線數變化要馬上反映，不然按下去要等 250ms 才看到
+  _flushStats() {
+    this._statsDirty = false;
+    if (this._statsTimer) { clearTimeout(this._statsTimer); this._statsTimer = null; }
+    this.emit('stats', this._getStats());
   }
 
   start(localPort, upstream) {
@@ -38,7 +65,7 @@ class HttpBridge extends EventEmitter {
 
   async _handleConnect(req, clientSocket, head) {
     this.connections++;
-    this.emit('stats', this._getStats());
+    this._flushStats();
     // 提早掛 error handler：await 上游期間 client 若中斷、或稍後對已關閉 socket 寫入，
     // 都不會變成未處理的 'error' 事件把整個行程帶崩。
     clientSocket.on('error', () => {});
@@ -61,11 +88,11 @@ class HttpBridge extends EventEmitter {
 
       remoteSocket.on('data', chunk => {
         this.bytesDown += chunk.length;
-        this.emit('stats', this._getStats());
+        this._touchStats();
       });
       clientSocket.on('data', chunk => {
         this.bytesUp += chunk.length;
-        this.emit('stats', this._getStats());
+        this._touchStats();
       });
 
       this.activeSockets.add(clientSocket);
@@ -81,7 +108,7 @@ class HttpBridge extends EventEmitter {
         this.connections = Math.max(0, this.connections - 1); // 計數永不為負（防重複遞減顯示 -1）
         this.activeSockets.delete(clientSocket);
         this.activeSockets.delete(remoteSocket);
-        this.emit('stats', this._getStats());
+        this._flushStats();
         clientSocket.destroy();
         remoteSocket.destroy();
       };
@@ -93,7 +120,7 @@ class HttpBridge extends EventEmitter {
 
     } catch (err) {
       this.connections = Math.max(0, this.connections - 1); // 計數永不為負（防重複遞減顯示 -1）
-      this.emit('stats', this._getStats());
+      this._flushStats();
       this.emit('log', 'error', `CONNECT FAILED ${req.url} — ${err.message}`);
       if (!clientSocket.destroyed) clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
       clientSocket.destroy();
@@ -102,7 +129,12 @@ class HttpBridge extends EventEmitter {
 
   async _handleHttp(req, res) {
     this.connections++;
-    this.emit('stats', this._getStats());
+    this._flushStats();
+
+    // 跟 _handleConnect 同一個理由：下面要 await 上游，那期間客戶端斷線的話
+    // 這兩個還沒有 error 監聽，會被升成 uncaughtException。
+    req.on('error', () => {});
+    if (res.socket) res.socket.on('error', () => {});
 
     let remoteSocket = null; // 提到 try 外，讓 catch 也能收掉上游 socket（否則洩漏）
     try {
@@ -162,7 +194,7 @@ class HttpBridge extends EventEmitter {
 
       remoteSocket.on('data', chunk => {
         this.bytesDown += chunk.length;
-        this.emit('stats', this._getStats());
+        this._touchStats();
       });
 
       this.activeSockets.add(remoteSocket);
@@ -177,7 +209,7 @@ class HttpBridge extends EventEmitter {
         this.connections = Math.max(0, this.connections - 1); // 計數永不為負（防重複遞減顯示 -1）
         this.activeSockets.delete(remoteSocket);
         if (res.socket) this.activeSockets.delete(res.socket);
-        this.emit('stats', this._getStats());
+        this._flushStats();
         remoteSocket.destroy();
         if (res.socket && !res.socket.destroyed) res.socket.destroy(); // 連同 client 側一起收，避免半開洩漏
       };
@@ -188,7 +220,7 @@ class HttpBridge extends EventEmitter {
 
     } catch (err) {
       this.connections = Math.max(0, this.connections - 1); // 計數永不為負（防重複遞減顯示 -1）
-      this.emit('stats', this._getStats());
+      this._flushStats();
       this.emit('log', 'error', `HTTP FAILED ${req.url} — ${err.message}`);
       if (remoteSocket) remoteSocket.destroy(); // 避免上游 socket 洩漏
       try { res.writeHead(502); res.end('Bad Gateway'); } catch (e) {}
@@ -204,6 +236,7 @@ class HttpBridge extends EventEmitter {
   }
 
   stop() {
+    if (this._statsTimer) { clearTimeout(this._statsTimer); this._statsTimer = null; }
     for (const socket of this.activeSockets) {
       socket.destroy();
     }

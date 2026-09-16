@@ -167,8 +167,9 @@ function mount() {
   buildSettings();
   buildSplit();
 
-  // 讀取實際 OS 開機自啟狀態，反映到設定頁開關
-  window.api.getLoginItem().then(v => { state.bootLaunch = !!v; refreshSettings(); }).catch(() => {});
+  // 「開機自動啟動」現在的狀態要問 OS，而那在 Windows 上得跑一次 PowerShell。
+  // 在 mount() 裡直接問會讓它跟首屏需要的那幾個 IPC 擠在一起 —— 實測首屏因此
+  // 被推遲一秒多。這個值只有設定頁看得到，等首屏畫完再問就好。
   window.api.getAppInfo().then(i => { const el = document.getElementById('aboutVer'); if (el && i && i.version) el.textContent = i.version; }).catch(() => {});
 
   $('btnTheme').onclick = () => setTheme(state.theme === 'dark' ? '淺色' : '深色');
@@ -1465,6 +1466,13 @@ async function saveSrvSheet() {
   const host = F.host.trim();
   const port = parseInt(F.port) || PROTO[state.proto].port;
   if (!host) { flash('請輸入主機位址', 'var(--amber)'); return; }
+  // 沒有這道檢查的話，打錯的埠會一路走到 net.connect，使用者看到的是 Node
+  // 丟出來的原文「Port should be >= 0 and < 65536. Received type number (…)」，
+  // 而且伺服器已經存進去了 —— 之後每次連線都失敗，卻看不出是哪裡不對。
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    flash('連接埠要介於 1 到 65535', 'var(--amber)');
+    return;
+  }
   const name = F.name.trim();
   const user = state.authOpen ? F.user.trim() : '';
   const pass = state.authOpen ? F.pass : '';
@@ -2044,28 +2052,75 @@ function reconcileStatus(list) {
 // =====================================================================================
 // 開機
 // =====================================================================================
+// 開機各段的時間點。留著不是為了好玩：啟動慢起來的時候，沒有這個就只能猜
+// 「是 renderer 慢還是主行程慢」。只寫幾個數字，成本可以忽略。
+const bootMarks = (window.__boot = {});
+const mark = (k) => { bootMarks[k] = Math.round(performance.now()); };
+
 async function boot() {
+  mark('start');
   setTheme(localStorage.getItem('proxy_theme') || '系統');
   mount();
+  mark('mounted');
 
-  try { const s = await window.api.getSettings(); if (s) state.settings = { ...state.settings, ...s }; } catch {}
-  try { state.servers = await window.api.getServers(); } catch {}
-  try { state.routes = await window.api.getRoutes(); } catch {}
-  try {
-    const st = await window.api.getRouteStatus();
-    (st || []).forEach(r => { if (r.running) setSes(r.id, { status: 'running', prog: 1, startTs: Date.now(), series: [], upT: 0, downT: 0, conns: 0, uptime: 0, _pu: 0, _pd: 0 }); });
-  } catch {}
+  // 這些 IPC 彼此不相干，一個一個 await 的話延遲是相加的 —— 原本九個排隊，
+  // 而且要全部回來才畫第一個畫面。分兩批：畫面需要的先併發拿，其餘的後補。
+  const settle = (p, fallback) => p.then(v => v, () => fallback);
+  const timed = (name, p, fallback) => {
+    const t = performance.now();
+    return p.then(v => v, () => fallback).then(v => { bootMarks['ipc_' + name] = Math.round(performance.now() - t); return v; });
+  };
+
+  mark('coreStart');
+  // 判斷「等 IPC 的那段時間」是誰被卡住：這個 50ms 的計時器若準時觸發，
+  // renderer 的執行緒是空的（問題在主行程那邊）；若延到跟 IPC 一樣晚，就是 renderer 自己忙。
+  const tickT0 = performance.now();
+  setTimeout(() => { bootMarks.tick50 = Math.round(performance.now() - tickT0); }, 50);
+  const [s, servers, routes, routeStatus] = await Promise.all([
+    timed('settings', window.api.getSettings(), null),
+    timed('servers', window.api.getServers(), []),
+    timed('routes', window.api.getRoutes(), []),
+    timed('routeStatus', window.api.getRouteStatus(), []),
+  ]);
+  if (s) state.settings = { ...state.settings, ...s };
+  state.servers = servers || [];
+  state.routes = routes || [];
+  (routeStatus || []).forEach(r => { if (r.running) setSes(r.id, { status: 'running', prog: 1, startTs: Date.now(), series: [], upT: 0, downT: 0, conns: 0, uptime: 0, _pu: 0, _pd: 0 }); });
   if (!state.sel && state.routes[0]) state.sel = state.routes[0].id;
-  try { const logs = await window.api.getLogs(); state.logs = (logs || []).map(l => ({ ...l, id: ++logSeq })); } catch {}
-  try { const sp = await window.api.getSplit(); if (sp) { if (Array.isArray(sp.rules)) state.splitRules = sp.rules; if (sp.defaultTarget != null) state.splitDefaultTarget = sp.defaultTarget; if (typeof sp.udp === 'boolean') state.splitUdp = sp.udp; } } catch {}
-  try { const est = await window.api.getEngineStatus(); if (est) applyEngineStatus(est); } catch {}
-  try { state.browser = await window.api.browserInfo(); } catch {}
-  try { state.instances = (await window.api.listInstances()) || []; } catch {}
+  mark('coreLoaded');
 
+  // 畫面先出來。下面那批（紀錄、分流規則、引擎狀態、瀏覽器、實例）都不是
+  // 首屏需要的東西，讓它們在背景補，不要讓使用者多盯著空白視窗。
   renderSidebar();
   showTab('dashboard');
   refreshSettings();
   syncTitlebar();
+  mark('firstPaint');
+
+  Promise.all([
+    settle(window.api.getLogs(), []),
+    settle(window.api.getSplit(), null),
+    settle(window.api.getEngineStatus(), null),
+    settle(window.api.browserInfo(), null),
+    settle(window.api.listInstances(), []),
+  ]).then(([logs, sp, est, browser, instances]) => {
+    state.logs = (logs || []).map(l => ({ ...l, id: ++logSeq }));
+    if (sp) {
+      if (Array.isArray(sp.rules)) state.splitRules = sp.rules;
+      if (sp.defaultTarget != null) state.splitDefaultTarget = sp.defaultTarget;
+      if (typeof sp.udp === 'boolean') state.splitUdp = sp.udp;
+    }
+    if (est) applyEngineStatus(est);
+    state.browser = browser || null;
+    state.instances = instances || [];
+    // 這個要跑 PowerShell，排在最後面，只有設定頁用得到
+    window.api.getLoginItem().then(v => { state.bootLaunch = !!v; refreshSettings(); }).catch(() => {});
+    // 補到的資料要反映到「已經畫出來的」那一頁上
+    renderSidebar();
+    showTab(state.tab);
+    refreshSettings();
+    mark('restLoaded');
+  });
 
   window.api.onLogEntry(entry => {
     state.logs = [...state.logs, { ...entry, id: ++logSeq }].slice(-300);

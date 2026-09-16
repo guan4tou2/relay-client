@@ -34,9 +34,15 @@ function liveMainInstances() {
   } catch (e) { return 1; }
 }
 
+// 提權與否在一個行程的生命週期裡不會變（要變就是重啟成另一個行程），
+// 所以只問一次。原本每次呼叫都 spawn 一個 net.exe —— 而 engine.status()
+// 每次都會問，實測一次來回 66ms，使用者查一次引擎狀態就卡 66ms。
+let _elevated = null;
 function isElevated() {
-  try { execSync('net session', { stdio: 'ignore', windowsHide: true }); return true; }
-  catch (e) { return false; }
+  if (_elevated !== null) return _elevated;
+  try { execSync('net session', { stdio: 'ignore', windowsHide: true }); _elevated = true; }
+  catch (e) { _elevated = false; }
+  return _elevated;
 }
 
 // Windows 的做法是「整個 app 以系統管理員重啟」（UAC），因為 TUN 與路由表都需要提權。
@@ -101,6 +107,16 @@ function listProcesses() {
     const out = execSync(`${c.cmd} ${c.args.map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`,
       { windowsHide: true, maxBuffer: 32 * 1024 * 1024 }).toString();
     return parseProcessList(out);
+  } catch (e) { return []; }
+}
+
+// 非同步版。列舉行程要跑 PowerShell，實測一次 448ms——同步做的話
+// 整個 app（主行程）會凍住那麼久，使用者按一下「選擇程式」就是一次卡頓。
+async function listProcessesAsync() {
+  try {
+    const c = listProcessesCommand();
+    const { stdout } = await execFileP(c.cmd, c.args, { windowsHide: true, maxBuffer: 32 * 1024 * 1024, timeout: 20000 });
+    return parseProcessList(stdout);
   } catch (e) { return []; }
 }
 
@@ -225,9 +241,15 @@ const PS_RUN = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const psLit = (s) => "'" + String(s).replace(/'/g, "''") + "'";
 const encodeCmd = (script) => Buffer.from(script, 'utf16le').toString('base64');
 
+const PS_ARGS = (script) => ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodeCmd(script)];
 function runPs(script) {
-  return execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodeCmd(script)],
-    { encoding: 'ascii', windowsHide: true, timeout: 10000 });
+  return execFileSync('powershell', PS_ARGS(script), { encoding: 'ascii', windowsHide: true, timeout: 10000 });
+}
+// 非同步版。PowerShell 冷啟動一次大約 300ms，同步做就是主行程凍住 300ms ——
+// 而這條路在每次啟動都會走到（renderer 一開機就問「開機自動啟動」開著沒有）。
+async function runPsAsync(script) {
+  const { stdout } = await execFileP('powershell', PS_ARGS(script), { encoding: 'ascii', windowsHide: true, timeout: 10000 });
+  return stdout;
 }
 
 // 回 base64(UTF-8 JSON)，不是明碼
@@ -237,9 +259,9 @@ $j = ConvertTo-Json -InputObject ${expr} -Compress
 [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$j))`;
 }
 
-function legacyLoginItems() {
+function legacyQueryScript() {
   const names = LEGACY_LOGIN_ITEM_NAMES.map(psLit).join(',');
-  const script = `$ErrorActionPreference = 'SilentlyContinue'
+  return `$ErrorActionPreference = 'SilentlyContinue'
 $p = Get-ItemProperty -Path ${psLit(PS_RUN)}
 $out = @()
 foreach ($n in @(${names})) {
@@ -248,25 +270,47 @@ foreach ($n in @(${names})) {
   }
 }
 ${psEmitJson('@($out)')}`;
+}
+
+function parseLegacy(out) {
   try {
-    const b64 = String(runPs(script)).trim();
+    const b64 = String(out || '').trim();
     if (!b64) return [];
     const arr = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
     return Array.isArray(arr) ? arr : [arr];
   } catch (e) { return []; }
 }
 
+function legacyLoginItems() {
+  try { return parseLegacy(runPs(legacyQueryScript())); } catch (e) { return []; }
+}
+async function legacyLoginItemsAsync() {
+  try { return parseLegacy(await runPsAsync(legacyQueryScript())); } catch (e) { return []; }
+}
+
 // names 省略時清掉全部；給了就只清那幾筆（啟動時只收「指向已刪除檔案」的那種）。
-function clearLegacyLoginItems(names) {
+const removeScript = (names) => names
+  .map(n => `Remove-ItemProperty -Path ${psLit(PS_RUN)} -Name ${psLit(n)} -Force -ErrorAction SilentlyContinue`)
+  .join('\n');
+const targetsOf = (items, names) => {
   const want = Array.isArray(names) ? new Set(names) : null;
-  const targets = legacyLoginItems().filter(it => !want || want.has(it.name)).map(it => it.name);
+  return items.filter(it => !want || want.has(it.name)).map(it => it.name);
+};
+
+function clearLegacyLoginItems(names) {
+  const targets = targetsOf(legacyLoginItems(), names);
   if (!targets.length) return 0;
-  const script = targets
-    .map(n => `Remove-ItemProperty -Path ${psLit(PS_RUN)} -Name ${psLit(n)} -Force -ErrorAction SilentlyContinue`)
-    .join('\n');
-  try { runPs(script); } catch (e) { return 0; } // 刪不掉就算了，不值得為它中斷啟動
+  try { runPs(removeScript(targets)); } catch (e) { return 0; } // 刪不掉就算了，不值得為它中斷啟動
   // 不信回傳值：-ErrorAction SilentlyContinue 會把失敗吞掉，離開碼照樣是 0。重讀確認。
   const left = new Set(legacyLoginItems().map(it => it.name));
+  return targets.filter(n => !left.has(n)).length;
+}
+
+async function clearLegacyLoginItemsAsync(names) {
+  const targets = targetsOf(await legacyLoginItemsAsync(), names);
+  if (!targets.length) return 0;
+  try { await runPsAsync(removeScript(targets)); } catch (e) { return 0; }
+  const left = new Set((await legacyLoginItemsAsync()).map(it => it.name));
   return targets.filter(n => !left.has(n)).length;
 }
 
@@ -283,6 +327,9 @@ const autostart = {
   legacyNames: LEGACY_LOGIN_ITEM_NAMES,
   listLegacy: legacyLoginItems,
   clearLegacy: clearLegacyLoginItems,
+  // 非同步版：啟動路徑與 IPC 用這個，別讓 PowerShell 的冷啟動卡住主行程
+  listLegacyAsync: legacyLoginItemsAsync,
+  clearLegacyAsync: clearLegacyLoginItemsAsync,
   entryTarget: runEntryTarget,
 };
 
@@ -305,6 +352,6 @@ module.exports = {
   engineBinName, tunInterfaceName, selfProcessNames, isElevated, engineElevation,
   staleEngineCleanupCommand, killTree,
   path,   // 讓共用模組跟這個 adapter 用同一種路徑語意（不看執行主機）
-  exeFilters, listProcesses, listProcessesCommand, parseProcessList, normalizeApp, appNameEquals,
+  exeFilters, listProcesses, listProcessesAsync, listProcessesCommand, parseProcessList, normalizeApp, appNameEquals,
   systemProxy, autostart, browserCandidates, systemDnsServers, liveMainInstances,
 };

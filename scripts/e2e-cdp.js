@@ -89,6 +89,17 @@ class CDP {
     if (!box2.vis) throw new Error('元素捲不進畫面，點不到 ' + sel);
     await this.click(box2.x, box2.y);
   }
+  // 先清空再打字。欄位本來就有預設值（例如埠預設 1080），直接 type 是「接在後面」——
+  // 結果存進去的是 10801080 這種東西。以前 app 不驗埠所以看不出來，
+  // 只有在紀錄裡留下一句 net.connect 的原文錯誤。
+  async fill(sel, text) {
+    await this.clickSel(sel);
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', modifiers: 2, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 });
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers: 2, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 });
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 });
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 });
+    await this.type(text);
+  }
   async type(text) {
     for (const ch of text) {
       await this.send('Input.dispatchKeyEvent', { type: 'keyDown', text: ch });
@@ -152,9 +163,9 @@ async function T(name, fn) {
   });
 
   await T('填表並儲存 → 真的寫進後端', async () => {
-    await c.clickSel('#fName'); await c.type('CDP 測試伺服器');
-    await c.clickSel('#fHost'); await c.type('203.0.113.55');
-    await c.clickSel('#fPort'); await c.type('1080');
+    await c.fill('#fName', 'CDP 測試伺服器');
+    await c.fill('#fHost', '203.0.113.55');
+    await c.fill('#fPort', '1080');
     await c.shot('02-server-sheet');
     await c.clickSel('#ssSave');
     await new Promise(r => setTimeout(r, 900));
@@ -175,7 +186,7 @@ async function T(name, fn) {
   await T('點「新增路由」→ 填 → 存', async () => {
     await c.clickSel('#guideAdd');
     await new Promise(r => setTimeout(r, 400));
-    await c.clickSel('#rdLabel'); await c.type('CDP 路由');
+    await c.fill('#rdLabel', 'CDP 路由');
     // 路由至少要一個跳點，先點「加入跳點」選剛建的伺服器
     await c.clickSel('#rdHopMenu');
     await new Promise(r => setTimeout(r, 400));
@@ -220,7 +231,7 @@ async function T(name, fn) {
   await T('新增規則 → 真的存進後端', async () => {
     await c.clickSel('#btnAdd');
     await new Promise(r => setTimeout(r, 500));
-    await c.clickSel('#spDestValue'); await c.type('example.com');
+    await c.fill('#spDestValue', 'example.com');
     await c.shot('06-rule-sheet');
     await c.clickSel('#spSheetSave');
     await new Promise(r => setTimeout(r, 900));
@@ -235,7 +246,7 @@ async function T(name, fn) {
 
   await T('真模擬器：對真後端跑 ruleMatch', async () => {
     await c.clickSel('#spSimToggle');
-    await c.clickSel('#spSimHost'); await c.type('www.example.com');
+    await c.fill('#spSimHost', 'www.example.com');
     await c.clickSel('#spSimRun');
     await new Promise(r => setTimeout(r, 1200));
     const t = await c.eval(`document.getElementById('spSimResult').textContent`);
