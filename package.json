@@ -1,7 +1,7 @@
 {
   "name": "socks5-client",
   "productName": "RelayClient",
-  "version": "1.3.5",
+  "version": "1.3.6",
   "description": "Windows 圖形化 proxychains：串接 SOCKS/HTTP 代理、指定程式走代理、斷線保護（SOCKS5 / SOCKS4 / HTTP / HTTPS）",
   "main": "main.js",
   "author": {
