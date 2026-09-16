@@ -74,8 +74,20 @@ function clearStaleUpdateCache(cacheDir, currentVersion) {
     const pending = path.join(cacheDir, 'pending');
     const info = path.join(pending, 'update-info.json');
     if (!fs.existsSync(info)) {
-      // 連「有沒有待安裝的東西」都沒記錄 → 根目錄那兩個是孤兒，沒有對象了
-      if (fs.existsSync(cacheDir)) sweepRoot();
+      // 沒有 update-info.json：electron-updater 不知道有待安裝的東西，
+      // 那 pending 裡剩下的安裝檔就是孤兒。版本從檔名判斷（檔名裡有版號），
+      // 判不出來或比現在新就不動。
+      // 少了這一段，只要 update-info.json 先一步被清掉，那支七十幾 MB 的
+      // 安裝檔就永遠留在磁碟上 —— 實際發生過。
+      try {
+        for (const f of fs.readdirSync(pending)) {
+          if (KEEP_IN_PENDING(f)) continue;
+          const v = versionFromFileName(f);
+          if (!v || !notNewerThan(v, currentVersion)) continue;
+          try { fs.unlinkSync(path.join(pending, f)); removed.push(f); } catch (e) {}
+        }
+      } catch (e) {}
+      sweepRoot();
       return removed;
     }
 

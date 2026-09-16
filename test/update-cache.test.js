@@ -178,3 +178,33 @@ describe('沒有待安裝資訊時：根目錄一樣不碰', () => {
     expect(fs.readdirSync(dir).sort()).toEqual(['installer.exe', '別人的東西.dat'].sort());
   });
 });
+
+// update-info.json 先一步被清掉的話，pending 裡那支七十幾 MB 的安裝檔
+// 就沒有東西指向它了。版本從檔名看得出來，該收就收。實際發生過。
+describe('update-info.json 不在，但 pending 還有安裝檔', () => {
+  test('檔名版本不比現在新 → 收掉', () => {
+    const dir = path.join(tmp, 'cache');
+    fs.mkdirSync(path.join(dir, 'pending'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pending', 'RelayClient-Setup-1.3.7.exe'), 'x');
+    fs.writeFileSync(path.join(dir, 'pending', 'current.blockmap'), 'x');
+    fs.writeFileSync(path.join(dir, 'installer.exe'), 'x');
+    const removed = clearStaleUpdateCache(dir, '1.3.7');
+    expect(removed).toEqual(['RelayClient-Setup-1.3.7.exe']);
+    expect(fs.readdirSync(path.join(dir, 'pending'))).toEqual(['current.blockmap']);
+    expect(fs.existsSync(path.join(dir, 'installer.exe'))).toBe(true);   // 差分的基底照樣留著
+  });
+
+  test('檔名版本比較新 → 不動（那可能是還沒裝的更新）', () => {
+    const dir = path.join(tmp, 'cache');
+    fs.mkdirSync(path.join(dir, 'pending'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pending', 'RelayClient-Setup-1.4.0.exe'), 'x');
+    expect(clearStaleUpdateCache(dir, '1.3.7')).toEqual([]);
+  });
+
+  test('檔名看不出版本 → 不動', () => {
+    const dir = path.join(tmp, 'cache');
+    fs.mkdirSync(path.join(dir, 'pending'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pending', 'something.exe'), 'x');
+    expect(clearStaleUpdateCache(dir, '1.3.7')).toEqual([]);
+  });
+});
