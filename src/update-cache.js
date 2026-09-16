@@ -39,10 +39,17 @@ function notNewerThan(a, b) {
   return true;   // 完全相同 → 已經裝上去了
 }
 
-// 快取根目錄那兩個：installer.exe 是 electron-updater 執行安裝前搬過去的複本
-// （跟 pending 裡那支一樣大，各一百多 MB），current.blockmap 是差分下載用的。
-// 裝完之後兩個都是死的。只認這兩個名字，其他一律不碰。
-const ROOT_LEFTOVERS = ['installer.exe', 'current.blockmap'];
+// 快取根目錄要收的只有 installer.exe —— 那是 electron-updater 執行安裝前搬過去的
+// 複本，跟 pending 裡那支一樣大（各一百多 MB），裝完就是死的。
+//
+// current.blockmap 千萬不能刪，即使它看起來也像殘留：那是「目前已安裝這一版」的
+// 區塊指紋，下次更新時 electron-updater 拿它跟新版的 blockmap 比對，只下載變動的
+// 區塊。刪掉的代價是下一次更新從差分變成整包重抓一百多 MB，而它自己只有 0.1 MB。
+// （v1.3.5 就是這樣把差分更新弄壞的，升級 1.3.4 → 1.3.5 整整抓了 103 MB。）
+const ROOT_LEFTOVERS = ['installer.exe'];
+
+// pending 裡的 .blockmap 同理：留著不花什麼空間，刪掉會讓下次更新退回整包下載。
+const KEEP_IN_PENDING = (f) => /\.blockmap$/i.test(f);
 
 // 待安裝的那份「不比現在新」就清掉。回傳刪掉的檔名。
 // 任何一步判斷不出來都選擇不動手 —— 這裡刪的是別的模組管的檔案。
@@ -71,6 +78,7 @@ function clearStaleUpdateCache(cacheDir, currentVersion) {
     if (!notNewerThan(pendingVersion, currentVersion)) return removed;  // 比現在新 → 是還沒裝的更新，留著
 
     for (const f of fs.readdirSync(pending)) {
+      if (KEEP_IN_PENDING(f)) continue;
       try { fs.unlinkSync(path.join(pending, f)); removed.push(f); } catch (e) {}
     }
     sweepRoot();

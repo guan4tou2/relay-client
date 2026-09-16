@@ -51,15 +51,24 @@ jobs:
           $name = "sing-box-$v-windows-amd64"
           $url = "https://github.com/SagerNet/sing-box/releases/download/v$v/$name.zip"
           Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile sb.zip
-          Expand-Archive -Path sb.zip -DestinationPath sb -Force
+          # 下載與解壓一律放 runner 的暫存目錄，不要落在專案裡。
+          # 之前是解在專案根目錄（sb.zip + sb/），而 electron-builder 的 files
+          # 是 "**/*" 起頭 —— 那份 zip 跟解開的整棵樹就一起被打包進 app.asar，
+          # 等於同一個引擎被塞了三份。實測 app.asar 因此從 2.8MB 變成 51.5MB，
+          # 安裝檔多了 22MB（103.4MB vs 81.1MB）。
+          $work = Join-Path $env:RUNNER_TEMP 'singbox'
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          $zip = Join-Path $work 'sb.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $work -Force
           New-Item -ItemType Directory -Force -Path engine | Out-Null
-          Copy-Item "sb/$name/sing-box.exe" "engine/sing-box.exe" -Force
+          Copy-Item (Join-Path $work "$name/sing-box.exe") "engine/sing-box.exe" -Force
           & "engine/sing-box.exe" version
           # sanity: the app uses stack "gvisor" — verify this binary accepts it
           $cfg = '{"log":{"level":"warn"},"inbounds":[{"type":"tun","tag":"t","interface_name":"proxyclient-tun","address":["172.19.0.1/30"],"mtu":9000,"auto_route":true,"strict_route":false,"stack":"gvisor"}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct","auto_detect_interface":true}}'
-          Set-Content -Path sbcheck.json -Value $cfg -Encoding ascii
-          & "engine/sing-box.exe" check -c sbcheck.json
+          $chk = Join-Path $work 'sbcheck.json'
+          Set-Content -Path $chk -Value $cfg -Encoding ascii
+          & "engine/sing-box.exe" check -c $chk
           if ($LASTEXITCODE -ne 0) { throw "sing-box gVisor TUN config check failed — engine incompatible" }
 
       - name: Build (tag 才發佈；其餘只打包成 artifact)
@@ -120,17 +129,21 @@ jobs:
           set -euo pipefail
           v="${{ env.SING_BOX_VERSION }}"
           name="sing-box-$v-linux-amd64"
-          curl -fsSL -o sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v$v/$name.tar.gz"
-          tar -xzf sb.tar.gz
-          mkdir -p engine
-          cp "$name/sing-box" engine/sing-box
+          # 下載與解壓一律放 runner 的暫存目錄，不要落在專案裡 ——
+          # electron-builder 的 files 是 "**/*" 起頭，留在專案裡的 tar.gz
+          # 跟解開的整棵樹都會被打包進去，等於同一個引擎塞了三份。
+          work="${RUNNER_TEMP:-/tmp}/singbox"
+          mkdir -p "$work" engine
+          curl -fsSL -o "$work/sb.tar.gz" "https://github.com/SagerNet/sing-box/releases/download/v$v/$name.tar.gz"
+          tar -xzf "$work/sb.tar.gz" -C "$work"
+          cp "$work/$name/sing-box" engine/sing-box
           chmod +x engine/sing-box
           engine/sing-box version
           # sanity：app 用 stack "gvisor"，確認這顆 binary 吃得下
-          cat > sbcheck.json <<'JSON'
+          cat > "$work/sbcheck.json" <<'JSON'
           {"log":{"level":"warn"},"inbounds":[{"type":"tun","tag":"t","interface_name":"proxyclient-tun","address":["172.19.0.1/30"],"mtu":9000,"auto_route":true,"strict_route":false,"stack":"gvisor"}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct","auto_detect_interface":true}}
           JSON
-          engine/sing-box check -c sbcheck.json
+          engine/sing-box check -c "$work/sbcheck.json"
 
       - name: Build (tag 才發佈；其餘只打包成 artifact)
         env:

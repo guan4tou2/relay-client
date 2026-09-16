@@ -84,8 +84,9 @@ describe('clearStaleUpdateCache', () => {
   test('待安裝的版本＝已安裝的版本 → 整個 pending 清掉', () => {
     const dir = makeCache('RelayClient-Setup-1.3.4.exe');
     const removed = clearStaleUpdateCache(dir, '1.3.4');
-    expect(removed.sort()).toEqual(['RelayClient-Setup-1.3.4.exe', 'current.blockmap', 'update-info.json'].sort());
-    expect(pendingFiles(dir)).toEqual([]);
+    expect(removed.sort()).toEqual(['RelayClient-Setup-1.3.4.exe', 'update-info.json'].sort());
+    // .blockmap 留著：那是下次差分更新的依據，只有 0.1 MB，刪掉要多抓一百多 MB
+    expect(pendingFiles(dir)).toEqual(['current.blockmap']);
   });
 
   test('待安裝的比已安裝的舊 → 也清（那是更早以前留下的）', () => {
@@ -126,7 +127,8 @@ describe('clearStaleUpdateCache', () => {
     fs.writeFileSync(path.join(dir, 'current.blockmap'), 'x');
     const removed = clearStaleUpdateCache(dir, '1.3.4');
     expect(removed).toContain('installer.exe');
-    expect(fs.readdirSync(dir).sort()).toEqual(['pending']);
+    expect(removed).not.toContain('current.blockmap');
+    expect(fs.readdirSync(dir).sort()).toEqual(['current.blockmap', 'pending']);
   });
 
   test('只刪自己認得的檔名，其他一律不碰', () => {
@@ -155,8 +157,8 @@ describe('沒有待安裝資訊時的根目錄殘留', () => {
     fs.writeFileSync(path.join(dir, 'installer.exe'), 'x');
     fs.writeFileSync(path.join(dir, 'current.blockmap'), 'x');
     const removed = clearStaleUpdateCache(dir, '1.3.4');
-    expect(removed.sort()).toEqual(['current.blockmap', 'installer.exe']);
-    expect(fs.readdirSync(dir)).toEqual(['pending']);
+    expect(removed).toEqual(['installer.exe']);
+    expect(fs.readdirSync(dir).sort()).toEqual(['current.blockmap', 'pending']);
   });
 
   test('快取目錄根本不存在 → 什麼都不做，也不建目錄', () => {
