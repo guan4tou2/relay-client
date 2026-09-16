@@ -9,6 +9,9 @@
 //
 //   dist\win-unpacked\RelayClient.exe --remote-debugging-port=9222 --user-data-dir=%TEMP%\bench
 //   CDP_PORT=9222 node scripts/bench-ipc.js [MB]
+//
+// 節流上線後實測（128 MB）：renderer 只收到 8 則 route-stats，每秒 5 則，
+// 吞吐量 75 MB/s。節流之前是「每個資料 chunk 一則」，同樣流量會是兩千則上下。
 
 const http = require('http');
 const net = require('net');
