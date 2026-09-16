@@ -119,28 +119,31 @@ describe('clearStaleUpdateCache', () => {
     expect(clearStaleUpdateCache(path.join(tmp, 'cache'), '')).toEqual([]);
   });
 
-  // 快取根目錄的 installer.exe 是 electron-updater 執行安裝前搬過去的複本，
-  // 跟 pending 裡那支一樣大（各一百多 MB），裝完也是死的。
-  test('快取根目錄那兩個已知的殘留也收掉', () => {
+  // installer.exe 是差分下載的基底（electron-updater 的 oldFile 就是它）。
+  // 它看起來最像殘留 —— 跟 pending 那支一樣大、裝完也不會再執行 —— 但刪了，
+  // 下一次更新就只能整包重抓。實測踩過兩次：v1.3.5 刪了它，v1.3.6 只補回
+  // blockmap，1.3.5 → 1.3.6 仍然整包下載（網卡收到 79.0 MB，檔案 76.8 MB）。
+  test('快取根目錄一律不碰，尤其是 installer.exe', () => {
     const dir = makeCache('RelayClient-Setup-1.3.4.exe');
     fs.writeFileSync(path.join(dir, 'installer.exe'), 'x');
     fs.writeFileSync(path.join(dir, 'current.blockmap'), 'x');
     const removed = clearStaleUpdateCache(dir, '1.3.4');
-    expect(removed).toContain('installer.exe');
+    expect(removed).not.toContain('installer.exe');
     expect(removed).not.toContain('current.blockmap');
-    expect(fs.readdirSync(dir).sort()).toEqual(['current.blockmap', 'pending']);
+    expect(fs.readdirSync(dir).sort()).toEqual(['current.blockmap', 'installer.exe', 'pending']);
   });
 
-  test('只刪自己認得的檔名，其他一律不碰', () => {
+  test('只清 pending 裡已經裝完的那支（跟 installer.exe 是同一份位元組）', () => {
     const dir = makeCache('RelayClient-Setup-1.3.4.exe');
     fs.writeFileSync(path.join(dir, 'installer.exe'), 'x');
     fs.writeFileSync(path.join(dir, '別人的東西.dat'), 'x');
     fs.mkdirSync(path.join(dir, 'somedir'));
-    clearStaleUpdateCache(dir, '1.3.4');
-    expect(fs.readdirSync(dir).sort()).toEqual(['pending', 'somedir', '別人的東西.dat'].sort());
+    const removed = clearStaleUpdateCache(dir, '1.3.4');
+    expect(removed.sort()).toEqual(['RelayClient-Setup-1.3.4.exe', 'update-info.json']);
+    expect(fs.readdirSync(dir).sort()).toEqual(['installer.exe', 'pending', 'somedir', '別人的東西.dat'].sort());
   });
 
-  test('待安裝的比較新時，根目錄那兩個也不能動（安裝可能正要跑）', () => {
+  test('待安裝的比較新時什麼都不動（那是還沒裝的更新）', () => {
     const dir = makeCache('RelayClient-Setup-1.4.0.exe');
     fs.writeFileSync(path.join(dir, 'installer.exe'), 'x');
     expect(clearStaleUpdateCache(dir, '1.3.4')).toEqual([]);
@@ -150,15 +153,14 @@ describe('clearStaleUpdateCache', () => {
 
 // 一輪走完之後 pending 會是空的，下次再呼叫就會在第一關退出 ——
 // 根目錄那支一百多 MB 的 installer.exe 就永遠收不到了。
-describe('沒有待安裝資訊時的根目錄殘留', () => {
-  test('沒有 update-info.json → 根目錄那兩個是孤兒，收掉', () => {
+describe('沒有待安裝資訊時：根目錄一樣不碰', () => {
+  test('沒有 update-info.json → 什麼都不動', () => {
     const dir = path.join(tmp, 'cache');
     fs.mkdirSync(path.join(dir, 'pending'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'installer.exe'), 'x');
     fs.writeFileSync(path.join(dir, 'current.blockmap'), 'x');
-    const removed = clearStaleUpdateCache(dir, '1.3.4');
-    expect(removed).toEqual(['installer.exe']);
-    expect(fs.readdirSync(dir).sort()).toEqual(['current.blockmap', 'pending']);
+    expect(clearStaleUpdateCache(dir, '1.3.4')).toEqual([]);
+    expect(fs.readdirSync(dir).sort()).toEqual(['current.blockmap', 'installer.exe', 'pending']);
   });
 
   test('快取目錄根本不存在 → 什麼都不做，也不建目錄', () => {
@@ -167,12 +169,12 @@ describe('沒有待安裝資訊時的根目錄殘留', () => {
     expect(fs.existsSync(dir)).toBe(false);
   });
 
-  test('這條路一樣只刪自己認得的檔名', () => {
+  test('這條路也一樣什麼都不刪', () => {
     const dir = path.join(tmp, 'cache');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'installer.exe'), 'x');
     fs.writeFileSync(path.join(dir, '別人的東西.dat'), 'x');
-    clearStaleUpdateCache(dir, '1.3.4');
-    expect(fs.readdirSync(dir)).toEqual(['別人的東西.dat']);
+    expect(clearStaleUpdateCache(dir, '1.3.4')).toEqual([]);
+    expect(fs.readdirSync(dir).sort()).toEqual(['installer.exe', '別人的東西.dat'].sort());
   });
 });

@@ -39,16 +39,23 @@ function notNewerThan(a, b) {
   return true;   // 完全相同 → 已經裝上去了
 }
 
-// 快取根目錄要收的只有 installer.exe —— 那是 electron-updater 執行安裝前搬過去的
-// 複本，跟 pending 裡那支一樣大（各一百多 MB），裝完就是死的。
+// 快取根目錄一律不碰，尤其是 installer.exe。
 //
-// current.blockmap 千萬不能刪，即使它看起來也像殘留：那是「目前已安裝這一版」的
-// 區塊指紋，下次更新時 electron-updater 拿它跟新版的 blockmap 比對，只下載變動的
-// 區塊。刪掉的代價是下一次更新從差分變成整包重抓一百多 MB，而它自己只有 0.1 MB。
-// （v1.3.5 就是這樣把差分更新弄壞的，升級 1.3.4 → 1.3.5 整整抓了 103 MB。）
-const ROOT_LEFTOVERS = ['installer.exe'];
+// 它看起來最像殘留：跟 pending 裡那支一樣大（各七十幾 MB）、裝完也不會再執行。
+// 但 electron-updater 的差分下載就是拿它當基底 ——
+//   AppUpdater.differentialDownloadInstaller() 的 oldFile 是
+//   path.join(cacheDir, CURRENT_APP_INSTALLER_FILE_NAME)，而那個常數就是 "installer.exe"。
+// 沒有它，下一次更新只能整包重抓。
+//
+// 這一點我連錯兩次，兩次都是「看起來像垃圾就刪」：
+//   v1.3.5 把 installer.exe 跟 blockmap 一起刪了。
+//   v1.3.6 只補回 blockmap —— 實測 1.3.5 → 1.3.6 仍然整包下載
+//          （網卡收到 79.0 MB，檔案 76.8 MB）。
+// 真正該刪的只有 pending 裡那支「已經裝完」的安裝檔，它跟 installer.exe
+// 是同一份位元組，留著純粹是重複。
+const ROOT_LEFTOVERS = [];
 
-// pending 裡的 .blockmap 同理：留著不花什麼空間，刪掉會讓下次更新退回整包下載。
+// pending 裡的 .blockmap 也留著：不佔空間，而且是更新流程的一部分。
 const KEEP_IN_PENDING = (f) => /\.blockmap$/i.test(f);
 
 // 待安裝的那份「不比現在新」就清掉。回傳刪掉的檔名。
