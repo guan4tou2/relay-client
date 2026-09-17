@@ -24,11 +24,11 @@
     "socks": "^2.8.3"
   },
   "devDependencies": {
-    "electron": "^32.3.3",
-    "electron-builder": "^24.13.3",
+    "electron": "^44.4.1",
+    "electron-builder": "^26.15.3",
     "jest": "^30.5.1",
     "png-to-ico": "^2.1.8",
-    "sharp": "^0.33.5"
+    "sharp": "^0.35.4"
   },
   "jest": {
     "testTimeout": 15000
@@ -138,9 +138,11 @@
       "icon": "assets/icon.png",
       "artifactName": "RelayClient-${version}-${arch}.${ext}",
       "desktop": {
-        "Name": "RelayClient",
-        "Comment": "SOCKS/HTTP 代理串接與分流",
-        "Categories": "Network;"
+        "entry": {
+          "Name": "RelayClient",
+          "Comment": "SOCKS/HTTP 代理串接與分流",
+          "Categories": "Network;"
+        }
       },
       "extraResources": [
         {
