@@ -18,18 +18,29 @@ body{
   --bg:#f2f2f7;--panel:#fff;--panelq:rgba(255,255,255,.72);--card:#fff;--fill:#78788029;--fill2:#7878801f;
   --text:#1c1c1e;--text2:#3c3c4399;--text3:#3c3c434d;--sep:#3c3c431f;--accent:#4470c4;--accent-dim:#4470c414;
   --good:#2f9e78;--amber:#d98b1f;--red:#d9534a;--purple:#7a72cf;
+  --good-dim:#2f9e7824;--amber-dim:#d98b1f1f;--red-dim:#d9534a24;--purple-dim:#7a72cf24;
+  --ring:#4470c440;--ring-red:#d9534a4d;
   --shadow:0 8px 24px rgba(0,0,0,.10),0 1px 2px rgba(0,0,0,.06);
 }
 body[data-theme="dark"]{
   --bg:#1c1c1e;--panel:#2c2c2e;--panelq:rgba(44,44,46,.72);--card:#2c2c2e;--fill:#7878805c;--fill2:#78788033;
   --text:#fff;--text2:#ebebf599;--text3:#ebebf566;--sep:#54545899;--accent:#8cb0ef;--accent-dim:#8cb0ef1f;
   --good:#54c69b;--amber:#e8b055;--red:#ef7a70;--purple:#a49ce6;
+  --good-dim:#54c69b2e;--amber-dim:#e8b0552e;--red-dim:#ef7a702e;--purple-dim:#a49ce62e;
+  --ring:#8cb0ef55;--ring-red:#ef7a7066;
   --shadow:0 10px 30px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.3);
 }
 
 a{color:var(--accent)}a:hover{color:var(--good)}
 input,button,select,textarea{font-family:inherit}
-input:focus{border-color:var(--accent)}
+
+/* 焦點指示。輸入框的 border 寫在 inline style 裡，不加 !important 壓不過去；
+   .inErr（目前只有埠衝突）要保留紅框，所以只給它換光暈不換邊框。 */
+input:focus,textarea:focus{box-shadow:0 0 0 3px var(--ring)}
+input:focus:not(.inErr),textarea:focus{border-color:var(--accent)!important}
+.inErr:focus{box-shadow:0 0 0 3px var(--ring-red)}
+/* 鍵盤操作才出現的外框：滑鼠點按不會觸發 :focus-visible，不影響原本的視覺 */
+button:focus-visible,[tabindex]:focus-visible,label:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 ::-webkit-scrollbar{width:8px;height:8px}
 ::-webkit-scrollbar-thumb{background:var(--fill);border-radius:4px}

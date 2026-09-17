@@ -20,7 +20,8 @@ const PROTO = {
   http: { label: 'HTTP', name: '帳號密碼認證', port: 8080, auth: 'basic', hint: '支援帳號密碼認證。', authTitle: '帳號密碼', authDesc: '帳號與密碼' },
   https: { label: 'HTTPS', name: '帳號密碼認證（加密）', port: 8443, auth: 'basic', hint: '先建立加密連線再送出帳密。', authTitle: '帳號密碼', authDesc: '帳號密碼（加密傳輸）' },
 };
-const LEVELS = { info: '#4470c4', warn: '#d98b1f', error: '#d9534a', debug: '#9a9aa2' };
+// 用 CSS 變數而不是色碼：深色主題的 accent／amber／red 是另一組值，寫死會在深色下對比不足
+const LEVELS = { info: 'var(--accent)', warn: 'var(--amber)', error: 'var(--red)', debug: 'var(--text3)' };
 const SRC_TITLE = { system: '系統', test: '連線測試', route: '路由', 'socks-relay': 'SOCKS 中繼', 'http-bridge': 'HTTP 橋接', 'win-proxy': '系統代理' };
 const ICONS = {
   local: ['M4 5h16v10H4zM8 19h8M12 15v4'],
@@ -40,7 +41,8 @@ const state = {
   menu: null, level: 'all', search: '', expanded: {}, logs: [],
   creds: JSON.parse(localStorage.getItem('proxy_creds') || '[]'),
   credEdit: null, cdraft: { name: '', user: '', pass: '', note: '' },
-  pendingRouteDel: null, pendingSrvDel: null, bootLaunch: false, alert: null,
+  pendingRouteDel: null, pendingSrvDel: null, pendingCredDel: null, pendingLogClear: false,
+  srvBusy: false, routeBusy: false, bootLaunch: false, alert: null,
   killswitch: { tripped: false, reason: '', blocking: false },
   update: { status: 'idle', version: '', percent: 0 },
   settings: { httpPort: 10808, socksPort: 10809, minimizeToTray: true, autoConnect: false, autoStartRoutes: true, testTarget: null },
@@ -75,6 +77,17 @@ const srvName = id => (state.servers.find(x => x.id === id) || {}).name || '（�
 const fmtBytes = b => { if (b < 1024) return b.toFixed(0) + ' B'; const u = ['KB', 'MB', 'GB']; let i = -1, n = b; while (n >= 1024 && i < 2) { n /= 1024; i++; } return n.toFixed(1) + ' ' + u[i]; };
 const testColor = l => l == null ? 'var(--text3)' : l < 0 ? 'var(--red)' : l < 200 ? 'var(--good)' : 'var(--amber)';
 const segCss = on => `font-weight:${on ? 600 : 500};background:${on ? 'var(--panel)' : 'transparent'};color:${on ? 'var(--text)' : 'var(--text2)'};box-shadow:${on ? '0 1px 3px rgba(0,0,0,.12)' : 'none'}`;
+
+// 面板的遮罩只蓋住內容區，標題列仍可點 —— 不先收掉舊面板的話，換分頁再開另一種面板
+// 會兩層遮罩疊在一起。開任何面板前、切分頁時都先收乾淨。
+const anyOverlayOpen = () => !!(state.routeSheet || state.srvSheet || state.splitSheet || state.launchSheet
+  || state.splitUac || state.alert || (state.killswitch && state.killswitch.tripped));
+function closeAllSheets() {
+  if (state.routeSheet) closeRouteSheet();
+  if (state.srvSheet) closeSrvSheet();
+  if (state.splitSheet) closeSplitSheet();
+  if (state.launchSheet) closeLaunchSheet();
+}
 
 // 任一 session 狀態轉變後的統一刷新（不在 300ms tick 呼叫，避免 sidebar dotBeat 每 tick 重置）
 function afterStatusChange() {
@@ -196,7 +209,7 @@ function mount() {
       const rid = state.sel || (state.routes[0] || {}).id;
       if (rid) openLaunchSheet(rid); else flash('請先建立一條路由', 'var(--amber)');
     }
-    if (e.code === 'Space' && state.tab !== 'split' && !state.routeSheet && !state.srvSheet && !state.alert && e.target === document.body) { e.preventDefault(); togglePower(); }
+    if (e.code === 'Space' && state.tab !== 'split' && !anyOverlayOpen() && e.target === document.body) { e.preventDefault(); togglePower(); }
     if (e.key === 'Escape') { closeMenu(); if (state.launchSheet) closeLaunchSheet(); else if (state.splitUac) closeSplitUac(); else if (state.splitSheet) closeSplitSheet(); else if (state.alert) closeAlert(); else if (state.srvSheet) closeSrvSheet(); else if (state.routeSheet) closeRouteSheet(); }
   });
   document.addEventListener('click', () => closeMenu(), true);
@@ -243,7 +256,7 @@ function renderDashStatus(runIds, actIds) {
       color: runIds.length ? 'var(--good)' : actIds.length ? 'var(--amber)' : 'var(--text2)', tab: 'dashboard' },
     // 欄位是 state.sys（sysToggle 也讀它）。這裡原本寫成 state.sysProxy ——
     // 那個名字全檔案沒有任何地方賦值過，所以這一段永遠顯示「關閉」。
-    { label: runIds.length ? '系統代理' + (state.sys ? '已開' : '關閉') : '系統代理關閉',
+    { label: state.sys && runIds.length ? '系統代理已開啟' : '系統代理已關閉',
       color: state.sys && runIds.length ? 'var(--good)' : 'var(--text2)', tab: 'dashboard' },
     state.killswitch && state.killswitch.tripped
       ? { label: '斷線保護已觸發', color: 'var(--red)', tab: 'split' }
@@ -254,7 +267,7 @@ function renderDashStatus(runIds, actIds) {
   // 不是徽章。開關本身 32×18、鈕 26 高，狀態靠顏色與撥桿位置表達。
   const engOn = splitRunning(), engBusy = state.splitEngine === 'starting';
   const engTip = engOn ? '停止引擎：程式與網域規則將失效' : '啟動引擎：依程式與網域規則自動分流（需管理員權限）';
-  const pill = `<button id="stEnginePill" class="hvFill2" title="${engTip}" style="display:flex;align-items:center;gap:7px;border:1px solid var(--sep);background:var(--card);padding:0 9px 0 6px;height:26px;border-radius:13px;cursor:pointer;color:${engOn ? 'var(--good)' : engBusy ? 'var(--amber)' : 'var(--text2)'};font-weight:500;font-size:12px;white-space:nowrap">
+  const pill = `<button id="stEnginePill" class="hvFill2" role="switch" aria-checked="${engOn}" aria-label="分流引擎" title="${engTip}" style="display:flex;align-items:center;gap:7px;border:1px solid var(--sep);background:var(--card);padding:0 9px 0 6px;height:26px;border-radius:13px;cursor:pointer;color:${engOn ? 'var(--good)' : engBusy ? 'var(--amber)' : 'var(--text2)'};font-weight:500;font-size:12px;white-space:nowrap">
     <span style="width:32px;height:18px;border-radius:9px;position:relative;background:${engOn ? 'var(--good)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:2px;left:${engOn ? '16px' : '2px'};width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></span>${engBusy ? '分流引擎啟動中' : engOn ? '分流引擎執行中' : '分流引擎未執行'}
   </button>`;
   // 設計稿在狀態列最右端放快捷鍵提示，用 margin-left:auto 推到底
@@ -266,6 +279,7 @@ function renderDashStatus(runIds, actIds) {
 }
 
 function showTab(tab) {
+  if (tab !== state.tab) closeAllSheets();   // 面板屬於原本那一頁的情境，換頁就收掉
   state.tab = tab;
   const noRoutes = state.routes.length === 0;
   const showGuide = tab === 'dashboard' && noRoutes;
@@ -320,7 +334,7 @@ function renderSidebar() {
     const delIcon = pend
       ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
       : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>';
-    return `<div class="hvFill2" data-rid="${r.id}" style="padding:11px 12px;border-radius:12px;cursor:pointer;background:${active ? 'var(--fill2)' : 'transparent'};border:1px solid ${active ? 'var(--accent)' : conn ? 'var(--good)' : 'var(--sep)'};display:flex;flex-direction:column;gap:7px;transition:background .16s,border-color .16s">
+    return `<div class="hvFill2" data-rid="${r.id}" role="button" tabindex="0" aria-pressed="${active}" aria-label="${esc(r.label || '未命名路由')}" style="padding:11px 12px;border-radius:12px;cursor:pointer;background:${active ? 'var(--fill2)' : 'transparent'};border:1px solid ${active ? 'var(--accent)' : conn ? 'var(--good)' : 'var(--sep)'};display:flex;flex-direction:column;gap:7px;transition:background .16s,border-color .16s">
       <div style="display:flex;align-items:center;gap:7px">
         <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${dot};box-shadow:${conn ? '0 0 0 3px rgba(47,158,120,.22)' : 'none'};animation:${conn ? 'dotBeat 2.2s ease-in-out infinite' : 'none'}"></span>
         <span style="font-size:13.5px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.label || '未命名路由')}</span>
@@ -343,6 +357,11 @@ function renderSidebar() {
   list.querySelectorAll('[data-rid]').forEach(row => {
     const id = row.dataset.rid;
     row.addEventListener('click', e => { if (e.target.closest('[data-act]')) return; selectRoute(id); });
+    row.addEventListener('keydown', e => {
+      if (e.target !== row || (e.key !== 'Enter' && e.code !== 'Space')) return;
+      e.preventDefault(); selectRoute(id);
+      const next = list.querySelector(`[data-rid="${id}"]`); if (next) next.focus();   // 選取會重畫整列，焦點要接回去
+    });
     row.querySelector('[data-act="power"]')?.addEventListener('click', e => { e.stopPropagation(); togglePower(id); });
     row.querySelector('[data-act="browser"]')?.addEventListener('click', e => { e.stopPropagation(); openLaunchSheet(id); });
     row.querySelector('[data-act="edit"]')?.addEventListener('click', e => { e.stopPropagation(); openRoute(id); });
@@ -433,7 +452,7 @@ function renderGuide() {
         <button id="guideAdd" class="hvBright" style="height:38px;padding:0 20px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(G.primary)}</button>
         <button id="guideAlt" class="hvFill2" style="height:38px;padding:0 20px;border:1px solid var(--sep);border-radius:10px;background:var(--card);color:var(--text);font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(G.secondary)}</button>
       </div>
-      <span style="font-size:11.5px;color:var(--text3)">⌘/Ctrl + N 新增 · 空白鍵啟動選取的路由</span>
+      <span style="font-size:11.5px;color:var(--text3)">Ctrl + N 新增 · 空白鍵啟動選取的路由</span>
     </div>`;
   $('guideAdd').onclick = G.onPrimary;
   $('guideAlt').onclick = G.onSecondary;
@@ -473,10 +492,10 @@ function buildDashboard() {
             <span id="pwMeta" style="font-size:11.5px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
           </div>
           <div style="width:1px;align-self:stretch;background:var(--sep)"></div>
-          <div style="width:144px;flex-shrink:0;display:flex;flex-direction:column;gap:9px">
+          <div style="flex:0 1 144px;min-width:124px;display:flex;flex-direction:column;gap:9px">
             <span style="font-size:12.5px;font-weight:600">系統代理</span>
             <span id="sysDesc" style="font-size:11px;color:var(--text2);line-height:1.45">所有系統流量改走此端口</span>
-            <button id="sysToggle" title="切換系統代理" style="width:50px;height:30px;border-radius:15px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s">
+            <button id="sysToggle" role="switch" aria-checked="false" aria-label="系統代理" title="切換系統代理" style="width:50px;height:30px;border-radius:15px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s">
               <span id="sysKnob" style="position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
             </button>
           </div>
@@ -513,7 +532,7 @@ function buildDashboard() {
         <svg viewBox="0 0 560 88" preserveAspectRatio="none" style="width:100%;height:88px;display:block">
           <line x1="0" y1="22" x2="560" y2="22" stroke="var(--sep)" stroke-width="1"></line>
           <line x1="0" y1="55" x2="560" y2="55" stroke="var(--sep)" stroke-width="1"></line>
-          <polygon id="areaDown" points="" fill="rgba(47,158,120,.14)"></polygon>
+          <polygon id="areaDown" points="" fill="var(--good-dim)"></polygon>
           <polyline id="lineDown" points="" fill="none" stroke="var(--good)" stroke-width="2" stroke-linejoin="round"></polyline>
           <polyline id="lineUp" points="" fill="none" stroke="var(--purple)" stroke-width="1.6" stroke-linejoin="round" stroke-dasharray="3 3"></polyline>
         </svg>
@@ -567,7 +586,7 @@ function updatePower() {
   node.style.animation = running ? 'nodeBeat .55s cubic-bezier(.32,.72,0,1) 1' : 'none';
   hole.setAttribute('r', running ? '11' : (connecting || closing) ? String(9 * prog) : '9');
   $('pwRipple').style.opacity = running ? '1' : '0'; $('pwRipple').style.animation = running ? 'ripple 2.6s ease-out infinite' : 'none';
-  $('pwHalo').style.background = running ? 'rgba(47,158,120,.14)' : 'transparent';
+  $('pwHalo').style.background = running ? 'var(--good-dim)' : 'transparent';
 
   const cur = curRoute();
   $('powerBtn').title = failing ? '重新啟動這條路由（空白鍵）' : running ? '停止路由（空白鍵）' : '啟動路由（空白鍵）';
@@ -635,6 +654,7 @@ function updateDashboard() {
   const cur = curRoute();
   const runIds = runningRouteIds();
   $('sysToggle').style.background = state.sys ? 'var(--accent)' : 'var(--fill)';
+  $('sysToggle').setAttribute('aria-checked', state.sys ? 'true' : 'false');
   $('sysKnob').style.left = state.sys ? '23px' : '3px';
   $('sysDesc').textContent = runIds.length > 1 ? '指向選取的路由端口' : '所有系統流量改走此端口';
   $('copyIcon').style.color = state.copied ? 'transparent' : 'var(--text3)';
@@ -733,6 +753,10 @@ function copyAddr() {
 // =====================================================================================
 // 伺服器分頁
 // =====================================================================================
+// 各欄 min-width 加左右 padding 的總和。預設視窗 900px 只給內容區 583px，所以這個值
+// 必須低於它，否則常態就會出現橫向捲軸；低於此寬度才讓表格橫向捲動，不讓欄位被擠沒。
+const SRV_MINW = 84 + 150 + 58 + 56 + 104 + 90 + 32;
+
 function renderServers() {
   const rows = state.servers.map(s => {
     const pend = state.pendingSrvDel === s.id;
@@ -742,13 +766,15 @@ function renderServers() {
     const delIcon = pend
       ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
       : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>';
-    return `<div class="hvFill2" style="display:flex;align-items:center;padding:11px 16px;border-bottom:1px solid var(--sep);font-size:12.5px">
-      <span style="width:150px;flex-shrink:0;font-weight:600;padding-right:10px;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.name || '未命名')}</span>
-      <span style="width:158px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text2);padding-right:10px;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.host)}:${esc(String(s.port))}</span>
-      <span style="width:78px;flex-shrink:0"><span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);white-space:nowrap">${PROTO[sProto(s)].label}</span></span>
-      <span style="width:74px;flex-shrink:0;color:var(--text2);display:flex;align-items:center;gap:5px;white-space:nowrap">${authIcon}${sUser(s) ? '已設定' : '無'}</span>
-      <span style="flex:1;min-width:0;padding-right:12px;box-sizing:border-box;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:${testColor(lat)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(tText)}</span>
-      <span style="width:96px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
+    const addr = `${s.host}:${s.port}`;
+    const nm = esc(s.name || '未命名');
+    return `<div class="hvFill2" style="display:flex;align-items:center;padding:11px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;min-width:${SRV_MINW}px">
+      <span title="${nm}" style="flex:1 1 0;min-width:84px;max-width:220px;font-weight:600;padding-right:10px;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nm}</span>
+      <button class="hvFill" data-scopy="${esc(addr)}" title="點擊複製位址 ${esc(addr)}" style="flex:1.9 1 0;min-width:150px;max-width:260px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;color:var(--text2);padding:4px 10px 4px 0;border:none;border-radius:6px;background:transparent;text-align:left;cursor:pointer;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(addr)}</button>
+      <span style="width:58px;flex-shrink:0"><span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);white-space:nowrap">${PROTO[sProto(s)].label}</span></span>
+      <span style="width:56px;flex-shrink:0;color:var(--text2);display:flex;align-items:center;gap:5px;white-space:nowrap">${authIcon}${sUser(s) ? '已設定' : '無'}</span>
+      <span style="flex:1 1 0;min-width:104px;padding-right:12px;box-sizing:border-box;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:${testColor(lat)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(tText)}</span>
+      <span style="width:90px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
         <button class="hvAcc" data-stest="${s.id}" title="測試連線" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z"></path></svg></button>
         <button class="hvAcc" data-sedit="${s.id}" title="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
         <button class="hvRed" data-sdel="${s.id}" title="${pend ? '再按一次確認刪除' : '刪除'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
@@ -765,9 +791,9 @@ function renderServers() {
         </div>
         <button id="srvAdd" class="hvBright" style="margin-left:auto;height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增伺服器</button>
       </div>
-      <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden">
-        <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px">
-          <span style="width:150px;flex-shrink:0;white-space:nowrap">名稱</span><span style="width:158px;flex-shrink:0;white-space:nowrap">位址</span><span style="width:78px;flex-shrink:0;white-space:nowrap">協定</span><span style="width:74px;flex-shrink:0;white-space:nowrap">認證</span><span style="flex:1;min-width:0;padding-right:12px;box-sizing:border-box;white-space:nowrap">測試結果</span><span style="width:96px;flex-shrink:0"></span>
+      <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow-x:auto">
+        <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px;min-width:${SRV_MINW}px">
+          <span style="flex:1 1 0;min-width:84px;max-width:220px;padding-right:10px;box-sizing:border-box;white-space:nowrap">名稱</span><span style="flex:1.9 1 0;min-width:150px;max-width:260px;padding-right:10px;box-sizing:border-box;white-space:nowrap">位址</span><span style="width:58px;flex-shrink:0;white-space:nowrap">協定</span><span style="width:56px;flex-shrink:0;white-space:nowrap">認證</span><span style="flex:1 1 0;min-width:104px;padding-right:12px;box-sizing:border-box;white-space:nowrap">測試結果</span><span style="width:90px;flex-shrink:0"></span>
         </div>
         ${rows}
         ${state.servers.length === 0 ? `<div style="padding:44px 20px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">還沒有伺服器<br>新增後即可組成路由</div>` : ''}
@@ -775,6 +801,7 @@ function renderServers() {
     </div>`;
 
   $('srvAdd').onclick = () => openSrv();
+  $('view-servers').querySelectorAll('[data-scopy]').forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.scopy); flash('已複製位址：' + b.dataset.scopy); });
   $('view-servers').querySelectorAll('[data-stest]').forEach(b => b.onclick = () => testServerRow(b.dataset.stest));
   $('view-servers').querySelectorAll('[data-sedit]').forEach(b => b.onclick = () => openSrv(b.dataset.sedit));
   $('view-servers').querySelectorAll('[data-sdel]').forEach(b => b.onclick = () => deleteServerRow(b.dataset.sdel));
@@ -815,13 +842,17 @@ function deleteServerRow(id) {
 function buildLogs() {
   $('view-logs').innerHTML = `
     <div style="display:flex;flex-direction:column;gap:12px;height:100%">
-      <div style="display:flex;align-items:center;gap:10px">
+      <!-- 這排在最小視窗（可用寬 483px）塞不下，所以讓右半組整組換行。
+           flex 是先換行才縮，而且換行與否看的是「最大內容寬」：input 沒給寬度時
+           那是瀏覽器預設的 ~192px，預設視窗就會被推到第二行。所以搜尋框要寫死
+           width:92px（再靠 flex-grow 長回去），預設視窗才排得下同一行。 -->
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:9px">
         <div id="levelSeg" style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px;flex-shrink:0"></div>
-        <div style="margin-left:auto;display:flex;align-items:center;gap:7px;min-width:0">
-          <input id="logSearch" placeholder="搜尋…" style="width:132px;min-width:80px;height:30px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-size:12.5px;outline:none">
+        <div style="flex:1 1 auto;display:flex;align-items:center;justify-content:flex-end;gap:7px;min-width:0">
+          <input id="logSearch" placeholder="搜尋…" style="width:92px;min-width:88px;flex:1 1 auto;height:30px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-size:12.5px;outline:none">
           <button id="logOpen" class="hvFill2" title="開啟紀錄檔資料夾" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">紀錄檔</button>
           <button id="logCopy" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">複製</button>
-          <button id="logClear" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--red);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">清除</button>
+          <button id="logClear" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--red);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0">清除</button>
         </div>
       </div>
       <div id="logList" style="flex:1;background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow-y:auto;user-select:text"></div>
@@ -829,8 +860,35 @@ function buildLogs() {
   $('logSearch').addEventListener('input', e => { state.search = e.target.value; renderLogList(); });
   $('logOpen').onclick = async () => { const r = await window.api.openLogsFolder(); if (!(r && r.ok)) flash('開啟紀錄檔失敗：' + ((r && r.error) || '未知'), 'var(--red)'); };
   $('logCopy').onclick = () => copyLogs();
-  $('logClear').onclick = async () => { await window.api.clearLogs(); state.logs = []; renderLogList(); flash('已清除紀錄'); };
+  $('logClear').onclick = () => clearLogsRow();
   renderLevelSeg();
+}
+
+// 清除的是磁碟上的紀錄檔，救不回來 —— 照 app 其他刪除的做法：再按一次才真的清
+function clearLogsRow() {
+  const b = $('logClear'); if (!b) return;
+  // 待確認時要換成 hvRed：hvFill2 的 hover 是灰底，會把紅色的確認狀態蓋掉
+  const paint = (el, pending) => {
+    el.textContent = pending ? '再按一次清除' : '清除';
+    el.className = pending ? 'hvRed' : 'hvFill2';
+    el.style.background = pending ? 'var(--red)' : 'var(--card)';
+    el.style.color = pending ? '#fff' : 'var(--red)';
+  };
+  if (!state.pendingLogClear) {
+    state.pendingLogClear = true;
+    paint(b, true);
+    clearTimeout(state._logClearT);
+    state._logClearT = setTimeout(() => {
+      state.pendingLogClear = false;
+      const el = $('logClear'); if (el) paint(el, false);
+    }, 2500);
+    return;
+  }
+  clearTimeout(state._logClearT);
+  state.pendingLogClear = false;
+  paint(b, false);
+  window.api.clearLogs().then(() => { state.logs = []; renderLogList(); flash('已清除紀錄'); })
+    .catch(e => flash('清除紀錄失敗：' + (e && e.message || e), 'var(--red)'));
 }
 
 function renderLevelSeg() {
@@ -854,7 +912,7 @@ function logGroupTitle(source) {
 function logHitBadge(l) {
   const m = l.meta; if (!m) return '';
   const block = m.target === 'block';
-  const bg = block ? 'rgba(217,83,74,.14)' : m.matched ? 'var(--accent-dim)' : 'var(--fill2)';
+  const bg = block ? 'var(--red-dim)' : m.matched ? 'var(--accent-dim)' : 'var(--fill2)';
   const color = block ? 'var(--red)' : m.matched ? 'var(--accent)' : 'var(--text3)';
   const label = !m.matched ? '預設' : m.ruleIndex ? `命中：第 ${m.ruleIndex} 條 ${m.ruleName}` : m.ruleName;
   return `<button data-loghit="${esc(m.ruleId || '')}" title="跳到分流規則" style="flex-shrink:0;max-width:220px;border:none;border-radius:5px;padding:2px 7px;background:${bg};color:${color};font-size:10.5px;font-weight:600;cursor:${m.ruleId ? 'pointer' : 'default'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">${esc(label)}</button>`;
@@ -878,7 +936,7 @@ function renderLogList() {
       ${rows.map(l => {
         const time = new Date(l.time || l.t).toLocaleTimeString('en-GB', { hour12: false });
         const exp = S.expanded[l.id];
-        return `<div data-log="${l.id}" style="padding:5px 14px;display:flex;gap:10px;align-items:flex-start;cursor:${l.detail ? 'pointer' : 'default'};border-bottom:1px solid var(--sep);font-size:12px;line-height:1.6" class="${l.detail ? 'hvFill2' : ''}">
+        return `<div data-log="${l.id}" ${l.detail ? `role="button" tabindex="0" aria-expanded="${!!exp}" aria-label="展開詳細訊息"` : ''} style="padding:5px 14px;display:flex;gap:10px;align-items:flex-start;cursor:${l.detail ? 'pointer' : 'default'};border-bottom:1px solid var(--sep);font-size:12px;line-height:1.6" class="${l.detail ? 'hvFill2' : ''}">
           <span style="width:58px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text3);font-size:11px;padding-top:1px">${time}</span>
           <span title="${l.level}" style="width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:6px;background:${LEVELS[l.level] || LEVELS.info}"></span>
           <span style="width:88px;flex-shrink:0;color:var(--purple);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;padding-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.source)}</span>
@@ -901,7 +959,16 @@ function renderLogList() {
   list.querySelectorAll('[data-log]').forEach(row => {
     const id = row.dataset.log;
     const l = S.logs.find(x => String(x.id) === id);
-    if (l && l.detail) row.onclick = () => { S.expanded[id] = !S.expanded[id]; renderLogList(); };
+    if (!(l && l.detail)) return;
+    const toggle = () => {
+      S.expanded[id] = !S.expanded[id]; renderLogList();
+      const next = list.querySelector(`[data-log="${id}"]`); if (next && document.activeElement === document.body) next.focus();
+    };
+    row.onclick = toggle;
+    row.addEventListener('keydown', e => {
+      if (e.target !== row || (e.key !== 'Enter' && e.code !== 'Space')) return;
+      e.preventDefault(); toggle();
+    });
   });
 }
 
@@ -916,6 +983,22 @@ function copyLogs() {
 // 憑證庫（localStorage 'proxy_creds'）
 // =====================================================================================
 function saveCreds() { localStorage.setItem('proxy_creds', JSON.stringify(state.creds.map(({ id, name, user, pass, note }) => ({ id, name, user, pass, note, shown: false })))); }
+
+// 各欄 min-width 加左右 padding 的總和，算法同 SRV_MINW
+const CRED_MINW = 96 + 100 + 96 + 80 + 58 + 32;
+
+// 憑證是唯一沒有二次確認的刪除，而且按下去就直接覆寫 localStorage，救不回來
+function deleteCredRow(id) {
+  if (state.pendingCredDel !== id) {
+    state.pendingCredDel = id; renderCreds();
+    setTimeout(() => { if (state.pendingCredDel === id) { state.pendingCredDel = null; if (state.tab === 'creds') renderCreds(); } }, 2500);
+    return;
+  }
+  state.pendingCredDel = null;
+  state.creds = state.creds.filter(x => x.id !== id);
+  state.credEdit = null;
+  saveCreds(); renderCreds(); flash('已刪除憑證');
+}
 
 function renderCreds() {
   const S = state;
@@ -934,15 +1017,18 @@ function renderCreds() {
         </div>
       </div>`;
     }
+    const cpend = S.pendingCredDel === c.id;
     return `<div style="border-bottom:1px solid var(--sep)">
-      <div class="hvFill2" style="display:flex;align-items:center;padding:11px 16px;font-size:12.5px">
-        <span style="width:150px;flex-shrink:0;font-weight:600;display:flex;align-items:center;gap:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--text3)"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>${esc(c.name || '未命名')}</span>
-        <span style="width:130px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.user)}</span>
-        <button data-ctoggle="${c.id}" title="點擊顯示 / 隱藏" style="width:120px;text-align:left;border:none;background:transparent;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;cursor:pointer;padding:0">${c.shown ? esc(c.pass) : '••••••••'}</button>
-        <span style="flex:1;min-width:0;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.note || '—')}</span>
-        <span style="width:60px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
+      <div class="hvFill2" style="display:flex;align-items:center;padding:11px 16px;font-size:12.5px;min-width:${CRED_MINW}px">
+        <span title="${esc(c.name || '未命名')}" style="flex:1 1 0;min-width:96px;max-width:200px;padding-right:10px;box-sizing:border-box;font-weight:600;display:flex;align-items:center;gap:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--text3);flex-shrink:0"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg><span style="overflow:hidden;text-overflow:ellipsis">${esc(c.name || '未命名')}</span></span>
+        <span title="${esc(c.user)}" style="flex:1 1 0;min-width:100px;max-width:190px;padding-right:10px;box-sizing:border-box;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.user)}</span>
+        <button data-ctoggle="${c.id}" title="點擊顯示 / 隱藏" aria-label="顯示或隱藏密碼" style="flex:1 1 0;min-width:96px;max-width:190px;padding:0 10px 0 0;box-sizing:border-box;text-align:left;border:none;background:transparent;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.shown ? esc(c.pass) : '••••••••'}</button>
+        <span title="${esc(c.note || '')}" style="flex:1 1 0;min-width:80px;padding-right:10px;box-sizing:border-box;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.note || '—')}</span>
+        <span style="width:58px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
           <button data-cedit="${c.id}" class="hvAcc" title="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
-          <button data-cdel="${c.id}" class="hvRed" title="刪除" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--red);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg></button>
+          <button data-cdel="${c.id}" class="hvRed" title="${cpend ? '再按一次確認刪除' : '刪除'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${cpend ? 'var(--red)' : 'var(--fill2)'};color:${cpend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${cpend
+            ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
+            : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>'}</button>
         </span>
       </div>
     </div>`;
@@ -954,9 +1040,9 @@ function renderCreds() {
         <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:16px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">憑證庫</span><span style="font-size:12px;color:var(--text2)">存好帳密，新增伺服器時可直接選用</span></div>
         <button id="credAdd" class="hvBright" style="margin-left:auto;height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增憑證</button>
       </div>
-      <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden">
-        <div style="display:flex;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px">
-          <span style="width:150px;flex-shrink:0;white-space:nowrap">名稱</span><span style="width:130px;flex-shrink:0;white-space:nowrap">帳號</span><span style="width:120px;flex-shrink:0;white-space:nowrap">密碼</span><span style="flex:1;min-width:0;white-space:nowrap">備註</span><span style="width:60px;flex-shrink:0"></span>
+      <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow-x:auto">
+        <div style="display:flex;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px;min-width:${CRED_MINW}px">
+          <span style="flex:1 1 0;min-width:96px;max-width:200px;padding-right:10px;box-sizing:border-box;white-space:nowrap">名稱</span><span style="flex:1 1 0;min-width:100px;max-width:190px;padding-right:10px;box-sizing:border-box;white-space:nowrap">帳號</span><span style="flex:1 1 0;min-width:96px;max-width:190px;padding-right:10px;box-sizing:border-box;white-space:nowrap">密碼</span><span style="flex:1 1 0;min-width:80px;padding-right:10px;box-sizing:border-box;white-space:nowrap">備註</span><span style="width:58px;flex-shrink:0"></span>
         </div>
         ${rows}
         ${S.creds.length === 0 ? `<div style="padding:44px 20px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">還沒有儲存的憑證<br>新增後即可在伺服器表單選用</div>` : ''}
@@ -970,7 +1056,7 @@ function renderCreds() {
   $('credAdd').onclick = () => { const id = 'c' + Date.now(); S.creds.push({ id, name: '', user: '', pass: '', note: '', shown: false }); S.credEdit = id; S.cdraft = { name: '', user: '', pass: '', note: '' }; renderCreds(); };
   $('view-creds').querySelectorAll('[data-ctoggle]').forEach(b => b.onclick = () => { const c = S.creds.find(x => x.id === b.dataset.ctoggle); c.shown = !c.shown; renderCreds(); });
   $('view-creds').querySelectorAll('[data-cedit]').forEach(b => b.onclick = () => { const c = S.creds.find(x => x.id === b.dataset.cedit); S.credEdit = c.id; S.cdraft = { name: c.name, user: c.user, pass: c.pass, note: c.note }; renderCreds(); });
-  $('view-creds').querySelectorAll('[data-cdel]').forEach(b => b.onclick = () => { S.creds = S.creds.filter(x => x.id !== b.dataset.cdel); S.credEdit = null; saveCreds(); renderCreds(); });
+  $('view-creds').querySelectorAll('[data-cdel]').forEach(b => b.onclick = () => deleteCredRow(b.dataset.cdel));
   if ($('cdCancel')) $('cdCancel').onclick = () => { const c = S.creds.find(x => x.id === S.credEdit); if (c && !c.name && !c.user && !c.pass && !c.note) S.creds = S.creds.filter(x => x.id !== S.credEdit); S.credEdit = null; renderCreds(); };
   if ($('cdSave')) $('cdSave').onclick = () => {
     S.cdraft = { name: $('cdName').value.trim() || '未命名', user: $('cdUser').value.trim(), pass: $('cdPass').value, note: $('cdNote').value.trim() };
@@ -1178,7 +1264,8 @@ function openRoute(id) {
   const r = id ? S.routes.find(x => x.id === id) : null;
   const used = S.routes.map(x => +x.localPort);
   let n = 10808; while (used.includes(n)) n++;
-  S.routeSheet = true; S.routeEditing = id || null; closeMenu();
+  closeAllSheets();
+  S.routeSheet = true; S.routeEditing = id || null; S.routeBusy = false; closeMenu();
   S.draft = r ? { label: r.label, localPort: String(r.localPort), kind: r.kind, hops: [...r.hops], enabled: r.enabled !== false }
               : { label: '', localPort: String(n), kind: 'socks5', hops: [], enabled: true };
   renderRouteSheet();
@@ -1238,7 +1325,7 @@ function renderRouteSheet() {
             </div>
             <div style="width:118px;flex-shrink:0;display:flex;flex-direction:column;gap:7px">
               <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">本地端口</span>
-              <input id="rdPort" value="${esc(d.localPort)}" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid ${dupPort ? 'var(--red)' : 'var(--sep)'};border-radius:10px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:13px;text-align:center;outline:none">
+              <input id="rdPort" value="${esc(d.localPort)}" class="${dupPort ? 'inErr' : ''}" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid ${dupPort ? 'var(--red)' : 'var(--sep)'};border-radius:10px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:13px;text-align:center;outline:none">
             </div>
           </div>
           <div id="rdPortWarn"></div>
@@ -1259,7 +1346,7 @@ function renderRouteSheet() {
 
           <div style="background:var(--bg);border:1px solid var(--sep);border-radius:12px;padding:11px 13px;display:flex;align-items:center;gap:12px">
             <div style="flex:1"><div style="font-size:12.5px;font-weight:600">啟用此路由</div><div style="font-size:11px;color:var(--text2);margin-top:2px">停用時不佔用端口，也不會隨程式啟動</div></div>
-            <button id="rdEnabled" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${d.enabled ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0">
+            <button id="rdEnabled" role="switch" aria-checked="${d.enabled}" aria-label="啟用此路由" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${d.enabled ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0">
               <span style="position:absolute;top:3px;left:${d.enabled ? '21px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
             </button>
           </div>
@@ -1286,7 +1373,9 @@ function renderRouteSheet() {
     const v = $('rdPort').value.replace(/[^0-9]/g, '').slice(0, 5);
     if ($('rdPort').value !== v) $('rdPort').value = v;
     state.draft.localPort = v;
-    $('rdPort').style.borderColor = state.routes.some(r => r.id !== state.routeEditing && String(r.localPort) === String(v)) ? 'var(--red)' : 'var(--sep)';
+    const dup = state.routes.some(r => r.id !== state.routeEditing && String(r.localPort) === String(v));
+    $('rdPort').style.borderColor = dup ? 'var(--red)' : 'var(--sep)';
+    $('rdPort').classList.toggle('inErr', dup);   // 聚焦時保留紅框，不被 accent 蓋掉
     fillPortWarn(); updateDraftJson();
   });
   $('sheetMount').querySelectorAll('[data-kind]').forEach(b => b.onclick = () => { syncDraft(); state.draft.kind = b.dataset.kind; renderRouteSheet(); });
@@ -1305,15 +1394,20 @@ function updateDraftJson() {
 }
 
 async function saveRouteSheet() {
+  // 連按兩下的話，第二下會在第一次 saveRoute 回來前送出：id 用 Date.now() 產生，
+  // 而 dupPort 檢查讀的是還沒更新的 state.routes —— 會生出兩條同埠路由。
+  if (state.routeBusy) return;
   syncDraft();
   const d = state.draft;
   const dupPort = state.routes.some(r => r.id !== state.routeEditing && String(r.localPort) === String(d.localPort));
   if (dupPort) { state.alert = { kind: 'conflict', title: '本地端口衝突', body: '端口 ' + d.localPort + ' 已被其他路由使用。同一個端口無法同時服務兩條路由，請改用其他端口。' }; renderAlert(); return; }
   const id = state.routeEditing || 'r-' + Date.now();
   const rec = { id, label: d.label.trim() || '未命名路由', localPort: +d.localPort || 0, kind: d.kind, hops: [...d.hops], enabled: d.enabled };
+  state.routeBusy = true; setSheetBusy('rdSave', '儲存中…');
   let routes;
   try { routes = await window.api.saveRoute(rec); }
-  catch (e) { flash('儲存路由失敗：' + (e && e.message || e), 'var(--red)'); return; }
+  catch (e) { state.routeBusy = false; setSheetBusy('rdSave', '儲存路由', false); flash('儲存路由失敗：' + (e && e.message || e), 'var(--red)'); return; }
+  state.routeBusy = false;
   state.routes = routes || (await window.api.getRoutes());
   state.sel = id;
   closeRouteSheet();
@@ -1338,7 +1432,8 @@ async function saveRouteSheet() {
 function openSrv(id) {
   const S = state;
   const s = id ? S.servers.find(x => x.id === id) : null;
-  S.srvSheet = true; S.srvEditing = id || null; S.showPass = false; S.credPick = ''; closeMenu();
+  closeAllSheets();
+  S.srvSheet = true; S.srvEditing = id || null; S.showPass = false; S.credPick = ''; S.srvBusy = false; closeMenu();
   S.proto = s ? sProto(s) : 'socks5';
   S.authOpen = s ? !!sUser(s) : false;
   S._form = {
@@ -1404,7 +1499,7 @@ function renderSrvSheet() {
           <div style="background:var(--bg);border:1px solid var(--sep);border-radius:12px">
             <div style="padding:11px 13px;display:flex;align-items:center;gap:12px">
               <div style="flex:1"><div style="font-size:12.5px;font-weight:600">${p.authTitle}</div><div style="font-size:11px;color:var(--text2);margin-top:2px">${p.authDesc}</div></div>
-              <button id="authToggle" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${S.authOpen ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0">
+              <button id="authToggle" role="switch" aria-checked="${S.authOpen}" aria-label="${p.authTitle}" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${S.authOpen ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0">
                 <span style="position:absolute;top:3px;left:${S.authOpen ? '21px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
               </button>
             </div>
@@ -1442,9 +1537,9 @@ function renderSrvSheet() {
           </div>
         </div>
         <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
-          <span style="font-size:11.5px;color:var(--text3);flex:1">儲存前會自動測試連線</span>
+          <span style="font-size:11.5px;color:var(--text3);flex:1">儲存後會自動測試連線</span>
           <button id="ssCancel" class="hvFill2" style="height:32px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>
-          <button id="ssSave" class="hvBright" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">測試並儲存</button>
+          <button id="ssSave" class="hvBright" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">儲存並測試</button>
         </div>
       </div>
     </div>`;
@@ -1460,7 +1555,17 @@ function renderSrvSheet() {
   if ($('ssBody')) $('ssBody').scrollTop = scrollTop;
 }
 
+// 面板送出中：把按鈕停用並換字，避免同一筆資料被送出兩次
+function setSheetBusy(btnId, label, busy = true) {
+  const b = $(btnId); if (!b) return;
+  b.disabled = busy;
+  b.textContent = label;
+  b.style.opacity = busy ? '.6' : '1';
+  b.style.cursor = busy ? 'not-allowed' : 'pointer';
+}
+
 async function saveSrvSheet() {
+  if (state.srvBusy) return;   // 連按兩下會新增兩台一模一樣的伺服器
   syncForm();
   const F = state._form;
   const host = F.host.trim();
@@ -1480,10 +1585,18 @@ async function saveSrvSheet() {
   const saveCred = $('fSaveCred') && $('fSaveCred').checked;
   const data = { name: name || host, host, port, type: state.proto, username: user, password: pass, note };
   let id;
-  if (state.srvEditing) { await window.api.updateServer(state.srvEditing, data); id = state.srvEditing; }
-  else { const srv = await window.api.addServer(data); id = srv.id; }
+  state.srvBusy = true; setSheetBusy('ssSave', '儲存中…');
+  try {
+    if (state.srvEditing) { await window.api.updateServer(state.srvEditing, data); id = state.srvEditing; }
+    else { const srv = await window.api.addServer(data); id = srv.id; }
+    state.servers = await window.api.getServers();
+  } catch (e) {
+    state.srvBusy = false; setSheetBusy('ssSave', '儲存並測試', false);
+    flash('儲存伺服器失敗：' + (e && e.message || e), 'var(--red)');
+    return;
+  }
+  state.srvBusy = false;
   if (saveCred && user) { state.creds.push({ id: 'c' + Date.now(), name: name || host, user, pass, note, shown: false }); saveCreds(); }
-  state.servers = await window.api.getServers();
   closeSrvSheet();
   renderSidebar();
   // 走 showTab 而不是只 updateChain()：儀表板可能正在顯示空狀態引導，
@@ -1534,10 +1647,13 @@ function openMenu(kind, anchor) {
       pick: () => { syncForm(); const c = state.creds.find(x => x.id === o.value); state.credPick = o.value; state._form.user = c ? c.user : ''; state._form.pass = c ? c.pass : ''; closeMenu(); renderSrvSheet(); } }));
   }
   const r = anchor.getBoundingClientRect();
-  const h = Math.min(260, items.length * 37 + 8), gap = 6;
+  // 分組標題只有 24px 高，全部當 37 算的話（規則庫選單有兩組）會高估，
+  // 貼近視窗底部時就會把選單翻到不該翻的方向。
+  const h = Math.min(260, items.reduce((a, o) => a + (o.header ? 24 : 37), 0) + 8), gap = 6;
   const below = window.innerHeight - r.bottom > h + 16;
   const width = (kind === 'split-default' || kind === 'split-target') ? Math.max(r.width, 214) : r.width;
-  state.menu = { kind, items, left: r.left, width, top: below ? r.bottom + gap : Math.max(8, r.top - h - gap) };
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));   // 不要開到視窗外
+  state.menu = { kind, items, left, width, top: below ? r.bottom + gap : Math.max(8, r.top - h - gap) };
   renderMenu();
 }
 function renderMenu() {
@@ -1575,7 +1691,7 @@ function renderAlert() {
   $('alertMount').innerHTML = `
     <div id="alertOverlay" style="position:absolute;inset:0;background:rgba(0,0,0,.34);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:140">
       <div id="alertBox" style="width:356px;background:var(--panel);border:1px solid var(--sep);border-radius:16px;box-shadow:0 20px 50px rgba(0,0,0,.3);padding:22px;display:flex;flex-direction:column;align-items:center;gap:13px;text-align:center;animation:fadeUp .2s ease-out">
-        <div style="width:44px;height:44px;border-radius:50%;background:${warn ? 'rgba(217,83,74,.14)' : 'var(--accent-dim)'};display:flex;align-items:center;justify-content:center;color:${warn ? 'var(--red)' : 'var(--accent)'}">
+        <div style="width:44px;height:44px;border-radius:50%;background:${warn ? 'var(--red-dim)' : 'var(--accent-dim)'};display:flex;align-items:center;justify-content:center;color:${warn ? 'var(--red)' : 'var(--accent)'}">
           <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3.5 2.8 19.5h18.4L12 3.5z"></path><path d="M12 9.5v4.5M12 17h.01"></path></svg>
         </div>
         <span style="font-size:15.5px;font-weight:700;letter-spacing:-.2px">${esc(a.title)}</span>
@@ -1605,6 +1721,7 @@ function alertAction() {
 function openLaunchSheet(routeId) {
   const rid = routeId || state.sel || (state.routes[0] || {}).id;
   if (!rid) { flash('請先建立一條路由', 'var(--amber)'); return; }
+  closeAllSheets();
   state.launchSheet = true;
   state.launchDraft = { routeId: rid, mode: 'browser', browserName: null, exePath: '', exeArgs: '', remember: true };
   state.launchBusy = false; state.launchPreview = '';
@@ -1662,14 +1779,14 @@ function renderLaunchSheet() {
             <button id="lsBrowse" class="hvFill2" style="flex-shrink:0;height:34px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">瀏覽…</button>
           </div>
           <input id="lsArgs" value="${esc(d.exeArgs)}" placeholder="啟動參數（選填）" style="height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12px;outline:none">
-          ${engineOff ? '<span style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:9px;background:rgba(217,139,31,.12);font-size:11px;color:var(--amber);line-height:1.5"><span style="flex:1;text-wrap:pretty">分流引擎未執行。這支程式要走代理，得先到分流頁啟動引擎。</span></span>' : ''}
+          ${engineOff ? '<span style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:9px;background:var(--amber-dim);font-size:11px;color:var(--amber);line-height:1.5"><span style="flex:1;text-wrap:pretty">分流引擎未執行。這支程式要走代理，得先到分流頁啟動引擎。</span></span>' : ''}
           <div style="background:var(--bg);border:1px solid var(--sep);border-radius:12px;overflow:hidden">
             <div style="display:flex;align-items:center;gap:12px;padding:10px 13px">
               <div style="flex:1;min-width:0">
                 <div style="font-size:12.5px;font-weight:500;white-space:nowrap">登記成程式規則</div>
                 <div style="font-size:11px;color:var(--text2);margin-top:2px;line-height:1.45;text-wrap:pretty">引擎只認程式名稱，沒有「只有這次」。關掉的話就只是啟動程式，不會走代理。</div>
               </div>
-              <button data-lsremember="1" role="switch" aria-label="登記成程式規則" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${d.remember ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${d.remember ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+              <button data-lsremember="1" role="switch" aria-checked="${d.remember}" aria-label="登記成程式規則" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${d.remember ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${d.remember ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
             </div>
           </div>
         </div>`;
@@ -1774,7 +1891,7 @@ function renderInstances() {
           <span title="${esc(meta)}" style="font-size:10.5px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isB ? '獨立視窗' : '引擎接管'}</span>
         </span>
       </span>
-      <span style="width:78px;flex-shrink:0"><span title="${isB ? '啟動參數綁定代理，免提權' : '分流引擎依程式名稱比對'}" style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:${isB ? 'var(--accent-dim)' : 'rgba(122,114,207,.14)'};color:${isB ? 'var(--accent)' : 'var(--purple)'};white-space:nowrap">${isB ? '獨立實例' : '引擎接管'}</span></span>
+      <span style="width:78px;flex-shrink:0"><span title="${isB ? '啟動參數綁定代理，免提權' : '分流引擎依程式名稱比對'}" style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:${isB ? 'var(--accent-dim)' : 'var(--purple-dim)'};color:${isB ? 'var(--accent)' : 'var(--purple)'};white-space:nowrap">${isB ? '獨立實例' : '引擎接管'}</span></span>
       <span style="flex:1;min-width:0;display:flex;align-items:center;gap:7px">
         <span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${on ? 'var(--good)' : 'var(--amber)'};animation:${on ? 'dotBeat 2.2s ease-in-out infinite' : 'none'}"></span>
         <span style="display:flex;flex-direction:column;min-width:0;gap:1px">
@@ -1852,7 +1969,7 @@ function renderKillswitch() {
     <div style="position:absolute;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:150">
       <div style="width:440px;background:var(--panel);border:1px solid var(--sep);border-radius:20px;box-shadow:0 28px 70px rgba(0,0,0,.36);padding:26px 26px 22px;display:flex;flex-direction:column;gap:16px;animation:fadeUp .22s ease-out">
         <div style="display:flex;align-items:center;gap:14px">
-          <div style="width:52px;height:52px;flex-shrink:0;border-radius:15px;background:rgba(217,83,74,.14);display:flex;align-items:center;justify-content:center;color:var(--red);animation:shieldIn .35s cubic-bezier(.32,.72,0,1)">
+          <div style="width:52px;height:52px;flex-shrink:0;border-radius:15px;background:var(--red-dim);display:flex;align-items:center;justify-content:center;color:var(--red);animation:shieldIn .35s cubic-bezier(.32,.72,0,1)">
             <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z"></path><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"></path></svg>
           </div>
           <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
@@ -1987,14 +2104,31 @@ async function doImport(servers, routes, overwrite) {
 // Toast / Banner / 主題
 // =====================================================================================
 let toastTimer;
+const toastQueue = [];
+// 連續的訊息原本會互相覆蓋（例如一次下載多個規則庫、每個都失敗，只看得到最後一則），
+// 所以排隊依序顯示；長訊息也給多一點時間讀完。
 function flash(text, color) {
+  if (state.toast) {
+    const last = toastQueue.length ? toastQueue[toastQueue.length - 1] : null;
+    if (state.toast === text || (last && last.text === text)) return;   // 同一則不重複排隊
+    if (toastQueue.length < 3) toastQueue.push({ text, color });
+    return;
+  }
+  showToast(text, color);
+}
+function showToast(text, color) {
   state.toast = text;
   $('toastDot').style.background = color || 'var(--accent)';
   $('toastText').textContent = text;
   const t = $('toast'); t.style.display = 'flex';
   t.style.animation = 'none'; void t.offsetHeight; t.style.animation = 'toastIn .2s ease-out';
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.style.display = 'none'; state.toast = ''; }, 2200);
+  toastTimer = setTimeout(() => {
+    state.toast = '';
+    const next = toastQueue.shift();
+    if (next) { showToast(next.text, next.color); return; }
+    t.style.display = 'none';
+  }, Math.min(5000, 2200 + Math.max(0, text.length - 10) * 60));
 }
 function showBanner() {
   const b = $('banner');
@@ -2208,7 +2342,7 @@ function condSummary(w) {
   if (w.network) out.push({ k: '協定', v: String(w.network).toUpperCase(), full: String(w.network).toUpperCase() });
   return out;
 }
-const condChipStyle = k => k === '程式' ? { bg: 'rgba(122,114,207,.14)', color: 'var(--purple)' }
+const condChipStyle = k => k === '程式' ? { bg: 'var(--purple-dim)', color: 'var(--purple)' }
   : (k === '埠' || k === '協定') ? { bg: 'var(--fill2)', color: 'var(--text2)' }
   : { bg: 'var(--accent-dim)', color: 'var(--accent)' };
 // 規則引用到、但還沒下載的規則庫
@@ -2355,7 +2489,7 @@ function buildSplit() {
       <div id="spSimResult"></div>
     </div>
 
-    <div id="spTableWrap" style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden;flex-shrink:0;transition:opacity .3s">
+    <div id="spTableWrap" style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow-x:auto;flex-shrink:0;transition:opacity .3s">
       <div id="spRulesTable"></div>
     </div>
 
@@ -2391,7 +2525,7 @@ function updateSplit() {
 
   const badge = $('spEngineBadge');
   badge.textContent = running ? '執行中' : starting ? '正在啟動' : state.splitElevated ? '已授權' : '需要授權';
-  badge.style.background = running ? 'rgba(47,158,120,.14)' : starting ? 'rgba(217,139,31,.14)' : state.splitElevated ? 'var(--fill2)' : 'rgba(217,139,31,.14)';
+  badge.style.background = running ? 'var(--good-dim)' : starting ? 'var(--amber-dim)' : state.splitElevated ? 'var(--fill2)' : 'var(--amber-dim)';
   badge.style.color = running ? 'var(--good)' : starting ? 'var(--amber)' : state.splitElevated ? 'var(--text2)' : 'var(--amber)';
 
   $('spEngineDesc').textContent = running
@@ -2463,7 +2597,7 @@ function renderSplitNotice() {
   if (state.splitMode === 'global') n = { text: `全域模式：所有流量走「${splitTargetLabel(state.splitGlobalTarget)}」，下方規則暫時停用（本機與內網仍直連）。`, bg: 'var(--accent-dim)', color: 'var(--accent)', icon: info, action: '切回規則', go: () => setSplitMode('rule') };
   else if (state.splitMode === 'direct') n = { text: '直連模式：所有流量不經代理，規則暫時停用。', bg: 'var(--fill2)', color: 'var(--text3)', icon: info, action: '切回規則', go: () => setSplitMode('rule') };
   else if (!state.splitElevated && !running) n = { text: '首次啟動需要系統管理員權限，用於建立虛擬網卡並注入路由表。整個過程只需同意一次。', bg: 'var(--accent-dim)', color: 'var(--accent)', icon: shield, action: '了解權限用途', go: () => { state.splitUac = true; renderSplitUac(); } };
-  else if (missing.length) n = { text: `有 ${missing.length} 條規則引用尚未下載的規則庫，這些規則目前不會生效。`, bg: 'rgba(217,139,31,.12)', color: 'var(--amber)', icon: warn, action: '全部下載', go: () => installRuleSets([...new Set(missing.flatMap(missingTags))]) };
+  else if (missing.length) n = { text: `有 ${missing.length} 條規則引用尚未下載的規則庫，這些規則目前不會生效。`, bg: 'var(--amber-dim)', color: 'var(--amber)', icon: warn, action: '全部下載', go: () => installRuleSets([...new Set(missing.flatMap(missingTags))]) };
   else if (!running && state.splitRules.length) n = { text: '規則要在分流引擎執行時才會生效。', bg: 'var(--fill2)', color: 'var(--text3)', icon: info, action: '啟動引擎', go: () => toggleSplitEngine() };
 
   if (!n) { el.innerHTML = ''; return; }
@@ -2493,32 +2627,36 @@ function splitVisibleRules() {
   });
 }
 
+// 動作欄：開關 40 + 上移 22 + 下移 22 + 編輯 26 + 刪除 26，加四個 6px 間距
+const SPLIT_ACTW = 40 + 22 + 22 + 26 + 26 + 6 * 4;
+const SPLIT_MINW = 26 + 26 + 150 + 110 + SPLIT_ACTW + 32;
+
 function renderSplitRules() {
   const el = $('spRulesTable'); if (!el) return;
   if (!state.splitRules.length) { el.innerHTML = ''; return; }
   const active = splitActive();
   const visible = splitVisibleRules();
 
-  const header = `<div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px">
+  const header = `<div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px;min-width:${SPLIT_MINW}px">
     <span style="width:26px;flex-shrink:0"></span><span style="width:26px;flex-shrink:0">#</span>
-    <span style="flex:1.3;min-width:0;white-space:nowrap">規則 · 條件</span>
-    <span style="flex:1;min-width:0;white-space:nowrap">流量走向</span>
-    <span style="width:104px;flex-shrink:0"></span>
+    <span style="flex:1.3 1 0;min-width:150px;padding-right:12px;box-sizing:border-box;white-space:nowrap">規則 · 條件</span>
+    <span style="flex:1 1 0;min-width:110px;padding-right:10px;box-sizing:border-box;white-space:nowrap">流量走向</span>
+    <span style="width:${SPLIT_ACTW}px;flex-shrink:0"></span>
   </div>`;
 
   const lanOn = state.splitLanDirect;
-  const builtin = `<div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${lanOn ? 'transparent' : 'var(--fill2)'};color:${lanOn ? 'var(--text)' : 'var(--text3)'}">
+  const builtin = `<div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;min-width:${SPLIT_MINW}px;background:${lanOn ? 'transparent' : 'var(--fill2)'};color:${lanOn ? 'var(--text)' : 'var(--text3)'}">
     <span title="內建規則：固定在最前面，可停用、不可刪除" style="width:26px;flex-shrink:0;display:flex;align-items:center;color:var(--text3)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg></span>
     <span style="width:26px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3)">0</span>
-    <span style="flex:1.3;min-width:0;padding-right:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:3px">
+    <span style="flex:1.3 1 0;min-width:150px;padding-right:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:3px">
       <span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">本機與內網</span><span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);flex-shrink:0">內建</span></span>
       <span title="${esc(LAN_CIDRS)}" style="font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">目的地 loopback · 私有網段 · link-local · mDNS（離線清單，無需下載）</span>
     </span>
-    <span style="flex:1;min-width:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--text2)"></span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">直接連線（不經代理）</span></span>
-    
-    <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
-      <button data-lan="1" title="${lanOn ? '停用內建保護（不建議：印表機、NAS、路由器管理頁會被送進代理）' : '啟用內建保護'}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${lanOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s"><span style="position:absolute;top:3px;left:${lanOn ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
-      <span style="width:58px"></span>
+    <span style="flex:1 1 0;min-width:110px;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px"><span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--text2)"></span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">直接連線（不經代理）</span></span>
+
+    <span style="width:${SPLIT_ACTW}px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
+      <button data-lan="1" role="switch" aria-checked="${lanOn}" aria-label="本機與內網直連" title="${lanOn ? '停用內建保護（不建議：印表機、NAS、路由器管理頁會被送進代理）' : '啟用內建保護'}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${lanOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s"><span style="position:absolute;top:3px;left:${lanOn ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+      <span style="width:${SPLIT_ACTW - 46}px"></span>
     </span>
   </div>`;
 
@@ -2533,23 +2671,26 @@ function renderSplitRules() {
     const dot = splitTargetDot(r.target, on);
     const dotAnim = on && active && !isBlock && r.target !== 'direct' ? 'dotBeat 2.2s ease-in-out infinite' : 'none';
     const rowBg = state.splitHitId === r.id ? 'var(--accent-dim)' : on ? 'transparent' : 'var(--fill2)';
-    return `<div data-srid="${esc(r.id)}" draggable="true" class="hvFill2" style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;background:${rowBg};box-shadow:${miss.length ? 'inset 3px 0 0 var(--amber)' : 'none'};cursor:grab;color:${on ? 'var(--text)' : 'var(--text3)'};transition:background .3s">
+    const pos = state.splitRules.indexOf(r);
+    return `<div data-srid="${esc(r.id)}" draggable="true" class="hvFill2" style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;min-width:${SPLIT_MINW}px;background:${rowBg};box-shadow:${miss.length ? 'inset 3px 0 0 var(--amber)' : 'none'};cursor:grab;color:${on ? 'var(--text)' : 'var(--text3)'};transition:background .3s">
       <span style="width:26px;flex-shrink:0;display:flex;align-items:center;color:var(--text3)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7h.01M8 12h.01M8 17h.01M16 7h.01M16 12h.01M16 17h.01"></path></svg></span>
       <span style="width:26px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;color:var(--text3)">${idx}</span>
-      <span style="flex:1.3;min-width:0;padding-right:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px">
-        <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</span>
+      <span style="flex:1.3 1 0;min-width:150px;padding-right:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px">
+        <span title="${esc(name)}" style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</span>
         <span style="display:flex;gap:5px;flex-wrap:wrap;min-width:0">${conds.map(c => {
           const st = condChipStyle(c.k);
           return `<span title="${esc(c.full)}" style="display:inline-flex;align-items:center;gap:4px;max-width:100%;height:18px;padding:0 6px;border-radius:5px;background:${st.bg};color:${st.color};font-size:10.5px;white-space:nowrap;overflow:hidden"><span style="font-weight:700;letter-spacing:.2px;flex-shrink:0">${esc(c.k)}</span><span style="overflow:hidden;text-overflow:ellipsis">${esc(c.v)}</span></span>`;
         }).join('')}</span>
       </span>
-      <span style="flex:1;min-width:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px">
+      <span style="flex:1 1 0;min-width:110px;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px">
         <span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${dot};animation:${dotAnim}"></span>
         <span title="${esc(targetLabel)}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:${targetColor}">${esc(targetLabel)}</span>
         ${miss.length ? `<button data-sact="dl" class="hvBright" style="flex-shrink:0;height:22px;padding:0 9px;border:none;border-radius:6px;background:var(--amber);color:#fff;font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap">下載規則庫</button>` : ''}
       </span>
-      <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
-        <button data-sact="toggle" title="${on ? '停用規則：' : '啟用規則：'}${esc(name)}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${on ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${on ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+      <span style="width:${SPLIT_ACTW}px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
+        <button data-sact="toggle" role="switch" aria-checked="${on}" title="${on ? '停用規則：' : '啟用規則：'}${esc(name)}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${on ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${on ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+        <button data-sact="up" title="上移一列" ${pos === 0 ? 'disabled' : ''} style="width:22px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:${pos === 0 ? 'not-allowed' : 'pointer'};opacity:${pos === 0 ? '.35' : '1'};display:flex;align-items:center;justify-content:center;flex-shrink:0" class="${pos === 0 ? '' : 'hvAcc'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 14 12 8 18 14"></polyline></svg></button>
+        <button data-sact="down" title="下移一列" ${pos === state.splitRules.length - 1 ? 'disabled' : ''} style="width:22px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:${pos === state.splitRules.length - 1 ? 'not-allowed' : 'pointer'};opacity:${pos === state.splitRules.length - 1 ? '.35' : '1'};display:flex;align-items:center;justify-content:center;flex-shrink:0" class="${pos === state.splitRules.length - 1 ? '' : 'hvAcc'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 10 12 16 18 10"></polyline></svg></button>
         <button data-sact="edit" class="hvAcc" title="編輯規則" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
         <button data-sact="del" class="hvRed" title="${pend ? '再按一次確認刪除' : '刪除規則'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">${pend
           ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
@@ -2561,17 +2702,17 @@ function renderSplitRules() {
   const noVisible = visible.length === 0
     ? `<div style="padding:26px 20px;text-align:center;color:var(--text3);font-size:12.5px;border-bottom:1px solid var(--sep)">沒有符合篩選條件的規則</div>` : '';
 
-  const defaultRow = `<div style="display:flex;align-items:center;padding:10px 16px;font-size:12.5px;background:var(--fill2)">
+  const defaultRow = `<div style="display:flex;align-items:center;padding:10px 16px;font-size:12.5px;background:var(--fill2);min-width:${SPLIT_MINW}px">
     <span style="width:26px;flex-shrink:0"></span><span style="width:26px;flex-shrink:0;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px">∞</span>
-    <span style="flex:1.3;min-width:0;padding-right:12px;box-sizing:border-box;display:flex;align-items:center;gap:7px;color:var(--text2)">
+    <span style="flex:1.3 1 0;min-width:150px;padding-right:12px;box-sizing:border-box;display:flex;align-items:center;gap:7px;color:var(--text2)">
       <span style="font-weight:600;white-space:nowrap">其他所有流量</span>
       <span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:var(--fill);color:var(--text2);white-space:nowrap">預設</span>
     </span>
-    <span style="flex:1;min-width:0;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px;color:var(--text2)">
+    <span style="flex:1 1 0;min-width:110px;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px;color:var(--text2)">
       <span style="width:7px;height:7px;border-radius:50%;background:${splitTargetDot(state.splitDefaultTarget)};flex-shrink:0"></span>
       <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(splitTargetLabel(state.splitDefaultTarget))}</span>
     </span>
-    <span style="width:104px;flex-shrink:0;display:flex;justify-content:flex-end"><button id="spDefaultChange" class="hvAccDim" style="height:26px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--accent);font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap">變更</button></span>
+    <span style="width:${SPLIT_ACTW}px;flex-shrink:0;display:flex;justify-content:flex-end"><button id="spDefaultChange" class="hvAccDim" style="height:26px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--accent);font-size:11.5px;font-weight:500;cursor:pointer;white-space:nowrap">變更</button></span>
   </div>`;
 
   el.innerHTML = header + builtin + rowsHtml + noVisible + defaultRow;
@@ -2594,12 +2735,27 @@ function renderSplitRules() {
       renderSplitRules(); persistSplit({ rules: state.splitRules });
     });
     row.querySelector('[data-sact="toggle"]').onclick = e => { e.stopPropagation(); state.splitRules = state.splitRules.map(x => x.id === rid ? { ...x, on: x.on === false } : x); updateSplit(); persistSplit({ rules: state.splitRules }); };
+    ['up', 'down'].forEach(dir => {
+      const b = row.querySelector(`[data-sact="${dir}"]`);
+      if (b && !b.disabled) b.onclick = e => { e.stopPropagation(); moveSplitRule(rid, dir === 'up' ? -1 : 1); };
+    });
     row.querySelector('[data-sact="edit"]').onclick = e => { e.stopPropagation(); openSplitSheet(rid); };
     row.querySelector('[data-sact="del"]').onclick = e => { e.stopPropagation(); splitDeleteRule(rid); };
     const dl = row.querySelector('[data-sact="dl"]');
     if (dl) dl.onclick = e => { e.stopPropagation(); installRuleSets(missingTags(state.splitRules.find(x => x.id === rid))); };
   });
   if ($('spDefaultChange')) $('spDefaultChange').onclick = e => { e.stopPropagation(); openMenu('split-default', $('spDefaultChange')); };
+}
+
+// 順序決定命中優先，拖曳不是每個人都用得順手（也不能用鍵盤）
+function moveSplitRule(rid, delta) {
+  const from = state.splitRules.findIndex(x => x.id === rid);
+  const to = from + delta;
+  if (from < 0 || to < 0 || to >= state.splitRules.length) return;
+  const arr = [...state.splitRules];
+  [arr[from], arr[to]] = [arr[to], arr[from]];
+  state.splitRules = arr;
+  renderSplitRules(); persistSplit({ rules: arr });
 }
 
 async function toggleLanDirect() {
@@ -2859,6 +3015,7 @@ function setDraftWhen(patch) {
 }
 function openSplitSheet(id) {
   const r = id ? state.splitRules.find(x => x.id === id) : null;
+  closeAllSheets();
   state.splitSheet = true; state.splitEditing = id || null; closeMenu();
   const w = r ? JSON.parse(JSON.stringify(rWhen(r))) : {};
   state.splitDraft = { name: r ? (r.name || '') : '', when: w, target: r ? r.target : (state.routes[0] ? state.routes[0].id : 'direct'), error: '' };
@@ -2921,7 +3078,7 @@ function renderSplitSheet() {
         body += `<button id="spRsPick" class="hvFill2" style="display:flex;align-items:center;gap:9px;height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--panel);color:${dTags.length ? 'var(--text)' : 'var(--text3)'};font-size:12.5px;cursor:pointer;text-align:left"><span style="flex:1">${dTags.length ? `已選 ${dTags.length} 個` : '選擇地區或分類…'}</span><span style="color:var(--text3);font-size:9px">▾</span></button>
           ${dTags.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${dTags.map(t => {
             const ok = isInstalled(t);
-            return `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 6px 0 9px;border-radius:13px;background:${ok ? 'var(--accent-dim)' : 'rgba(217,139,31,.14)'};color:${ok ? 'var(--accent)' : 'var(--amber)'};font-size:11.5px;font-weight:500;white-space:nowrap">${esc(catLabel(t))}<span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:10px;opacity:.7">${esc(t)}</span><button data-schip="${esc(t)}" title="移除" style="width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.12);color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="8" height="8" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button></span>`;
+            return `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 6px 0 9px;border-radius:13px;background:${ok ? 'var(--accent-dim)' : 'var(--amber-dim)'};color:${ok ? 'var(--accent)' : 'var(--amber)'};font-size:11.5px;font-weight:500;white-space:nowrap">${esc(catLabel(t))}<span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:10px;opacity:.7">${esc(t)}</span><button data-schip="${esc(t)}" title="移除" style="width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.12);color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="8" height="8" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button></span>`;
           }).join('')}</div>` : ''}
           <span style="font-size:11px;color:var(--text3);line-height:1.5;text-wrap:pretty">依「目的地在哪個國家」或「屬於哪類網站」（如 Netflix、廣告）比對，選了才下載對應清單，可複選。</span>`;
       }
@@ -2958,7 +3115,7 @@ function renderSplitSheet() {
             <button id="spTargetBtn" class="hvFill2" style="display:flex;align-items:center;gap:9px;height:36px;padding:0 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:${d.target === 'block' ? 'var(--red)' : 'var(--text)'};font-size:12.5px;cursor:pointer;text-align:left">
               <span style="width:7px;height:7px;border-radius:50%;background:${d.target === 'block' ? 'var(--red)' : splitTargetDot(d.target)};flex-shrink:0"></span>
               <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(splitTargetLabel(d.target))}</span>
-              <span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:${d.target === 'block' ? 'rgba(217,83,74,.14)' : 'var(--fill2)'};color:${d.target === 'block' ? 'var(--red)' : 'var(--text2)'};flex-shrink:0;white-space:nowrap">${splitTargetBadge(d.target)}</span>
+              <span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 6px;border-radius:5px;background:${d.target === 'block' ? 'var(--red-dim)' : 'var(--fill2)'};color:${d.target === 'block' ? 'var(--red)' : 'var(--text2)'};flex-shrink:0;white-space:nowrap">${splitTargetBadge(d.target)}</span>
               <span style="color:var(--text3);font-size:9px">▾</span>
             </button>
           </div>
@@ -3079,7 +3236,7 @@ function renderKsScope() {
   const apps = state.settings.killSwitchApps || [];
   const seg = [['all', '所有走代理的程式'], ['apps', '只有以下程式']].map(([k, label]) =>
     `<button data-ksscope="${k}" style="border:none;cursor:pointer;height:26px;padding:0 10px;border-radius:6px;font-size:12px;white-space:nowrap;${segCss(scope === k)}">${label}</button>`).join('');
-  const chips = apps.map(a => `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 6px 0 9px;border-radius:13px;background:rgba(122,114,207,.14);color:var(--purple);font-size:11.5px;font-weight:500;white-space:nowrap">${esc(a)}<button data-kschip="${esc(a)}" title="移除" style="width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.12);color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="8" height="8" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button></span>`).join('');
+  const chips = apps.map(a => `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 6px 0 9px;border-radius:13px;background:var(--purple-dim);color:var(--purple);font-size:11.5px;font-weight:500;white-space:nowrap">${esc(a)}<button data-kschip="${esc(a)}" title="移除" style="width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.12);color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="8" height="8" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button></span>`).join('');
 
   el.innerHTML = `
     <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;border-top:1px solid var(--sep)">
@@ -3159,7 +3316,7 @@ function renderRuleSets() {
       <div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px;opacity:${autoOn ? '1' : '.45'}">
         ${[7, 14, 30].map(d => `<button data-rsd="${d}" ${autoOn ? '' : 'disabled'} style="border:none;cursor:${autoOn ? 'pointer' : 'not-allowed'};height:26px;padding:0 10px;border-radius:6px;font-size:12px;white-space:nowrap;${segCss(days === d)}">${d}</button>`).join('')}
       </div>
-      <button data-rsauto="1" role="switch" aria-label="自動更新規則庫" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${autoOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${autoOn ? '21px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
+      <button data-rsauto="1" role="switch" aria-checked="${autoOn}" aria-label="自動更新規則庫" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${autoOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${autoOn ? '21px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
     </div>
     <div style="padding:13px 16px;display:flex;align-items:center;gap:14px">
       <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">下載經由</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">規則庫來源在 GitHub</div></div>
