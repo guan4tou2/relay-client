@@ -123,7 +123,7 @@ function mount() {
         <button id="btnTheme" class="hvFill2" title="切換深淺色" aria-label="切換深淺色" style="width:28px;height:28px;border:none;border-radius:7px;background:transparent;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"></path></svg>
         </button>
-        <button id="btnAdd" class="hvBright" title="新增路由 (Ctrl+N)" style="display:flex;align-items:center;gap:5px;border:none;cursor:pointer;height:30px;padding:0 11px;border-radius:8px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;white-space:nowrap">
+        <button id="btnAdd" class="hvBright" title="新增路由 (Ctrl+N)" style="display:flex;align-items:center;justify-content:center;gap:5px;border:none;cursor:pointer;height:30px;min-width:104px;padding:0 11px;border-radius:8px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;white-space:nowrap">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>新增路由
         </button>
         <div style="display:flex;gap:1px;margin-left:2px">
@@ -186,7 +186,7 @@ function mount() {
   window.api.getAppInfo().then(i => { const el = document.getElementById('aboutVer'); if (el && i && i.version) el.textContent = i.version; }).catch(() => {});
 
   $('btnTheme').onclick = () => setTheme(state.theme === 'dark' ? '淺色' : '深色');
-  $('btnAdd').onclick = () => state.tab === 'split' ? openSplitSheet() : openRoute();
+  $('btnAdd').onclick = () => { const a = tabAdd(); if (a) a.go(); };
   $('btnMin').onclick = () => window.api.windowMinimize();
   $('btnMax').onclick = () => window.api.windowMaximize();
   $('btnClose').onclick = () => window.api.windowClose();
@@ -195,8 +195,7 @@ function mount() {
   document.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
       e.preventDefault();
-      if (state.tab === 'logs' || state.tab === 'settings') return;   // 這兩頁沒有新增動作
-      if (state.tab === 'split') openSplitSheet(); else openRoute();
+      const a = tabAdd(); if (a) a.go();   // 沒有新增動作的分頁（紀錄、設定）就不做事
     }
     // Ctrl+1–6 切分頁；Ctrl+L 用選取的路由開瀏覽器
     if ((e.metaKey || e.ctrlKey) && /^[1-6]$/.test(e.key)) {
@@ -987,6 +986,15 @@ function saveCreds() { localStorage.setItem('proxy_creds', JSON.stringify(state.
 // 各欄 min-width 加左右 padding 的總和，算法同 SRV_MINW
 const CRED_MINW = 96 + 100 + 96 + 80 + 58 + 32;
 
+// 新增一筆空白憑證並直接進入編輯列（標題列的「新增憑證」也走這裡）
+function addCred() {
+  const id = 'c' + Date.now();
+  state.creds.push({ id, name: '', user: '', pass: '', note: '', shown: false });
+  state.credEdit = id;
+  state.cdraft = { name: '', user: '', pass: '', note: '' };
+  renderCreds();
+}
+
 // 憑證是唯一沒有二次確認的刪除，而且按下去就直接覆寫 localStorage，救不回來
 function deleteCredRow(id) {
   if (state.pendingCredDel !== id) {
@@ -1053,7 +1061,7 @@ function renderCreds() {
       </div>
     </div>`;
 
-  $('credAdd').onclick = () => { const id = 'c' + Date.now(); S.creds.push({ id, name: '', user: '', pass: '', note: '', shown: false }); S.credEdit = id; S.cdraft = { name: '', user: '', pass: '', note: '' }; renderCreds(); };
+  $('credAdd').onclick = () => addCred();
   $('view-creds').querySelectorAll('[data-ctoggle]').forEach(b => b.onclick = () => { const c = S.creds.find(x => x.id === b.dataset.ctoggle); c.shown = !c.shown; renderCreds(); });
   $('view-creds').querySelectorAll('[data-cedit]').forEach(b => b.onclick = () => { const c = S.creds.find(x => x.id === b.dataset.cedit); S.credEdit = c.id; S.cdraft = { name: c.name, user: c.user, pass: c.pass, note: c.note }; renderCreds(); });
   $('view-creds').querySelectorAll('[data-cdel]').forEach(b => b.onclick = () => deleteCredRow(b.dataset.cdel));
@@ -2381,14 +2389,25 @@ function syncSplitTitlebar() {
   else { st.textContent = '分流引擎未執行'; st.style.color = 'var(--text3)'; }
   $('markArc').setAttribute('stroke', running ? '#7fe3bd' : 'rgba(255,255,255,.55)');
 }
+// 標題列那顆「新增」是分頁的新增，不是永遠的「新增路由」——伺服器頁與憑證頁
+// 各有自己的新增對象，掛著「新增路由」按下去會跑去開路由面板。
+// 沒列在這裡的分頁（紀錄、設定）沒有新增動作，整顆隱藏。
+// 標籤字數不一（新增伺服器 5 字、新增路由 4 字），btnAdd 因此給了固定 min-width：
+// 不然按鈕一變寬，置中的分頁列就會跟著位移，切到伺服器頁時整排會跳一下。
+const TAB_ADD = {
+  dashboard: { label: '新增路由', go: () => openRoute() },
+  split: { label: '新增規則', go: () => openSplitSheet() },
+  servers: { label: '新增伺服器', go: () => openSrv() },
+  creds: { label: '新增憑證', go: () => addCred() },
+};
+const tabAdd = () => TAB_ADD[state.tab] || null;
+
 function syncAddButton() {
   const b = $('btnAdd'); if (!b) return;
-  // 紀錄與設定頁沒有「新增」這個動作 → 整顆隱藏，免得按了跑去新增路由
-  const hidden = state.tab === 'logs' || state.tab === 'settings';
-  b.style.display = hidden ? 'none' : 'flex';
-  if (hidden) return;
-  const isSplit = state.tab === 'split';
-  const label = isSplit ? '新增規則' : '新增路由';
+  const act = tabAdd();
+  b.style.display = act ? 'flex' : 'none';
+  if (!act) return;
+  const label = act.label;
   b.title = label + ' (Ctrl+N)';
   b.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>${label}`;
 }
