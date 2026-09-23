@@ -82,7 +82,8 @@ class SocksRelay extends EventEmitter {
 
       const request = await this._readRequest(clientSocket);
       const { host, port } = request;
-      this.emit('log', 'info', `CONNECT ${host}:${port}`, `from ${clientSocket.remoteAddress}`);
+      // debug 而非 info：這是逐連線的訊息，畫面上照常看得到，但預設不寫進紀錄檔
+      this.emit('log', 'debug', `CONNECT ${host}:${port}`, `from ${clientSocket.remoteAddress}`);
 
       const remoteSocket = this.chain.length > 1
         ? await connectViaChain(this.chain, { host, port })

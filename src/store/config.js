@@ -19,7 +19,10 @@ const DEFAULT_SETTINGS = {
   rulesetAutoUpdate: false,
   rulesetUpdateDays: 7,
   rulesetDetourRouteId: null,   // 下載規則庫時要不要繞某條路由（null = 直連）
-  rulesetLastCheck: 0
+  rulesetLastCheck: 0,
+  // 逐連線的 CONNECT 預設只留在畫面上、不寫進紀錄檔：它佔了紀錄檔 99.98% 的行數，
+  // 開著等於每三天就把所有診斷訊息輪替掉。要抓連線層的問題再臨時打開。
+  logConnections: false
 };
 
 const store = new Store({

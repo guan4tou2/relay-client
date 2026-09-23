@@ -155,7 +155,8 @@ describe('HttpBridge — HTTPS CONNECT tunnel', () => {
       });
 
       req.on('connect', (res, socket) => {
-        expect(logSpy).toHaveBeenCalledWith('info', expect.stringContaining('CONNECT test.com:443'));
+        // 逐連線的 CONNECT 是 debug，不是 info：畫面上照常看得到，但預設不寫進紀錄檔
+        expect(logSpy).toHaveBeenCalledWith('debug', expect.stringContaining('CONNECT test.com:443'));
         socket.destroy();
         fakeRemote.destroy();
         done();

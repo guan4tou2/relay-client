@@ -73,7 +73,8 @@ class HttpBridge extends EventEmitter {
     try {
       const [host, portStr] = req.url.split(':');
       const port = parseInt(portStr, 10) || 443;
-      this.emit('log', 'info', `CONNECT ${host}:${port}`);
+      // debug 而非 info：這是逐連線的訊息，畫面上照常看得到，但預設不寫進紀錄檔
+      this.emit('log', 'debug', `CONNECT ${host}:${port}`);
 
       const remoteSocket = this.chain.length > 1
         ? await connectViaChain(this.chain, { host, port })
