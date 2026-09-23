@@ -462,14 +462,14 @@ function renderGuide() {
 // =====================================================================================
 function buildDashboard() {
   $('view-dash').innerHTML = `
-    <div style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;flex-direction:column;gap:12px">
       <div id="dashStatus" style="display:flex;align-items:center;gap:8px;font-size:12.5px;padding:0 2px;flex-wrap:wrap"></div>
-      <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:15px">
+      <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:13px 20px;display:flex;flex-direction:column;gap:12px">
         <div style="display:flex;align-items:center;gap:20px">
-          <button id="powerBtn" title="啟動路由（空白鍵）" style="width:100px;height:100px;flex-shrink:0;position:relative;border:none;background:transparent;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center">
+          <button id="powerBtn" title="啟動路由（空白鍵）" style="width:84px;height:84px;flex-shrink:0;position:relative;border:none;background:transparent;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center">
             <span id="pwRipple" style="position:absolute;inset:-6px;border-radius:50%;border:1px solid var(--good);opacity:0"></span>
             <span id="pwHalo" style="position:absolute;inset:0;border-radius:50%;background:transparent"></span>
-            <svg width="100" height="100" viewBox="0 0 256 256" style="position:absolute;inset:0;overflow:visible">
+            <svg width="84" height="84" viewBox="0 0 256 256" style="position:absolute;inset:0;overflow:visible">
               <defs>
                 <linearGradient id="v2tail" x1="0" y1="0" x2="1" y2="1"><stop id="tailStop0" offset="0" stop-color="var(--accent)" stop-opacity="0"></stop><stop id="tailStop1" offset="1" stop-color="var(--accent)" stop-opacity="1"></stop></linearGradient>
                 <linearGradient id="v2sweep" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity="0"></stop><stop offset=".55" stop-color="var(--accent)" stop-opacity=".55"></stop><stop offset="1" stop-color="var(--accent)" stop-opacity="1"></stop></linearGradient>
@@ -499,7 +499,7 @@ function buildDashboard() {
             </button>
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:10px;padding-top:13px;border-top:1px solid var(--sep);flex-wrap:wrap;row-gap:9px">
+        <div style="display:flex;align-items:center;gap:10px;padding-top:11px;border-top:1px solid var(--sep);flex-wrap:wrap;row-gap:9px">
           <button id="copyAddr" class="hvFill2" title="複製本地代理位址" style="display:flex;align-items:center;gap:7px;height:28px;padding:0 10px;border:1px solid var(--sep);border-radius:9px;background:transparent;color:var(--text);cursor:pointer;font-size:11.5px;white-space:nowrap;flex-shrink:0">
             <span id="curKind" style="color:var(--text3);font-weight:600"></span>
             <span id="curAddr" style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace"></span>
@@ -511,7 +511,7 @@ function buildDashboard() {
         </div>
       </div>
 
-      <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:16px 18px;display:flex;flex-direction:column;gap:13px">
+      <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:13px 18px;display:flex;flex-direction:column;gap:10px">
         <div style="display:flex;align-items:center;gap:10px">
           <span style="font-size:13.5px;font-weight:600;white-space:nowrap">連線鏈路</span>
           <span id="chainSummary" style="font-size:11.5px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
@@ -519,7 +519,7 @@ function buildDashboard() {
         <div id="chainRow" style="display:flex;align-items:flex-start;gap:0;overflow-x:auto;padding-bottom:2px"></div>
       </div>
 
-      <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:15px 18px;display:flex;flex-direction:column;gap:10px">
+      <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:12px 18px;display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;align-items:center;gap:14px">
           <span style="font-size:13.5px;font-weight:600;white-space:nowrap">即時速率</span>
           <div style="display:flex;align-items:center;gap:14px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12px">
@@ -535,7 +535,7 @@ function buildDashboard() {
           <polyline id="lineDown" points="" fill="none" stroke="var(--good)" stroke-width="2" stroke-linejoin="round"></polyline>
           <polyline id="lineUp" points="" fill="none" stroke="var(--purple)" stroke-width="1.6" stroke-linejoin="round" stroke-dasharray="3 3"></polyline>
         </svg>
-        <div style="display:flex;gap:22px;padding-top:11px;border-top:1px solid var(--sep)">
+        <div style="display:flex;gap:22px;padding-top:9px;border-top:1px solid var(--sep)">
           <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:10.5px;color:var(--text3);font-weight:600;letter-spacing:.3px;white-space:nowrap">連線數</span><span id="statConns" style="font-size:16px;font-weight:600;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">0</span></div>
           <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:10.5px;color:var(--text3);font-weight:600;letter-spacing:.3px;white-space:nowrap">上傳總量</span><span id="statUp" style="font-size:16px;font-weight:600;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">0 B</span></div>
           <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:10.5px;color:var(--text3);font-weight:600;letter-spacing:.3px;white-space:nowrap">下載總量</span><span id="statDown" style="font-size:16px;font-weight:600;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">0 B</span></div>
@@ -612,8 +612,8 @@ function updateChain() {
     const dash = (running || connecting) ? '4 4' : '0';
     const flowAnim = (running || connecting) ? 'hopFlow .6s linear infinite' : 'none';
     return `<div style="display:flex;align-items:flex-start;flex-shrink:0">
-      <div style="width:118px;display:flex;flex-direction:column;align-items:center;gap:7px">
-        <div style="width:38px;height:38px;border-radius:11px;background:${lit ? 'var(--accent-dim)' : 'var(--fill2)'};border:1px solid ${lit ? 'var(--accent)' : 'var(--sep)'};display:flex;align-items:center;justify-content:center;color:${lit ? 'var(--accent)' : 'var(--text3)'}">${c.icon}</div>
+      <div style="width:118px;display:flex;flex-direction:column;align-items:center;gap:5px">
+        <div style="width:34px;height:34px;border-radius:10px;background:${lit ? 'var(--accent-dim)' : 'var(--fill2)'};border:1px solid ${lit ? 'var(--accent)' : 'var(--sep)'};display:flex;align-items:center;justify-content:center;color:${lit ? 'var(--accent)' : 'var(--text3)'}">${c.icon}</div>
         <span style="font-size:12px;font-weight:600;text-align:center;max-width:112px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>
         <span style="font-size:10.5px;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;text-align:center;white-space:nowrap;max-width:112px;overflow:hidden;text-overflow:ellipsis">${esc(c.sub)}</span>
         <span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);white-space:nowrap">${esc(c.badge)}</span>
@@ -626,17 +626,40 @@ function updateChain() {
   }).join('');
 }
 
+// 速率圖取樣：TICK_MS 一點，所以 60 秒 = 200 點、5 分鐘 = 1000 點
+const TICK_MS = 300;
+const RANGE_SEC = { '60 秒': 60, '5 分鐘': 300 };
+const SERIES_MAX = Math.round(300 * 1000 / TICK_MS); // 緩衝一律留滿 5 分鐘，切區間才不用等資料重長
+const DRAW_MAX = 280;                                // 圖寬 560，最密兩點一像素
+
+// 桶內取最大值降採樣：1000 點壓成 280 點時，突波不會被平均掉
+function thinSeries(pts, n) {
+  if (pts.length <= n) return pts;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a = Math.floor(i * pts.length / n), b = Math.max(a + 1, Math.floor((i + 1) * pts.length / n));
+    let d = 0, u = 0;
+    for (let j = a; j < b; j++) { if (pts[j].down > d) d = pts[j].down; if (pts[j].up > u) u = pts[j].up; }
+    out.push({ down: d, up: u });
+  }
+  return out;
+}
+
 function updateTraffic() {
   if (!$('lineDown')) return;
   const S = ses(state.sel);
-  const pts = S.series || [];
-  const max = Math.max(3000000, ...pts.map(p => Math.max(p.down, p.up)));
-  const div = Math.max(1, pts.length - 1); // 折線永遠鋪滿寬度（否則 5 分鐘檔只擠在左邊約 20%）
-  const xy = key => pts.map((p, i) => `${(i / div) * 560},${88 - (p[key] / max) * 78}`).join(' ');
+  const cap = Math.round((RANGE_SEC[state.range] || 60) * 1000 / TICK_MS);
+  const raw = (S.series || []).slice(-cap);
+  const max = Math.max(3000000, ...raw.map(p => Math.max(p.down, p.up)));
+  // x 軸釘右緣、依時間往左長；不再把手上的點硬撐滿整條寬度，否則資料不滿一格時兩個區間會畫出一模一樣的圖
+  const x0 = raw.length ? 560 * (cap - raw.length) / (cap - 1) : 560;
+  const pts = thinSeries(raw, DRAW_MAX);
+  const step = pts.length > 1 ? (560 - x0) / (pts.length - 1) : 0;
+  const xy = key => pts.map((p, i) => `${(x0 + i * step).toFixed(1)},${(88 - (p[key] / max) * 78).toFixed(1)}`).join(' ');
   const ld = xy('down'), lu = xy('up');
   $('lineDown').setAttribute('points', ld);
   $('lineUp').setAttribute('points', lu);
-  $('areaDown').setAttribute('points', ld ? `0,88 ${ld} 560,88` : '');
+  $('areaDown').setAttribute('points', ld ? `${x0.toFixed(1)},88 ${ld} 560,88` : '');
   $('downRate').textContent = fmtBytes(S.down || 0) + '/s';
   $('upRate').textContent = fmtBytes(S.up || 0) + '/s';
   $('statConns').textContent = String(Math.max(0, S.conns || 0)); // 夾住下界，永不顯示負值
@@ -917,64 +940,176 @@ function logHitBadge(l) {
   return `<button data-loghit="${esc(m.ruleId || '')}" title="跳到分流規則" style="flex-shrink:0;max-width:220px;border:none;border-radius:5px;padding:2px 7px;background:${bg};color:${color};font-size:10.5px;font-weight:600;cursor:${m.ruleId ? 'pointer' : 'default'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">${esc(label)}</button>`;
 }
 
-function renderLogList() {
+// toLocaleTimeString 在 Chromium 裡實測每次 69µs，一次重畫 300 列就是 21ms。
+// 每筆只算一次，之後重畫直接讀快取。
+function logTime(l) {
+  if (l._time === undefined) l._time = new Date(l.time || l.t).toLocaleTimeString('en-GB', { hour12: false });
+  return l._time;
+}
+
+// 篩選條件以前在 renderLogList 跟 copyLogs 各寫了一次同樣的長字串 —— 改一邊就會漏掉另一邊。
+function logPasses(l) {
   const S = state;
-  const shown = S.logs.filter(l => (S.level === 'all' || l.level === S.level) && (!S.search || `${l.message} ${l.detail || ''} ${l.source}`.toLowerCase().includes(S.search.toLowerCase())));
-  const list = $('logList');
-  if (shown.length === 0) { list.innerHTML = `<div style="padding:60px 20px;text-align:center;color:var(--text3);font-size:12.5px">沒有符合的紀錄</div>`; return; }
-  const keys = [...new Set(shown.map(l => l.source))];
-  list.innerHTML = keys.map(k => {
-    const rows = shown.filter(l => l.source === k);
-    const g = logGroupTitle(k);
-    return `<div>
+  return (S.level === 'all' || l.level === S.level)
+    && !(hideDebug() && l.level === 'debug' && S.level !== 'debug')
+    && (!S.search || `${l.message} ${l.detail || ''} ${l.source}`.toLowerCase().includes(S.search.toLowerCase()));
+}
+const logShown = () => state.logs.filter(logPasses);
+
+function logRowHtml(l) {
+  const exp = state.expanded[l.id];
+  return `<div data-log="${l.id}" ${l.detail ? `role="button" tabindex="0" aria-expanded="${!!exp}" aria-label="展開詳細訊息"` : ''} style="padding:5px 14px;display:flex;gap:10px;align-items:flex-start;cursor:${l.detail ? 'pointer' : 'default'};border-bottom:1px solid var(--sep);font-size:12px;line-height:1.6" class="${l.detail ? 'hvFill2' : ''}">
+      <span style="width:58px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text3);font-size:11px;padding-top:1px">${logTime(l)}</span>
+      <span title="${l.level}" style="width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:6px;background:${LEVELS[l.level] || LEVELS.info}"></span>
+      <span style="width:88px;flex-shrink:0;color:var(--purple);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;padding-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.source)}</span>
+      <span style="flex:1;min-width:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;word-break:break-word">${esc(l.message)}<span style="color:var(--text2)">${l.detail && exp ? '  ' + esc(l.detail) : ''}</span></span>
+      ${logHitBadge(l)}
+      <span style="flex-shrink:0;color:var(--text3);font-size:10px;padding-top:2px">${l.detail ? (exp ? '▾' : '▸') : ''}</span>
+    </div>`;
+}
+
+function logGroupHtml(k, rows) {
+  const g = logGroupTitle(k);
+  return `<div data-loggroup>
       <div style="position:sticky;top:0;padding:7px 14px;background:var(--panelq);backdrop-filter:blur(12px);border-bottom:1px solid var(--sep);display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text2)">
         <span style="font-weight:600;color:var(--text)">${esc(g.title)}</span>
         <span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">${esc(g.meta)}</span>
-        <span style="margin-left:auto;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text3)">${rows.length} 筆</span>
+        <span data-logcount style="margin-left:auto;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text3)">${rows.length} 筆</span>
       </div>
-      ${rows.map(l => {
-        const time = new Date(l.time || l.t).toLocaleTimeString('en-GB', { hour12: false });
-        const exp = S.expanded[l.id];
-        return `<div data-log="${l.id}" ${l.detail ? `role="button" tabindex="0" aria-expanded="${!!exp}" aria-label="展開詳細訊息"` : ''} style="padding:5px 14px;display:flex;gap:10px;align-items:flex-start;cursor:${l.detail ? 'pointer' : 'default'};border-bottom:1px solid var(--sep);font-size:12px;line-height:1.6" class="${l.detail ? 'hvFill2' : ''}">
-          <span style="width:58px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text3);font-size:11px;padding-top:1px">${time}</span>
-          <span title="${l.level}" style="width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:6px;background:${LEVELS[l.level] || LEVELS.info}"></span>
-          <span style="width:88px;flex-shrink:0;color:var(--purple);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;padding-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.source)}</span>
-          <span style="flex:1;min-width:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;word-break:break-word">${esc(l.message)}<span style="color:var(--text2)">${l.detail && exp ? '  ' + esc(l.detail) : ''}</span></span>
-          ${logHitBadge(l)}
-          <span style="flex-shrink:0;color:var(--text3);font-size:10px;padding-top:2px">${l.detail ? (exp ? '▾' : '▸') : ''}</span>
-        </div>`;
-      }).join('')}
+      <div data-logbody>${rows.map(logRowHtml).join('')}</div>
     </div>`;
-  }).join('');
-  list.querySelectorAll('[data-loghit]').forEach(b => b.onclick = e => {
-    e.stopPropagation();
-    const id = b.dataset.loghit;
-    showTab('split');
-    if (!id) return;
-    state.splitHitId = id; renderSplitRules();
-    clearTimeout(state._splitHitT);
-    state._splitHitT = setTimeout(() => { state.splitHitId = null; renderSplitRules(); }, 2000);
+}
+
+// 增量追加用的視圖索引。只有「尾端進來新訊息、前端被汰除」這種變化走得了增量，
+// 改篩選、展開、清除一律退回 renderLogList() 整塊重建。
+let logView = null;   // { sig, list, lastId, groups: Map<source, { section, body, countEl, ids }> }
+let logRenderQueued = false;
+const logSig = () => [state.level, state.search, hideDebug() ? 1 : 0].join('\u0000');
+
+// 事件委派：以前每次重建都要 querySelectorAll 兩輪、逐列掛 onclick，
+// 增量追加的新列根本不會經過那段。改成掛在容器上一次解決。
+function bindLogList(list) {
+  if (list._logBound) return;
+  list._logBound = true;
+  list.addEventListener('click', (e) => {
+    const hit = e.target.closest('[data-loghit]');
+    if (hit) {
+      e.stopPropagation();
+      const id = hit.dataset.loghit;
+      showTab('split');
+      if (!id) return;
+      state.splitHitId = id; renderSplitRules();
+      clearTimeout(state._splitHitT);
+      state._splitHitT = setTimeout(() => { state.splitHitId = null; renderSplitRules(); }, 2000);
+      return;
+    }
+    const row = e.target.closest('[data-log]');
+    if (row) toggleLogRow(row.dataset.log);
   });
-  list.querySelectorAll('[data-log]').forEach(row => {
-    const id = row.dataset.log;
-    const l = S.logs.find(x => String(x.id) === id);
-    if (!(l && l.detail)) return;
-    const toggle = () => {
-      S.expanded[id] = !S.expanded[id]; renderLogList();
-      const next = list.querySelector(`[data-log="${id}"]`); if (next && document.activeElement === document.body) next.focus();
-    };
-    row.onclick = toggle;
-    row.addEventListener('keydown', e => {
-      if (e.target !== row || (e.key !== 'Enter' && e.code !== 'Space')) return;
-      e.preventDefault(); toggle();
-    });
+  list.addEventListener('keydown', (e) => {
+    const row = e.target.closest && e.target.closest('[data-log]');
+    if (!row || e.target !== row || (e.key !== 'Enter' && e.code !== 'Space')) return;
+    e.preventDefault(); toggleLogRow(row.dataset.log);
   });
 }
 
-function copyLogs() {
+// 展開／收合只影響那一列，換掉那一列就好，不用整塊重建。
+function toggleLogRow(id) {
+  const l = state.logs.find(x => String(x.id) === id);
+  if (!(l && l.detail)) return;
+  state.expanded[id] = !state.expanded[id];
+  const list = $('logList');
+  const row = list && list.querySelector(`[data-log="${id}"]`);
+  if (!row) { renderLogList(); return; }
+  row.outerHTML = logRowHtml(l);
+  const next = list.querySelector(`[data-log="${id}"]`);
+  if (next && document.activeElement === document.body) next.focus();
+}
+
+// 貼著底部時才自動跟到底（對應「紀錄自動捲動」設定）。以前整塊 innerHTML 重建
+// 每次都把捲動位置歸零，所以有流量的時候根本捲不動，那個設定也從來沒有人讀。
+const logAtBottom = (list) => list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+function logStickBottom(list, wasBottom) {
+  if (localStorage.getItem('sw_scroll') !== '0' && wasBottom) list.scrollTop = list.scrollHeight;
+}
+
+function renderLogList() {
+  const list = $('logList');
+  if (!list) return;
+  bindLogList(list);
+  const wasBottom = logAtBottom(list);
+  const shown = logShown();
+  logView = null;
+  if (shown.length === 0) {
+    list.innerHTML = `<div style="padding:60px 20px;text-align:center;color:var(--text3);font-size:12.5px">沒有符合的紀錄</div>`;
+    return;
+  }
+  // 以前是每個群組再 filter 一次整份清單（O(群組 × 筆數)），改成掃一趟分桶
+  const byKey = new Map();
+  for (const l of shown) {
+    let arr = byKey.get(l.source);
+    if (!arr) { arr = []; byKey.set(l.source, arr); }
+    arr.push(l);
+  }
+  const keys = [...byKey.keys()];
+  list.innerHTML = keys.map(k => logGroupHtml(k, byKey.get(k))).join('');
+  const groups = new Map();
+  keys.forEach((k, i) => {
+    const section = list.children[i];
+    groups.set(k, { section, body: section.querySelector('[data-logbody]'),
+      countEl: section.querySelector('[data-logcount]'), ids: byKey.get(k).map(l => l.id) });
+  });
+  logView = { sig: logSig(), list, groups,
+    lastId: state.logs.length ? state.logs[state.logs.length - 1].id : 0 };
+  logStickBottom(list, wasBottom);
+}
+
+// 只在「有新訊息進來」時呼叫。視圖對不上就退回整塊重建。
+function appendLogRows() {
+  const list = $('logList');
+  if (!list) return;
+  if (!logView || logView.list !== list || logView.sig !== logSig()) { renderLogList(); return; }
   const S = state;
-  const shown = S.logs.filter(l => (S.level === 'all' || l.level === S.level) && (!S.search || `${l.message} ${l.detail || ''} ${l.source}`.toLowerCase().includes(S.search.toLowerCase())));
-  const text = shown.map(l => `[${new Date(l.time || l.t).toLocaleTimeString('en-GB', { hour12: false })}] [${(l.level || '').toUpperCase()}] [${l.source}] ${l.message}${l.detail ? ' ' + l.detail : ''}`).join('\n');
+  const wasBottom = logAtBottom(list);
+
+  // 1) 汰除：state.logs 是滑動視窗，被 splice 掉的 id 一定小於現在的第一筆
+  const minId = S.logs.length ? S.logs[0].id : Infinity;
+  for (const [src, g] of [...logView.groups]) {
+    let n = 0;
+    while (g.ids.length && g.ids[0] < minId) { g.ids.shift(); n++; }
+    if (!n) continue;
+    for (let i = 0; i < n; i++) { const el = g.body.firstElementChild; if (el) el.remove(); }
+    if (!g.ids.length) { g.section.remove(); logView.groups.delete(src); }
+    else g.countEl.textContent = g.ids.length + ' 筆';
+  }
+
+  // 2) 追加：lastId 之後的才是新的
+  let start = S.logs.length;
+  while (start > 0 && S.logs[start - 1].id > logView.lastId) start--;
+  for (let i = start; i < S.logs.length; i++) {
+    const l = S.logs[i];
+    logView.lastId = l.id;
+    if (!logPasses(l)) continue;
+    let g = logView.groups.get(l.source);
+    if (!g) {
+      list.insertAdjacentHTML('beforeend', logGroupHtml(l.source, []));
+      const section = list.lastElementChild;
+      g = { section, body: section.querySelector('[data-logbody]'),
+        countEl: section.querySelector('[data-logcount]'), ids: [] };
+      logView.groups.set(l.source, g);
+    }
+    g.body.insertAdjacentHTML('beforeend', logRowHtml(l));
+    g.ids.push(l.id);
+    g.countEl.textContent = g.ids.length + ' 筆';
+  }
+
+  if (!logView.groups.size) { renderLogList(); return; }   // 全空了 → 讓空狀態回來
+  logStickBottom(list, wasBottom);
+}
+
+function copyLogs() {
+  const shown = logShown();
+  const text = shown.map(l => `[${logTime(l)}] [${(l.level || '').toUpperCase()}] [${l.source}] ${l.message}${l.detail ? ' ' + l.detail : ''}`).join('\n');
   navigator.clipboard.writeText(text);
   flash('已複製紀錄');
 }
@@ -1107,6 +1242,7 @@ const SW_GROUPS = {
     { key: 'autostart', label: '啟動時自動套用路由', desc: '自動啟動已啟用的路由' },
     { key: 'scroll', label: '紀錄自動捲動', desc: '新紀錄進來時跟到底部' },
     { key: 'nodebug', label: '隱藏除錯訊息', desc: '只顯示一般訊息與錯誤' },
+    { key: 'logConns', label: '把每條連線寫入紀錄檔', desc: '診斷用；紀錄檔會很快被蓋掉' },
   ],
 };
 
@@ -1223,9 +1359,14 @@ function toggleSwitch(key) {
   else if (key === 'tray') state.settings.minimizeToTray = !(state.settings.minimizeToTray !== false);
   else if (key === 'autostart') state.settings.autoStartRoutes = !(state.settings.autoStartRoutes !== false);
   else if (key === 'killswitch') state.settings.killSwitch = !state.settings.killSwitch;
+  else if (key === 'logConns') state.settings.logConnections = !state.settings.logConnections;
   else localStorage.setItem('sw_' + key, localStorage.getItem('sw_' + key) === '1' ? '0' : '1');
   saveSettings(); refreshSettings();
+  if (key === 'nodebug' && state.tab === 'logs') renderLogList();
 }
+// 「隱藏除錯訊息」以前只有 swOn 讀得到，沒有任何地方真的拿它過濾 —— 等於裝飾用的開關。
+// 逐連線的 CONNECT 現在是 debug，這個開關才真的有東西可以關。
+function hideDebug() { return localStorage.getItem('sw_nodebug') === '1'; }
 function swOn(key) {
   if (key === 'tray') return state.settings.minimizeToTray !== false;
   if (key === 'bootLaunch') return !!state.bootLaunch;
@@ -1234,6 +1375,7 @@ function swOn(key) {
   if (key === 'ksauto') return state.settings.killSwitchAutoReconnect !== false;
   if (key === 'udp') return !!state.splitUdp;
   if (key === 'rsauto') return !!state.settings.rulesetAutoUpdate;
+  if (key === 'logConns') return !!state.settings.logConnections;
   if (key === 'scroll') return localStorage.getItem('sw_scroll') !== '0';
   return localStorage.getItem('sw_nodebug') === '1';
 }
@@ -1261,6 +1403,7 @@ function saveSettings() {
     rulesetDetourRouteId: state.settings.rulesetDetourRouteId,
     killSwitchAutoReconnect: state.settings.killSwitchAutoReconnect,
     killSwitchScope: state.settings.killSwitchScope, killSwitchApps: state.settings.killSwitchApps,
+    logConnections: state.settings.logConnections,
   });
 }
 
@@ -2160,15 +2303,17 @@ setInterval(() => {
     const s = state.sessions[id];
     if (s.status !== 'running') return;
     const pu = s._pu || 0, pd = s._pd || 0;
-    const up = Math.max(0, (s.upT || 0) - pu) / 0.3, down = Math.max(0, (s.downT || 0) - pd) / 0.3;
+    const up = Math.max(0, (s.upT || 0) - pu) / (TICK_MS / 1000), down = Math.max(0, (s.downT || 0) - pd) / (TICK_MS / 1000);
     s._pu = s.upT || 0; s._pd = s.downT || 0;
     s.up = up; s.down = down;
-    s.series = [...(s.series || []), { down, up }].slice(-60);
+    const ser = s.series || (s.series = []);
+    ser.push({ down, up });
+    if (ser.length > SERIES_MAX) ser.splice(0, ser.length - SERIES_MAX);
     if (s.startTs) s.uptime = Math.floor((Date.now() - s.startTs) / 1000);
     if (id === state.sel) selDirty = true;
   });
   if (selDirty && state.tab === 'dashboard') updateTraffic();
-}, 300);
+}, TICK_MS);
 
 // =====================================================================================
 // 狀態同步（onRouteStatus 對帳）
@@ -2265,8 +2410,14 @@ async function boot() {
   });
 
   window.api.onLogEntry(entry => {
-    state.logs = [...state.logs, { ...entry, id: ++logSeq }].slice(-300);
-    if (state.tab === 'logs') renderLogList();
+    state.logs.push({ ...entry, id: ++logSeq });
+    if (state.logs.length > 300) state.logs.splice(0, state.logs.length - 300);
+    // 每條連線都重畫一次會把渲染執行緒灌爆：實測開著紀錄分頁時，200 條連線 =
+    // 200 次重畫、合計 5826ms，而牆鐘只有 1494ms。改成一個影格最多重畫一次。
+    if (state.tab === 'logs' && !logRenderQueued) {
+      logRenderQueued = true;
+      requestAnimationFrame(() => { logRenderQueued = false; if (state.tab === 'logs') appendLogRows(); });
+    }
   });
   window.api.onRouteStats(stats => {
     if (!stats || !stats.routeId) return;
