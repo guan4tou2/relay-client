@@ -202,10 +202,13 @@ async function T(name, fn) {
   await T('有路由後顯示儀表板（不是引導）', async () => {
     const v = await c.eval(`(() => ({ guide: getComputedStyle(document.getElementById('view-guide')).display,
       dash: getComputedStyle(document.getElementById('view-dash')).display,
-      status: (document.getElementById('dashStatus') || {}).textContent || '' }))()`);
+      status: (document.getElementById('dashStatus') || {}).textContent || '',
+      tabTip: (document.querySelector('[data-tab="split"]') || {}).title || '' }))()`);
     if (v.dash === 'none') throw new Error('儀表板沒顯示');
     if (v.guide !== 'none') throw new Error('引導還在');
-    if (!v.status.includes('Ctrl+1')) throw new Error('狀態列缺快捷提示：' + v.status);
+    if (!v.status.includes('路由')) throw new Error('狀態列沒內容：' + v.status);
+    // 快捷鍵提示從狀態列移到分頁鈕的 title
+    if (!v.tabTip.includes('Ctrl+2')) throw new Error('分頁鈕缺快捷提示：' + v.tabTip);
   });
 
   await c.shot('05-dashboard');

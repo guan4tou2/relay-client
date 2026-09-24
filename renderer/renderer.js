@@ -15,10 +15,10 @@ const sUser = s => (s && s.username) || '';
 const sPass = s => (s && s.password) || '';
 
 const PROTO = {
-  socks5: { label: 'SOCKS5', name: '帳號密碼認證', port: 1080, auth: 'userpass', hint: '支援帳號密碼認證。', authTitle: '帳號密碼', authDesc: '帳號與密碼' },
-  socks4: { label: 'SOCKS4', name: '無認證機制', port: 1080, auth: 'none', hint: '沒有密碼機制，只能附帶一個識別字串。', authTitle: 'User ID', authDesc: '沒有密碼，只有識別字串' },
-  http: { label: 'HTTP', name: '帳號密碼認證', port: 8080, auth: 'basic', hint: '支援帳號密碼認證。', authTitle: '帳號密碼', authDesc: '帳號與密碼' },
-  https: { label: 'HTTPS', name: '帳號密碼認證（加密）', port: 8443, auth: 'basic', hint: '先建立加密連線再送出帳密。', authTitle: '帳號密碼', authDesc: '帳號密碼（加密傳輸）' },
+  socks5: { label: 'SOCKS5', name: '帳號密碼認證', port: 1080, auth: 'userpass', authTitle: '帳號密碼' },
+  socks4: { label: 'SOCKS4', name: '無認證機制', port: 1080, auth: 'none', hint: '沒有密碼機制，只能附帶一個識別字串。', authTitle: 'User ID' },
+  http: { label: 'HTTP', name: '帳號密碼認證', port: 8080, auth: 'basic', authTitle: '帳號密碼' },
+  https: { label: 'HTTPS', name: '帳號密碼認證（加密）', port: 8443, auth: 'basic', hint: '先建立加密連線再送出帳密。', authTitle: '帳號密碼' },
 };
 // 用 CSS 變數而不是色碼：深色主題的 accent／amber／red 是另一組值，寫死會在深色下對比不足
 const LEVELS = { info: 'var(--accent)', warn: 'var(--amber)', error: 'var(--red)', debug: 'var(--text3)' };
@@ -169,7 +169,7 @@ function mount() {
       <div id="alertMount"></div>
       <div id="ksMount"></div>
       <div id="menuMount"></div>
-      <div id="toast" style="display:none;position:absolute;top:12px;right:16px;z-index:80;padding:10px 15px;background:var(--panelq);backdrop-filter:blur(20px);border:1px solid var(--sep);border-radius:11px;box-shadow:var(--shadow);font-size:12.5px;animation:toastIn .2s ease-out;align-items:center;gap:8px">
+      <div id="toast" style="display:none;position:absolute;bottom:18px;left:0;right:0;margin:0 auto;width:max-content;max-width:calc(100% - 32px);z-index:80;padding:10px 15px;background:var(--panelq);backdrop-filter:blur(20px);border:1px solid var(--sep);border-radius:11px;box-shadow:var(--shadow);font-size:12.5px;animation:toastIn .2s ease-out;align-items:center;gap:8px">
         <span id="toastDot" style="width:7px;height:7px;border-radius:50%;background:var(--accent)"></span><span id="toastText"></span>
       </div>
     </div>
@@ -221,8 +221,9 @@ function renderTabs() {
   // v7 定案的順序：先選出口（路由）→ 再定規則（分流）→ 再看結果（紀錄）
   const tabs = [['dashboard', '路由'], ['split', '分流'], ['servers', '伺服器'], ['logs', '紀錄'], ['creds', '憑證'], ['settings', '設定']];
   $('tabseg').setAttribute('role', 'tablist');
-  $('tabseg').innerHTML = tabs.map(([k, label]) =>
-    `<button data-tab="${k}" role="tab" aria-selected="${state.tab === k}" aria-label="${label}" style="border:none;cursor:pointer;padding:6px 13px;border-radius:7px;font-size:12.5px;${segCss(state.tab === k)};transition:background .18s,color .18s;white-space:nowrap;flex-shrink:0">${label}</button>`
+  // 快捷鍵提示原本常駐在狀態列右端，改成各分頁鈕的 title
+  $('tabseg').innerHTML = tabs.map(([k, label], i) =>
+    `<button data-tab="${k}" role="tab" aria-selected="${state.tab === k}" aria-label="${label}" title="${label}（Ctrl+${i + 1}）" style="border:none;cursor:pointer;padding:6px 13px;border-radius:7px;font-size:12.5px;${segCss(state.tab === k)};transition:background .18s,color .18s;white-space:nowrap;flex-shrink:0">${label}</button>`
   ).join('');
   $('tabseg').querySelectorAll('button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 }
@@ -269,10 +270,8 @@ function renderDashStatus(runIds, actIds) {
   const pill = `<button id="stEnginePill" class="hvFill2" role="switch" aria-checked="${engOn}" aria-label="分流引擎" title="${engTip}" style="display:flex;align-items:center;gap:7px;border:1px solid var(--sep);background:var(--card);padding:0 9px 0 6px;height:26px;border-radius:13px;cursor:pointer;color:${engOn ? 'var(--good)' : engBusy ? 'var(--amber)' : 'var(--text2)'};font-weight:500;font-size:12px;white-space:nowrap">
     <span style="width:32px;height:18px;border-radius:9px;position:relative;background:${engOn ? 'var(--good)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:2px;left:${engOn ? '16px' : '2px'};width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></span>${engBusy ? '分流引擎啟動中' : engOn ? '分流引擎執行中' : '分流引擎未執行'}
   </button>`;
-  // 設計稿在狀態列最右端放快捷鍵提示，用 margin-left:auto 推到底
-  const hint = '<span style="margin-left:auto;font-size:11px;color:var(--text3);white-space:nowrap">Ctrl+1–6 切換分頁</span>';
   st.innerHTML = segs.map((g, i) =>
-    `${i ? '<span style="color:var(--text3);margin:0 6px">·</span>' : ''}<button data-stseg="${g.tab}" style="border:none;background:transparent;padding:0;cursor:pointer;font-weight:500;font-size:12.5px;white-space:nowrap;color:${g.color}">${esc(g.label)}</button>`).join('') + pill + hint;
+    `${i ? '<span style="color:var(--text3);margin:0 6px">·</span>' : ''}<button data-stseg="${g.tab}" style="border:none;background:transparent;padding:0;cursor:pointer;font-weight:500;font-size:12.5px;white-space:nowrap;color:${g.color}">${esc(g.label)}</button>`).join('') + pill;
   st.querySelectorAll('[data-stseg]').forEach(b => b.onclick = () => showTab(b.dataset.stseg));
   $('stEnginePill').onclick = () => toggleSplitEngine();
 }
@@ -287,7 +286,9 @@ function showTab(tab) {
   setDisp('view-servers', tab === 'servers'); setDisp('view-logs', tab === 'logs');
   setDisp('view-creds', tab === 'creds'); setDisp('view-settings', tab === 'settings');
   setDisp('view-split', tab === 'split');
-  const sb = $('sidebar'); if (sb) sb.style.display = tab === 'split' ? 'none' : 'flex'; // 分流為全寬版面，隱藏路由側欄
+  // 路由側欄只跟「路由」與「紀錄」（依選取的路由篩紀錄）有關；其他頁全寬，
+  // 否則 800px 最小視窗下伺服器表格會被擠到要橫向捲動、看不到操作鈕
+  const sb = $('sidebar'); if (sb) sb.style.display = (tab === 'dashboard' || tab === 'logs') ? 'flex' : 'none';
   if (showGuide) renderGuide();
   if (showDash) updateDashboard();
   if (showDash) renderInstances();
@@ -487,13 +488,12 @@ function buildDashboard() {
           </button>
           <div style="flex:1;display:flex;flex-direction:column;gap:8px;min-width:0">
             <span id="pwTitle" style="font-size:20px;font-weight:700;letter-spacing:-.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">未執行</span>
-            <span id="pwSub" style="font-size:12.5px;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">尚未選擇路由</span>
+            <span id="pwSub" style="font-size:13px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">尚未選擇路由</span>
             <span id="pwMeta" style="font-size:11.5px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
           </div>
           <div style="width:1px;align-self:stretch;background:var(--sep)"></div>
           <div style="flex:0 1 144px;min-width:124px;display:flex;flex-direction:column;gap:9px">
-            <span style="font-size:12.5px;font-weight:600">系統代理</span>
-            <span id="sysDesc" style="font-size:11px;color:var(--text2);line-height:1.45">所有系統流量改走此端口</span>
+            <span id="sysLabel" style="font-size:12.5px;font-weight:600;display:flex;align-items:center">系統代理${tipIcon('所有系統流量改走此端口')}</span>
             <button id="sysToggle" role="switch" aria-checked="false" aria-label="系統代理" title="切換系統代理" style="width:50px;height:30px;border-radius:15px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s">
               <span id="sysKnob" style="position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
             </button>
@@ -506,7 +506,6 @@ function buildDashboard() {
             <span id="copyIcon" style="width:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--text3)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"></path></svg></span>
             <span id="copyChk" style="width:16px;margin-left:-16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--accent);opacity:0;background:var(--card)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12.5 9.5 18 20 6.5"></polyline></svg></span>
           </button>
-          <span id="curRouteId" style="font-size:11.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace"></span>
           <button id="editCurrent" class="hvAccDim" style="margin-left:auto;height:28px;padding:0 12px;border:1px solid var(--sep);border-radius:9px;background:transparent;color:var(--accent);font-size:12px;font-weight:500;cursor:pointer;flex-shrink:0;white-space:nowrap">編輯路由</button>
         </div>
       </div>
@@ -528,6 +527,8 @@ function buildDashboard() {
           </div>
           <div id="rangeSeg" style="margin-left:auto;display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px"></div>
         </div>
+        <div style="position:relative">
+        <span id="chartScale" style="position:absolute;left:0;top:14px;padding:0 5px 0 0;background:var(--card);font-size:10px;line-height:16px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;pointer-events:none"></span>
         <svg viewBox="0 0 560 88" preserveAspectRatio="none" style="width:100%;height:88px;display:block">
           <line x1="0" y1="22" x2="560" y2="22" stroke="var(--sep)" stroke-width="1"></line>
           <line x1="0" y1="55" x2="560" y2="55" stroke="var(--sep)" stroke-width="1"></line>
@@ -535,6 +536,7 @@ function buildDashboard() {
           <polyline id="lineDown" points="" fill="none" stroke="var(--good)" stroke-width="2" stroke-linejoin="round"></polyline>
           <polyline id="lineUp" points="" fill="none" stroke="var(--purple)" stroke-width="1.6" stroke-linejoin="round" stroke-dasharray="3 3"></polyline>
         </svg>
+        </div>
         <div style="display:flex;gap:22px;padding-top:9px;border-top:1px solid var(--sep)">
           <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:10.5px;color:var(--text3);font-weight:600;letter-spacing:.3px;white-space:nowrap">連線數</span><span id="statConns" style="font-size:16px;font-weight:600;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">0</span></div>
           <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:10.5px;color:var(--text3);font-weight:600;letter-spacing:.3px;white-space:nowrap">上傳總量</span><span id="statUp" style="font-size:16px;font-weight:600;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">0 B</span></div>
@@ -590,7 +592,8 @@ function updatePower() {
   const cur = curRoute();
   $('powerBtn').title = failing ? '重新啟動這條路由（空白鍵）' : running ? '停止路由（空白鍵）' : '啟動路由（空白鍵）';
   $('pwTitle').textContent = failing ? '啟動失敗' : running ? '執行中' : connecting ? (S.stage || '正在啟動…') : closing ? '正在停止…' : '未執行';
-  $('pwSub').textContent = cur ? (cur.kind === 'http' ? 'HTTP' : 'SOCKS5') + ' 127.0.0.1:' + cur.localPort : '尚未選擇路由';
+  // 位址已經在下方的複製鈕上，這行改顯示路由名稱（原本兩處都寫 SOCKS5 127.0.0.1:…）
+  $('pwSub').textContent = cur ? (cur.label || '未命名路由') : '尚未選擇路由';
   $('pwMeta').textContent = failing ? (S.failReason || '') : cur ? (cur.hops.length ? cur.hops.length + ' 跳 · 出口 ' + srvName(cur.hops[cur.hops.length - 1]) : '尚未設定跳點') : '';
 }
 
@@ -650,7 +653,10 @@ function updateTraffic() {
   const S = ses(state.sel);
   const cap = Math.round((RANGE_SEC[state.range] || 60) * 1000 / TICK_MS);
   const raw = (S.series || []).slice(-cap);
-  const max = Math.max(3000000, ...raw.map(p => Math.max(p.down, p.up)));
+  // 下限原本是 3 MB/s：一般瀏覽（幾十到幾百 KB/s）整條線貼在底部看不出起伏。
+  // 改成 64 KB/s 下限，並在上方格線標出刻度，免得小流量被放大成像滿載。
+  const max = Math.max(64 * 1024, ...raw.map(p => Math.max(p.down, p.up)));
+  $('chartScale').textContent = fmtBytes(max * 66 / 78) + '/s';
   // x 軸釘右緣、依時間往左長；不再把手上的點硬撐滿整條寬度，否則資料不滿一格時兩個區間會畫出一模一樣的圖
   const x0 = raw.length ? 560 * (cap - raw.length) / (cap - 1) : 560;
   const pts = thinSeries(raw, DRAW_MAX);
@@ -678,12 +684,14 @@ function updateDashboard() {
   $('sysToggle').style.background = state.sys ? 'var(--accent)' : 'var(--fill)';
   $('sysToggle').setAttribute('aria-checked', state.sys ? 'true' : 'false');
   $('sysKnob').style.left = state.sys ? '23px' : '3px';
-  $('sysDesc').textContent = runIds.length > 1 ? '指向選取的路由端口' : '所有系統流量改走此端口';
+  const sysTip = $('sysLabel').querySelector('[data-tip]');
+  if (sysTip) sysTip.dataset.tip = runIds.length > 1 ? '系統代理指向目前選取的路由端口' : '所有系統流量改走此端口';
   $('copyIcon').style.color = state.copied ? 'transparent' : 'var(--text3)';
   $('copyChk').style.opacity = state.copied ? '1' : '0';
   $('curKind').textContent = cur ? (cur.kind === 'http' ? 'HTTP' : 'SOCKS5') : '';
   $('curAddr').textContent = cur ? '127.0.0.1:' + cur.localPort : '';
-  $('curRouteId').textContent = cur ? 'id: ' + cur.id : '';
+  // 路由 id 只有對照 config.json 時才用得到，收進位址鈕的懸浮提示
+  $('copyAddr').title = cur ? `複製本地代理位址（路由 id：${cur.id}）` : '複製本地代理位址';
 }
 // =====================================================================================
 // 電源狀態機（連線 / 中斷）—— 綁到真實 route IPC
@@ -806,13 +814,8 @@ function renderServers() {
 
   $('view-servers').innerHTML = `
     <div style="display:flex;flex-direction:column;gap:12px">
-      <div style="display:flex;align-items:flex-end;gap:12px">
-        <div style="display:flex;flex-direction:column;gap:3px">
-          <span style="font-size:16px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">伺服器</span>
-          <span style="font-size:12px;color:var(--text2)">你的上游代理。路由會從這裡挑跳點組成鏈路。</span>
-        </div>
-        <button id="srvAdd" class="hvBright" style="margin-left:auto;height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增伺服器</button>
-      </div>
+      <!-- 新增鈕就是標題列那顆（TAB_ADD），頁內不再放第二顆 -->
+      <span style="font-size:16px;font-weight:700;letter-spacing:-.2px;white-space:nowrap;display:flex;align-items:center">伺服器${tipIcon('你的上游代理。路由會從這裡挑跳點組成鏈路')}</span>
       <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow-x:auto">
         <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px;min-width:${SRV_MINW}px">
           <span style="flex:1 1 0;min-width:84px;max-width:220px;padding-right:10px;box-sizing:border-box;white-space:nowrap">名稱</span><span style="flex:1.9 1 0;min-width:150px;max-width:260px;padding-right:10px;box-sizing:border-box;white-space:nowrap">位址</span><span style="width:58px;flex-shrink:0;white-space:nowrap">協定</span><span style="width:56px;flex-shrink:0;white-space:nowrap">認證</span><span style="flex:1 1 0;min-width:104px;padding-right:12px;box-sizing:border-box;white-space:nowrap">測試結果</span><span style="width:90px;flex-shrink:0"></span>
@@ -822,7 +825,6 @@ function renderServers() {
       </div>
     </div>`;
 
-  $('srvAdd').onclick = () => openSrv();
   $('view-servers').querySelectorAll('[data-scopy]').forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.scopy); flash('已複製位址：' + b.dataset.scopy); });
   $('view-servers').querySelectorAll('[data-stest]').forEach(b => b.onclick = () => testServerRow(b.dataset.stest));
   $('view-servers').querySelectorAll('[data-sedit]').forEach(b => b.onclick = () => openSrv(b.dataset.sedit));
@@ -956,12 +958,12 @@ function logPasses(l) {
 }
 const logShown = () => state.logs.filter(logPasses);
 
+// 每列不再印來源：紀錄已依來源分組，組標題就寫著路由名稱，每列再印一次 route:r-… 只是佔位
 function logRowHtml(l) {
   const exp = state.expanded[l.id];
   return `<div data-log="${l.id}" ${l.detail ? `role="button" tabindex="0" aria-expanded="${!!exp}" aria-label="展開詳細訊息"` : ''} style="padding:5px 14px;display:flex;gap:10px;align-items:flex-start;cursor:${l.detail ? 'pointer' : 'default'};border-bottom:1px solid var(--sep);font-size:12px;line-height:1.6" class="${l.detail ? 'hvFill2' : ''}">
       <span style="width:58px;flex-shrink:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text3);font-size:11px;padding-top:1px">${logTime(l)}</span>
       <span title="${l.level}" style="width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:6px;background:${LEVELS[l.level] || LEVELS.info}"></span>
-      <span style="width:88px;flex-shrink:0;color:var(--purple);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;padding-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.source)}</span>
       <span style="flex:1;min-width:0;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11.5px;word-break:break-word">${esc(l.message)}<span style="color:var(--text2)">${l.detail && exp ? '  ' + esc(l.detail) : ''}</span></span>
       ${logHitBadge(l)}
       <span style="flex-shrink:0;color:var(--text3);font-size:10px;padding-top:2px">${l.detail ? (exp ? '▾' : '▸') : ''}</span>
@@ -1179,10 +1181,7 @@ function renderCreds() {
 
   $('view-creds').innerHTML = `
     <div style="display:flex;flex-direction:column;gap:12px">
-      <div style="display:flex;align-items:flex-end;gap:12px">
-        <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:16px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">憑證庫</span><span style="font-size:12px;color:var(--text2)">存好帳密，新增伺服器時可直接選用</span></div>
-        <button id="credAdd" class="hvBright" style="margin-left:auto;height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增憑證</button>
-      </div>
+      <span style="font-size:16px;font-weight:700;letter-spacing:-.2px;white-space:nowrap;display:flex;align-items:center">憑證庫${tipIcon('存好帳密，新增伺服器時可直接選用。\nSOCKS5、HTTP、HTTPS 支援帳號密碼；SOCKS4 沒有密碼機制，只能附帶一個識別字串')}</span>
       <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow-x:auto">
         <div style="display:flex;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px;min-width:${CRED_MINW}px">
           <span style="flex:1 1 0;min-width:96px;max-width:200px;padding-right:10px;box-sizing:border-box;white-space:nowrap">名稱</span><span style="flex:1 1 0;min-width:100px;max-width:190px;padding-right:10px;box-sizing:border-box;white-space:nowrap">帳號</span><span style="flex:1 1 0;min-width:96px;max-width:190px;padding-right:10px;box-sizing:border-box;white-space:nowrap">密碼</span><span style="flex:1 1 0;min-width:80px;padding-right:10px;box-sizing:border-box;white-space:nowrap">備註</span><span style="width:58px;flex-shrink:0"></span>
@@ -1190,13 +1189,8 @@ function renderCreds() {
         ${rows}
         ${S.creds.length === 0 ? `<div style="padding:44px 20px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">還沒有儲存的憑證<br>新增後即可在伺服器表單選用</div>` : ''}
       </div>
-      <div style="display:flex;gap:9px;padding:12px 15px;background:var(--accent-dim);border-radius:12px;font-size:11.5px;color:var(--text2);line-height:1.65">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent);flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 8h.01M11 12h1v5h1"></path></svg>
-        <span style="text-wrap:pretty">SOCKS5、HTTP 與 HTTPS 都支援帳號密碼認證。SOCKS4 沒有密碼機制，只能附帶一個識別字串給伺服器辨識。</span>
-      </div>
     </div>`;
 
-  $('credAdd').onclick = () => addCred();
   $('view-creds').querySelectorAll('[data-ctoggle]').forEach(b => b.onclick = () => { const c = S.creds.find(x => x.id === b.dataset.ctoggle); c.shown = !c.shown; renderCreds(); });
   $('view-creds').querySelectorAll('[data-cedit]').forEach(b => b.onclick = () => { const c = S.creds.find(x => x.id === b.dataset.cedit); S.credEdit = c.id; S.cdraft = { name: c.name, user: c.user, pass: c.pass, note: c.note }; renderCreds(); });
   $('view-creds').querySelectorAll('[data-cdel]').forEach(b => b.onclick = () => deleteCredRow(b.dataset.cdel));
@@ -1237,18 +1231,21 @@ async function onUpdateClick() {
 // 文案原則：desc 一句 ≤22 字、不放括號補充、技術名詞不進 desc。
 const SW_GROUPS = {
   behavior: [
-    { key: 'tray', label: '關閉時最小化到系統匣', desc: '保留背景執行與系統匣圖示' },
-    { key: 'bootLaunch', label: '開機時自動啟動', desc: '登入後自動啟動 RelayClient' },
-    { key: 'autostart', label: '啟動時自動套用路由', desc: '自動啟動已啟用的路由' },
-    { key: 'scroll', label: '紀錄自動捲動', desc: '新紀錄進來時跟到底部' },
-    { key: 'nodebug', label: '隱藏除錯訊息', desc: '只顯示一般訊息與錯誤' },
-    { key: 'logConns', label: '把每條連線寫入紀錄檔', desc: '診斷用；紀錄檔會很快被蓋掉' },
+    // desc 是懸浮說明（ⓘ）；標題已經講清楚的就不寫
+    { key: 'tray', label: '關閉時最小化到系統匣', desc: '關閉視窗後繼續在背景執行' },
+    { key: 'bootLaunch', label: '開機時自動啟動' },
+    { key: 'autostart', label: '啟動時自動套用路由', desc: '開啟 RelayClient 時自動啟動已啟用的路由' },
+    { key: 'scroll', label: '紀錄自動捲動' },
+    { key: 'nodebug', label: '隱藏除錯訊息' },
+    { key: 'logConns', label: '把每條連線寫入紀錄檔', desc: '診斷用。連線量大時紀錄檔很快就會輪替掉' },
   ],
 };
 
+// 設定列的標題；說明收進 ⓘ 懸浮顯示
+const rowTitle = (label, tip) => `<div style="font-size:13px;font-weight:500;white-space:nowrap;display:flex;align-items:center">${label}${tip ? tipIcon(tip) : ''}</div>`;
 const swRow = (w, last) => `
   <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;${last ? '' : 'border-bottom:1px solid var(--sep)'}">
-    <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">${w.label}</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">${w.desc}</div></div>
+    <div style="flex:1;min-width:0">${rowTitle(w.label, w.desc)}</div>
     <button data-sw="${w.key}" role="switch" aria-checked="false" aria-label="${w.label}" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:var(--fill);transition:background .22s;flex-shrink:0">
       <span style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
     </button>
@@ -1256,8 +1253,7 @@ const swRow = (w, last) => `
 
 const group = (title, inner, desc) => `
   <div style="display:flex;flex-direction:column;gap:8px">
-    <span style="font-size:11.5px;font-weight:600;color:var(--text3);letter-spacing:.4px;padding-left:4px;white-space:nowrap">${title}</span>
-    ${desc ? `<span style="font-size:11px;color:var(--text3);padding-left:4px;margin-top:-4px;line-height:1.5">${desc}</span>` : ''}
+    <span style="font-size:11.5px;font-weight:600;color:var(--text3);letter-spacing:.4px;padding-left:4px;white-space:nowrap;display:flex;align-items:center">${title}${desc ? tipIcon(desc) : ''}</span>
     <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow:hidden">${inner}</div>
   </div>`;
 
@@ -1267,16 +1263,16 @@ function buildSettings() {
 
       ${group('外觀', `
         <div style="padding:13px 16px;display:flex;align-items:center;gap:14px">
-          <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">主題</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">預設跟隨系統設定</div></div>
+          <div style="flex:1;min-width:0">${rowTitle('主題')}</div>
           <div id="themeSeg" style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px"></div>
         </div>`)}
 
       ${group('行為', SW_GROUPS.behavior.map((w, i) => swRow(w, i === SW_GROUPS.behavior.length - 1)).join(''))}
 
       ${group('連線', `
-        ${swRow({ key: 'udp', label: 'UDP 轉發', desc: '能否真的走代理要看上游支援' }, false)}
+        ${swRow({ key: 'udp', label: 'UDP 轉發', desc: '能否真的走代理要看上游伺服器支援' }, false)}
         <div style="padding:13px 16px;display:flex;align-items:center;gap:14px">
-          <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">連線測試目標</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">留空則只測協定握手</div></div>
+          <div style="flex:1;min-width:0">${rowTitle('連線測試目標', '測試伺服器時要連去的網站；留空則只測協定握手')}</div>
           <div style="display:flex;align-items:center;gap:5px">
             <input id="setTestHost" placeholder="example.com" style="width:158px;height:30px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
             <span style="color:var(--text3)">:</span>
@@ -1293,7 +1289,7 @@ function buildSettings() {
 
       ${group('資料', `
         <div style="padding:13px 16px;display:flex;align-items:center;gap:14px">
-          <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">匯入 / 匯出設定</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">備份伺服器與路由，密碼可選擇是否包含</div></div>
+          <div style="flex:1;min-width:0">${rowTitle('匯入 / 匯出設定', '備份伺服器與路由；匯出時可選擇是否包含密碼')}</div>
           <div style="display:flex;gap:8px">
             <button id="setExport" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">匯出</button>
             <button id="setImport" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">匯入</button>
@@ -1483,8 +1479,7 @@ function renderRouteSheet() {
 
           <div style="display:flex;flex-direction:column;gap:9px">
             <div style="display:flex;align-items:center;gap:9px">
-              <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">跳點鏈路</span>
-              <span style="font-size:11px;color:var(--text3)">${d.hops.length > 1 ? '依序串鏈，最後一跳為出口' : '可加入多個跳點組成串鏈'}</span>
+              <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap;display:flex;align-items:center">跳點鏈路${tipIcon('可加入多個跳點依序串鏈，最後一跳為出口')}</span>
             </div>
             <div style="display:flex;flex-direction:column;gap:7px">
               ${hopsHtml}
@@ -1496,19 +1491,20 @@ function renderRouteSheet() {
           </div>
 
           <div style="background:var(--bg);border:1px solid var(--sep);border-radius:12px;padding:11px 13px;display:flex;align-items:center;gap:12px">
-            <div style="flex:1"><div style="font-size:12.5px;font-weight:600">啟用此路由</div><div style="font-size:11px;color:var(--text2);margin-top:2px">停用時不佔用端口，也不會隨程式啟動</div></div>
+            <div style="flex:1;font-size:12.5px;font-weight:600;display:flex;align-items:center">啟用此路由${tipIcon('停用時不佔用端口，也不會隨程式啟動')}</div>
             <button id="rdEnabled" role="switch" aria-checked="${d.enabled}" aria-label="啟用此路由" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${d.enabled ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0">
               <span style="position:absolute;top:3px;left:${d.enabled ? '21px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
             </button>
           </div>
 
-          <div style="background:var(--fill2);border-radius:12px;padding:13px 15px;display:flex;flex-direction:column;gap:7px">
-            <span style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px">對應 config.json</span>
-            <span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text">${draftJson()}</span>
-          </div>
+          <!-- config.json 對照給進階使用者，預設收合 -->
+          <details id="rdJson" ${S.showJson ? 'open' : ''} style="background:var(--fill2);border-radius:12px;padding:11px 15px">
+            <summary style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;cursor:pointer;white-space:nowrap">對應 config.json</summary>
+            <div style="margin-top:7px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text">${draftJson()}</div>
+          </details>
         </div>
         <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
-          <span style="font-size:11.5px;color:var(--text3);flex:1">儲存後立即套用（不需重啟）</span>
+          <span style="flex:1"></span>
           <button id="rdCancel" class="hvFill2" style="height:32px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>
           <button id="rdSave" class="hvBright" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">儲存路由</button>
         </div>
@@ -1517,6 +1513,7 @@ function renderRouteSheet() {
 
   $('rdOverlay').onclick = e => { if (e.target === $('rdOverlay')) closeRouteSheet(); };
   $('rdClose').onclick = () => closeRouteSheet();
+  $('rdJson').ontoggle = e => { state.showJson = e.target.open; };
   $('rdCancel').onclick = () => closeRouteSheet();
   $('rdSave').onclick = () => saveRouteSheet();
   $('rdLabel').addEventListener('input', () => { state.draft.label = $('rdLabel').value; updateDraftJson(); });
@@ -1623,12 +1620,11 @@ function renderSrvSheet() {
         </div>
         <div id="ssBody" style="flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px">
           <div style="display:flex;flex-direction:column;gap:7px">
-            <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">通訊協定</span>
+            <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap;display:flex;align-items:center">通訊協定${p.hint ? tipIcon(p.hint) : ''}</span>
             <button id="protoBtn" class="hvFill2" style="display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:13px;cursor:pointer;text-align:left">
               <span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:3px 6px;border-radius:5px;background:var(--accent-dim);color:var(--accent);flex-shrink:0">${p.label}</span>
               <span style="flex:1">${p.name}</span><span style="color:var(--text3);font-size:9px">▾</span>
             </button>
-            <span style="font-size:11px;color:var(--text3);line-height:1.55">${p.hint}</span>
           </div>
 
           <div style="display:flex;flex-direction:column;gap:7px">
@@ -1649,7 +1645,7 @@ function renderSrvSheet() {
 
           <div style="background:var(--bg);border:1px solid var(--sep);border-radius:12px">
             <div style="padding:11px 13px;display:flex;align-items:center;gap:12px">
-              <div style="flex:1"><div style="font-size:12.5px;font-weight:600">${p.authTitle}</div><div style="font-size:11px;color:var(--text2);margin-top:2px">${p.authDesc}</div></div>
+              <div style="flex:1;font-size:12.5px;font-weight:600">${p.authTitle}</div>
               <button id="authToggle" role="switch" aria-checked="${S.authOpen}" aria-label="${p.authTitle}" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${S.authOpen ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0">
                 <span style="position:absolute;top:3px;left:${S.authOpen ? '21px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
               </button>
@@ -1688,7 +1684,7 @@ function renderSrvSheet() {
           </div>
         </div>
         <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
-          <span style="font-size:11.5px;color:var(--text3);flex:1">儲存後會自動測試連線</span>
+          <span style="flex:1"></span>
           <button id="ssCancel" class="hvFill2" style="height:32px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>
           <button id="ssSave" class="hvBright" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">儲存並測試</button>
         </div>
@@ -1802,8 +1798,11 @@ function openMenu(kind, anchor) {
   // 貼近視窗底部時就會把選單翻到不該翻的方向。
   const h = Math.min(260, items.reduce((a, o) => a + (o.header ? 24 : 37), 0) + 8), gap = 6;
   const below = window.innerHeight - r.bottom > h + 16;
-  const width = (kind === 'split-default' || kind === 'split-target') ? Math.max(r.width, 214) : r.width;
-  const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));   // 不要開到視窗外
+  // 錨點是小按鈕的選單（例如規則庫的「直連 ▾」）若沿用按鈕寬度，標籤會被截成只剩圓點
+  const width = (kind === 'split-default' || kind === 'split-target' || kind === 'rs-detour') ? Math.max(r.width, 214) : r.width;
+  // 規則庫按鈕靠右，選單改對齊按鈕右緣往左展開
+  const want = kind === 'rs-detour' ? r.right - width : r.left;
+  const left = Math.max(8, Math.min(want, window.innerWidth - width - 8));   // 不要開到視窗外
   state.menu = { kind, items, left, width, top: below ? r.bottom + gap : Math.max(8, r.top - h - gap) };
   renderMenu();
 }
@@ -2281,6 +2280,31 @@ function showToast(text, color) {
     t.style.display = 'none';
   }, Math.min(5000, 2200 + Math.max(0, text.length - 10) * 60));
 }
+// ---- 懸浮說明 ----
+// 次要說明不再常駐在畫面上：標題旁放一顆 ⓘ（tipIcon），或直接在元素上掛 data-tip，
+// 滑鼠停 250ms 才出現。原生 title 要等一秒多、樣式也跟不上主題，所以自己畫。
+const tipIcon = text => `<span class="tipI" data-tip="${esc(text)}" aria-label="${esc(text)}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 7.6h.01"></path></svg></span>`;
+let tipTimer = null, tipFor = null;
+function hideTip() { clearTimeout(tipTimer); tipFor = null; const b = $('tipBox'); if (b) b.remove(); }
+function showTipFor(el) {
+  hideTip(); tipFor = el;
+  const b = document.createElement('div'); b.id = 'tipBox'; b.textContent = el.dataset.tip;
+  document.body.appendChild(b);
+  const r = el.getBoundingClientRect(), w = b.offsetWidth, h = b.offsetHeight;
+  const below = r.bottom + 6 + h < window.innerHeight - 8;
+  b.style.top = (below ? r.bottom + 6 : r.top - h - 6) + 'px';
+  b.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8)) + 'px';
+}
+document.addEventListener('mouseover', e => {
+  const el = e.target.closest && e.target.closest('[data-tip]');
+  if (el === tipFor) return;
+  hideTip();
+  if (el && el.dataset.tip) { tipFor = el; tipTimer = setTimeout(() => { if (tipFor === el && el.isConnected) showTipFor(el); }, 250); }
+});
+document.addEventListener('mousedown', hideTip, true);
+document.addEventListener('scroll', hideTip, true);
+window.addEventListener('blur', hideTip);
+
 function showBanner() {
   const b = $('banner');
   if (state.banner) { $('bannerText').textContent = state.banner; b.style.display = 'flex'; }
@@ -2556,7 +2580,8 @@ const tabAdd = () => TAB_ADD[state.tab] || null;
 function syncAddButton() {
   const b = $('btnAdd'); if (!b) return;
   const act = tabAdd();
-  b.style.display = act ? 'flex' : 'none';
+  // 用 visibility 而非 display：按鈕消失會讓置中的分頁列往右跳（紀錄、設定頁）
+  b.style.visibility = act ? 'visible' : 'hidden';
   if (!act) return;
   const label = act.label;
   b.title = label + ' (Ctrl+N)';
@@ -2608,7 +2633,7 @@ function buildSplit() {
             <span id="spEngineTitle" style="font-size:19px;font-weight:700;letter-spacing:-.3px;white-space:nowrap">分流引擎未執行</span>
             <span id="spEngineBadge" style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:3px 7px;border-radius:6px;background:var(--fill2);color:var(--text2);white-space:nowrap">未授權</span>
           </div>
-          <span id="spEngineDesc" style="font-size:12.5px;color:var(--text2);line-height:1.6;text-wrap:pretty">啟動後依規則決定每個連線走哪條路。</span>
+          <span id="spEngineDesc" style="font-size:12.5px;color:var(--text2);line-height:1.6;text-wrap:pretty"></span>
         </div>
         <div style="width:1px;align-self:stretch;background:var(--sep)"></div>
         <div style="width:236px;flex-shrink:0;display:flex;flex-direction:column;gap:11px">
@@ -2632,7 +2657,7 @@ function buildSplit() {
               <span style="color:var(--text3);font-size:9px">▾</span>
             </button>
           </div>
-          <span id="spDirectNote" style="display:none;font-size:11.5px;color:var(--text2);line-height:1.5;text-wrap:pretty">所有流量直連，不走任何路由。TUN 與斷線保護維持運作，切回規則不需重新提權。</span>
+          <span id="spDirectNote" style="display:none;font-size:11.5px;color:var(--text2);line-height:1.5;text-wrap:pretty">虛擬網卡與斷線保護維持運作，切回規則不需重新提權。</span>
         </div>
       </div>
 
@@ -2641,8 +2666,7 @@ function buildSplit() {
     <div id="spNotice"></div>
 
     <div id="spRulesHead" style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-      <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">規則</span>
-      <span style="font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">由上往下比對，第一條命中即生效；一條規則可同時限定程式、目的地、埠與協定</span>
+      <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap;display:flex;align-items:center">規則${tipIcon('由上往下比對，第一條命中即生效；一條規則可同時限定程式、目的地、埠與協定')}</span>
       <button id="spSimToggle" class="hvFill2" title="測試某個網址會走哪一條規則" style="margin-left:auto;display:flex;align-items:center;gap:5px;height:28px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg>模擬</button>
       <div id="spTools" style="display:none;align-items:center;gap:8px;flex-shrink:0">
         <input id="spSearch" placeholder="搜尋…" style="width:150px;height:28px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text);font-size:12px;outline:none">
@@ -2697,12 +2721,19 @@ function updateSplit() {
   badge.textContent = running ? '執行中' : starting ? '正在啟動' : state.splitElevated ? '已授權' : '需要授權';
   badge.style.background = running ? 'var(--good-dim)' : starting ? 'var(--amber-dim)' : state.splitElevated ? 'var(--fill2)' : 'var(--amber-dim)';
   badge.style.color = running ? 'var(--good)' : starting ? 'var(--amber)' : state.splitElevated ? 'var(--text2)' : 'var(--amber)';
+  // 權限說明原本是一條常駐通知列；改掛在「需要授權」徽章上，點下去開完整說明
+  const needUac = !running && !starting && !state.splitElevated;
+  if (needUac) badge.dataset.tip = '首次啟動需要系統管理員權限，用於建立虛擬網卡並注入路由表，只需同意一次。點擊了解權限用途';
+  else delete badge.dataset.tip;
+  badge.style.cursor = needUac ? 'pointer' : '';
+  badge.onclick = needUac ? () => { state.splitUac = true; renderSplitUac(); } : null;
 
   $('spEngineDesc').textContent = running
     ? (ruleMode ? '依規則表分流；規則變更約 1–2 秒生效。切換模式不需重新提權。'
       : mode === 'global' ? `所有流量走「${splitTargetLabel(state.splitGlobalTarget)}」。`
       : '所有流量直連，斷線保護維持。')
-    : '啟動後依規則決定每個連線走哪條路。';
+    : '';
+  $('spEngineDesc').style.display = $('spEngineDesc').textContent ? '' : 'none';
 
   renderSplitModes();
   setDisp('spDefaultWrap', false); setDisp('spGlobalWrap', false); setDisp('spDirectNote', false);
@@ -2748,10 +2779,8 @@ async function setSplitMode(mode) {
   }
   state.splitMode = mode;
   updateSplit();
+  // 不再另外跳 toast：模式切換後上方的通知列已經寫明現況，兩個一起出現是重複
   await persistSplit({ mode, globalTarget: state.splitGlobalTarget });
-  flash(mode === 'rule' ? '已切回規則模式'
-    : mode === 'global' ? `全域模式：所有流量走「${splitTargetLabel(state.splitGlobalTarget)}」`
-    : '直連模式：所有流量不經代理');
 }
 
 function renderSplitNotice() {
@@ -2761,12 +2790,10 @@ function renderSplitNotice() {
   const running = splitRunning();
   const info = 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8h.01M11 12h1v5h1';
   const warn = 'M12 3.5 2.8 19.5h18.4L12 3.5zM12 9.5v4.5M12 17h.01';
-  const shield = 'M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z';
   const missing = state.splitRules.filter(r => r.on !== false && missingTags(r).length);
   let n = null;
   if (state.splitMode === 'global') n = { text: `全域模式：所有流量走「${splitTargetLabel(state.splitGlobalTarget)}」，下方規則暫時停用（本機與內網仍直連）。`, bg: 'var(--accent-dim)', color: 'var(--accent)', icon: info, action: '切回規則', go: () => setSplitMode('rule') };
   else if (state.splitMode === 'direct') n = { text: '直連模式：所有流量不經代理，規則暫時停用。', bg: 'var(--fill2)', color: 'var(--text3)', icon: info, action: '切回規則', go: () => setSplitMode('rule') };
-  else if (!state.splitElevated && !running) n = { text: '首次啟動需要系統管理員權限，用於建立虛擬網卡並注入路由表。整個過程只需同意一次。', bg: 'var(--accent-dim)', color: 'var(--accent)', icon: shield, action: '了解權限用途', go: () => { state.splitUac = true; renderSplitUac(); } };
   else if (missing.length) n = { text: `有 ${missing.length} 條規則引用尚未下載的規則庫，這些規則目前不會生效。`, bg: 'var(--amber-dim)', color: 'var(--amber)', icon: warn, action: '全部下載', go: () => installRuleSets([...new Set(missing.flatMap(missingTags))]) };
   else if (!running && state.splitRules.length) n = { text: '規則要在分流引擎執行時才會生效。', bg: 'var(--fill2)', color: 'var(--text3)', icon: info, action: '啟動引擎', go: () => toggleSplitEngine() };
 
@@ -3139,7 +3166,7 @@ function splitMenuItems(kind) {
   if (kind === 'split-global') {
     return splitTargetOptions(state.splitGlobalTarget, id => {
       state.splitGlobalTarget = id; closeMenu(); updateSplit();
-      persistSplit({ globalTarget: id }); flash(`全域模式：所有流量走「${splitTargetLabel(id)}」`);
+      persistSplit({ globalTarget: id });
     }, false, false);
   }
   if (kind === 'split-target') {
@@ -3277,7 +3304,7 @@ function renderSplitSheet() {
           <button id="spSheetClose" class="hvFill" title="關閉面板" style="margin-left:auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button>
         </div>
         <div id="spSheetBody" style="flex:1;min-height:0;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:14px">
-          <span style="font-size:11.5px;color:var(--text2);line-height:1.55;text-wrap:pretty;flex-shrink:0">條件全部要同時成立才算命中；沒展開的條件＝不限。至少填一項。</span>
+          <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap;display:flex;align-items:center;flex-shrink:0">條件${tipIcon('全部條件同時成立才算命中；沒展開的條件＝不限。至少填一項')}</span>
           ${condHtml}
           ${d.error ? `<span style="font-size:11px;color:var(--red);line-height:1.5;flex-shrink:0">${esc(d.error)}</span>` : ''}
           <div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0">
@@ -3293,13 +3320,13 @@ function renderSplitSheet() {
             <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">顯示名稱</span>
             <input id="spDraftName" value="${esc(d.name)}" placeholder="${nameAuto ? esc('留空自動使用「' + nameAuto + '」') : '例如 Chrome 連公司系統'}" style="height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
           </div>
-          <div style="background:var(--fill2);border-radius:12px;padding:13px 15px;display:flex;flex-direction:column;gap:7px;flex-shrink:0">
-            <span style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;white-space:nowrap">對應 config.json</span>
-            <span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text">${esc(splitDraftJson())}</span>
-          </div>
+          <details id="spJson" ${state.showJson ? 'open' : ''} style="background:var(--fill2);border-radius:12px;padding:11px 15px;flex-shrink:0">
+            <summary style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;cursor:pointer;white-space:nowrap">對應 config.json</summary>
+            <div style="margin-top:7px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text">${esc(splitDraftJson())}</div>
+          </details>
         </div>
         <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
-          <span style="font-size:11.5px;color:var(--text3);flex:1;min-width:0">儲存後立即生效，無需重啟引擎</span>
+          <span style="flex:1"></span>
           <button id="spSheetCancel" class="hvFill2" style="height:32px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>
           <button id="spSheetSave" class="hvBright" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">儲存規則</button>
         </div>
@@ -3309,6 +3336,7 @@ function renderSplitSheet() {
   const M = $('splitSheetMount');
   $('spSheetOverlay').onclick = e => { if (e.target === $('spSheetOverlay')) closeSplitSheet(); };
   $('spSheetClose').onclick = () => closeSplitSheet();
+  $('spJson').ontoggle = e => { state.showJson = e.target.open; };
   $('spSheetCancel').onclick = () => closeSplitSheet();
   $('spSheetSave').onclick = () => saveSplitRule();
   $('spTargetBtn').onclick = e => { e.stopPropagation(); openMenu('split-target', $('spTargetBtn')); };
@@ -3411,8 +3439,7 @@ function renderKsScope() {
   el.innerHTML = `
     <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;border-top:1px solid var(--sep)">
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:500;white-space:nowrap">受保護程式</div>
-        <div style="font-size:11.5px;color:var(--text2);margin-top:2px">${scope === 'all' ? '依規則表，凡是走代理的都會被暫停' : '只暫停選定的程式，其餘照常上網'}</div>
+        ${rowTitle('受保護程式', '全部：依規則表，凡是走代理的連線都會被暫停\n指定程式：只暫停選定的程式，其餘照常上網')}
       </div>
       <div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px;flex-shrink:0">${seg}</div>
     </div>
@@ -3482,14 +3509,14 @@ function renderRuleSets() {
     </div>
     ${installed.length ? rows : empty}
     <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--sep)">
-      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">自動更新</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">每 ${days} 天檢查一次</div></div>
+      <div style="flex:1;min-width:0">${rowTitle('自動更新', `每 ${days} 天檢查一次`)}</div>
       <div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px;opacity:${autoOn ? '1' : '.45'}">
         ${[7, 14, 30].map(d => `<button data-rsd="${d}" ${autoOn ? '' : 'disabled'} style="border:none;cursor:${autoOn ? 'pointer' : 'not-allowed'};height:26px;padding:0 10px;border-radius:6px;font-size:12px;white-space:nowrap;${segCss(days === d)}">${d}</button>`).join('')}
       </div>
       <button data-rsauto="1" role="switch" aria-checked="${autoOn}" aria-label="自動更新規則庫" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${autoOn ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${autoOn ? '21px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
     </div>
     <div style="padding:13px 16px;display:flex;align-items:center;gap:14px">
-      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;white-space:nowrap">下載經由</div><div style="font-size:11.5px;color:var(--text2);margin-top:2px">規則庫來源在 GitHub</div></div>
+      <div style="flex:1;min-width:0">${rowTitle('下載經由', '規則庫從 GitHub 下載；連不上時可改走某條路由')}</div>
       <button id="setRsDetour" class="hvFill2" style="display:flex;align-items:center;gap:7px;height:30px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><span>${esc(detRoute ? (detRoute.label || det) : '直連')}</span><span style="color:var(--text3);font-size:9px">▾</span></button>
     </div>`;
 

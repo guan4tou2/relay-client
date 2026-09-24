@@ -55,7 +55,7 @@ button:focus-visible,[tabindex]:focus-visible,label:focus-visible{outline:2px so
 @keyframes arcSettle{0%{transform:rotate(0deg);animation-timing-function:cubic-bezier(.3,0,.35,1)}62%{transform:rotate(372deg);animation-timing-function:cubic-bezier(.34,1.2,.64,1)}80%{transform:rotate(352deg);animation-timing-function:cubic-bezier(.34,1.1,.64,1)}91%{transform:rotate(362.5deg)}97%{transform:rotate(359deg)}100%{transform:rotate(360deg)}}
 @keyframes hopFlow{0%{stroke-dashoffset:16}100%{stroke-dashoffset:0}}
 @keyframes sheetIn{from{transform:translateX(28px);opacity:0}to{transform:translateX(0);opacity:1}}
-@keyframes toastIn{from{transform:translateY(-8px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes toastIn{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}
 @keyframes fadeUp{from{transform:translateY(6px);opacity:0}to{transform:translateY(0);opacity:1}}
 
 /* hover 工具類：設計稿 style-hover 的等價實作。用 !important 覆蓋 inline background。 */
@@ -65,6 +65,11 @@ button:focus-visible,[tabindex]:focus-visible,label:focus-visible{outline:2px so
 .hvRed:hover{background:var(--red)!important;color:#fff!important}
 .hvAcc:hover{background:var(--accent)!important;color:#fff!important}
 .hvAccDim:hover{background:var(--accent-dim)!important}
+
+/* 懸浮說明：原本常駐在畫面上的副標收進 ⓘ，滑鼠停上去才出現（renderer 的 tipIcon / data-tip） */
+.tipI{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:5px;vertical-align:-2px;color:var(--text3);cursor:help;flex-shrink:0}
+.tipI:hover{color:var(--accent)}
+#tipBox{position:fixed;z-index:200;max-width:280px;padding:7px 10px;background:var(--panel);color:var(--text);border:1px solid var(--sep);border-radius:9px;box-shadow:var(--shadow);font-size:11.5px;line-height:1.55;pointer-events:none;white-space:pre-line;animation:fadeUp .12s ease-out}
 
 /* frameless 視窗：標題列可拖曳，互動元件不可拖曳 */
 .titlebar{-webkit-app-region:drag}
