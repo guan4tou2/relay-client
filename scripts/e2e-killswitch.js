@@ -139,8 +139,11 @@ async function T(name, fn) {
     });
 
     await T('封鎖模式真的起來了（blocking=true 且 TUN 重建）', async () => {
-      const k = await ks();
-      if (!k.blocking) throw new Error('blocking=false —— 受保護流量沒有被擋住，這是 fail-open');
+      // tripped 是在 startBlock() 之前就設的，封鎖要等新的 TUN 建好（實測約 5 秒）。
+      // 以前在 tripped 的當下就斷言，必定失敗。那段空窗本身是已知問題 #3，不在這裡驗。
+      let k = await ks();
+      for (let i = 0; i < 40 && !k.blocking; i++) { await new Promise(r => setTimeout(r, 500)); k = await ks(); }
+      if (!k.blocking) throw new Error('等了 20 秒 blocking 仍是 false —— 封鎖模式沒起來，這是 fail-open');
       if (tunCount() <= baseTun) throw new Error('封鎖模式沒有重建 TUN');
     });
 

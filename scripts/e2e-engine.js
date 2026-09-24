@@ -10,6 +10,9 @@
 //   再用一般權限跑：
 //   CDP_PORT=9300 node scripts/e2e-engine.js
 //
+// profile 要先放夾具（r-oracle 路由 + 兩條規則）與裁判 socks-oracle.js，
+// 空的 {} 會在第二步就失敗。建法見 docs/QA.md「跑引擎／斷線保護測試的前置」。
+//
 // 測試設定刻意用 mode=direct（只有 direct outbound、final=direct）：
 // TUN 起得來、路由裝得上，但流量原樣出去、不經任何代理 —— 驗證的是
 // 「引擎起不起得來、收不收得乾淨」，不是分流本身。

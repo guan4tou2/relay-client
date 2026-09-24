@@ -73,7 +73,7 @@ Proxifier 與 ProxyBridge 都內建同樣的保護——Proxifier 的 `Localhost
 **它排在使用者規則之前**，所以任何較寬鬆的規則（例如「Chrome → 代理」）都不會把內網流量搶走。
 真的需要讓某個內網位址走代理時，把 `lanDirect` 設成 `false`，然後自己寫規則。
 
-斷線保護（fail-closed）啟動時這條規則同樣保留——否則全域模式的 catch-all 會把使用者的內網一起切斷。
+斷線保護的封鎖模式啟動時這條規則同樣保留——否則全域模式的 catch-all 會把使用者的內網一起切斷。
 
 ## config.json 位置
 
@@ -272,5 +272,6 @@ v1.1.x 的兩張分開的表（`rules` 依程式 / `netRules` 依網域）會在
   逼瀏覽器退回 TCP（範例裡的 `n5`）。
 - **地區資料會過期**：GeoIP 資料每隔一段時間就該更新，否則地區判斷會不準。
 - **`keyword` 很寬鬆**：`google` 會連 `notgoogle.com` 也一起中，建議優先用 `suffix`。
-- **斷線保護**：引擎異常中止時，所有 `target` 不是 `direct` 的規則會一起被封鎖（fail-closed），
+- **斷線保護**：引擎異常中止時，所有 `target` 不是 `direct` 的規則會一起被封鎖，
   包含複合規則；只有原本就直連的規則不受影響。
+  不過封鎖要等新的虛擬網卡建好才生效，中間約有 5 秒空窗會直接連出去（[#3](https://github.com/guan4tou2/relay-client/issues/3)）。
