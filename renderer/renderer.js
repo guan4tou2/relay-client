@@ -328,6 +328,7 @@ function renderSidebar() {
     const chained = r.hops.length > 1;
     const exitName = r.hops.length ? srvName(r.hops[r.hops.length - 1]) : '未設跳點';
     const refs = routeRefLabel(r.id);   // 「2 條規則」——被分流規則引用時取代出口名顯示
+    // 側欄只有 264px，這欄常被截：讓它吃掉剩餘寬度，出口與引用完整內容放懸浮提示
     const powerBg = conn ? 'var(--good)' : busy ? 'var(--amber)' : 'var(--fill2)';
     const powerColor = (conn || busy) ? '#fff' : 'var(--text2)';
     const powerTip = conn ? '停止這條路由' : busy ? '正在啟動…' : '啟動這條路由';
@@ -343,7 +344,7 @@ function renderSidebar() {
       <div style="display:flex;align-items:center;gap:6px">
         <span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 5px;border-radius:5px;background:var(--fill2);color:var(--text2);flex-shrink:0">${r.kind === 'http' ? 'HTTP' : 'SOCKS5'}</span>
         <span style="font-size:11.5px;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">127.0.0.1:${esc(String(r.localPort))}</span>
-        <span style="margin-left:auto;font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:96px">${esc(refs || exitName)}</span>
+        <span data-tip="${esc('出口：' + exitName + (refs ? '\n使用中：' + refs : ''))}" style="margin-left:auto;flex:1;min-width:0;text-align:right;font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(refs || exitName)}</span>
       </div>
       ${active ? `<div style="display:flex;gap:6px;padding-top:2px">
         <button class="hvBright" data-act="power" title="${powerTip}（空白鍵）" style="flex:1;height:26px;border:none;border-radius:7px;background:${powerBg};color:${powerColor};cursor:pointer;display:flex;align-items:center;justify-content:center">${POWER_ICON}</button>
@@ -791,7 +792,8 @@ function renderServers() {
   const rows = state.servers.map(s => {
     const pend = state.pendingSrvDel === s.id;
     const lat = s.latency;
-    const tText = lat == null ? '未測試' : lat < 0 ? '測試失敗' : '成功 · ' + lat + 'ms';
+    const why = lat < 0 ? testFailReason(s.lastError) : '';
+    const tText = lat == null ? '未測試' : lat < 0 ? (why ? '失敗 · ' + why : '測試失敗') : '成功 · ' + lat + 'ms';
     const authIcon = sUser(s) ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>' : '';
     const delIcon = pend
       ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
@@ -803,7 +805,7 @@ function renderServers() {
       <button class="hvFill" data-scopy="${esc(addr)}" title="點擊複製位址 ${esc(addr)}" style="flex:1.9 1 0;min-width:150px;max-width:260px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;color:var(--text2);padding:4px 10px 4px 0;border:none;border-radius:6px;background:transparent;text-align:left;cursor:pointer;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(addr)}</button>
       <span style="width:58px;flex-shrink:0"><span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);white-space:nowrap">${PROTO[sProto(s)].label}</span></span>
       <span style="width:56px;flex-shrink:0;color:var(--text2);display:flex;align-items:center;gap:5px;white-space:nowrap">${authIcon}${sUser(s) ? '已設定' : '無'}</span>
-      <span style="flex:1 1 0;min-width:104px;padding-right:12px;box-sizing:border-box;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:${testColor(lat)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(tText)}</span>
+      <span style="flex:1 1 0;min-width:104px;padding-right:12px;box-sizing:border-box;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:${testColor(lat)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis"${lat < 0 && s.lastError ? ` data-tip="${esc(s.lastError)}"` : ''}>${esc(tText)}</span>
       <span style="width:90px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
         <button class="hvAcc" data-stest="${s.id}" title="測試連線" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z"></path></svg></button>
         <button class="hvAcc" data-sedit="${s.id}" title="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
@@ -839,7 +841,20 @@ async function testServerRow(id) {
   if (state.tab === 'servers') renderServers();
   if (state.tab === 'dashboard') updateChain();
   if (r && r.success) flash((s.name || s.host) + ' 測試成功 · ' + r.latency + 'ms');
-  else flash('測試失敗', 'var(--red)');
+  else flash((s.name || s.host) + ' 測試失敗' + (testFailReason(r && r.error) ? '：' + testFailReason(r.error) : ''), 'var(--red)');
+}
+
+// 把 net / 代理協定的原文錯誤翻成一句看得懂的原因；認不得的回空字串，由呼叫端退回「測試失敗」
+function testFailReason(msg) {
+  const m = String(msg || '');
+  if (!m) return '';
+  if (/ECONNREFUSED/i.test(m)) return '連線被拒';
+  if (/ETIMEDOUT|timed? ?out|逾時/i.test(m)) return '逾時';
+  if (/ENOTFOUND|EAI_AGAIN/i.test(m)) return '找不到主機';
+  if (/ECONNRESET|socket hang up|closed/i.test(m)) return '連線被中斷';
+  if (/auth|401|407|credential|password|帳密|認證/i.test(m)) return '驗證失敗';
+  if (/EHOSTUNREACH|ENETUNREACH/i.test(m)) return '網路無法到達';
+  return '';
 }
 
 function deleteServerRow(id) {
@@ -1842,7 +1857,9 @@ function renderAlert() {
     <div id="alertOverlay" style="position:absolute;inset:0;background:rgba(0,0,0,.34);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:140">
       <div id="alertBox" style="width:356px;background:var(--panel);border:1px solid var(--sep);border-radius:16px;box-shadow:0 20px 50px rgba(0,0,0,.3);padding:22px;display:flex;flex-direction:column;align-items:center;gap:13px;text-align:center;animation:fadeUp .2s ease-out">
         <div style="width:44px;height:44px;border-radius:50%;background:${warn ? 'var(--red-dim)' : 'var(--accent-dim)'};display:flex;align-items:center;justify-content:center;color:${warn ? 'var(--red)' : 'var(--accent)'}">
-          <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3.5 2.8 19.5h18.4L12 3.5z"></path><path d="M12 9.5v4.5M12 17h.01"></path></svg>
+          <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${warn
+            ? '<path d="M12 3.5 2.8 19.5h18.4L12 3.5z"></path><path d="M12 9.5v4.5M12 17h.01"></path>'
+            : '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 7.6h.01"></path>'}</svg>
         </div>
         <span style="font-size:15.5px;font-weight:700;letter-spacing:-.2px">${esc(a.title)}</span>
         <span style="font-size:12.5px;color:var(--text2);line-height:1.7;text-wrap:pretty">${esc(a.body)}</span>
@@ -1917,7 +1934,7 @@ function renderLaunchSheet() {
     return `<button data-lsb="${esc(b.name)}" ${b.found ? '' : 'disabled'} title="${tip}" style="display:flex;flex-direction:column;align-items:center;gap:7px;padding:12px 8px 10px;border:1px solid ${on ? 'var(--accent)' : 'var(--sep)'};border-radius:12px;background:${on ? 'var(--accent-dim)' : 'var(--bg)'};color:var(--text);cursor:${b.found ? 'pointer' : 'not-allowed'};opacity:${b.found ? '1' : '.45'};min-width:0">
       <span style="width:34px;height:34px;border-radius:10px;background:var(--fill2);color:var(--text2);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">${esc(b.name[0])}</span>
       <span style="font-size:12px;font-weight:600;white-space:nowrap">${esc(b.name)}</span>
-      <span style="font-size:10px;color:var(--text3);white-space:nowrap">${b.found ? (on ? '已選擇' : '免提權') : '未安裝'}</span>
+      <span style="font-size:10px;color:var(--text3);white-space:nowrap">${b.found ? '&nbsp;' : '未安裝'}</span>
     </button>`;
   }).join('');
 
@@ -1962,21 +1979,20 @@ function renderLaunchSheet() {
         </div>
 
         <div style="display:flex;flex-direction:column;gap:8px">
-          <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">要啟動什麼</span>
+          <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap;display:flex;align-items:center">要啟動什麼${tipIcon('瀏覽器：只有這個視窗走代理，關掉即結束；不需引擎或權限，不影響平常的瀏覽器\n其他程式：登記成程式規則後由分流引擎比對，需引擎執行中')}</span>
           <div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:9px">${modeSeg}</div>
-          <span style="font-size:11px;color:var(--text3);line-height:1.5;text-wrap:pretty">${isBrowser ? '只有這個視窗走代理，關掉即結束；不需引擎或權限。' : '登記成程式規則後由分流引擎比對，需引擎執行中。'}</span>
         </div>
 
         ${isBrowser ? `<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">${browserCards || '<span style="font-size:11.5px;color:var(--text3)">找不到可用的瀏覽器</span>'}</div>` : programBody}
 
-        <div style="background:var(--fill2);border-radius:12px;padding:13px 15px;display:flex;flex-direction:column;gap:7px">
-          <span style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;white-space:nowrap">將執行</span>
-          <span id="lsPreview" style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text;white-space:pre-wrap">${esc(state.launchPreview)}</span>
-        </div>
+        <details id="lsPreviewBox" ${state.showJson ? 'open' : ''} style="background:var(--fill2);border-radius:12px;padding:11px 15px">
+          <summary style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;cursor:pointer;white-space:nowrap">將執行的指令</summary>
+          <div id="lsPreview" style="margin-top:7px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text;white-space:pre-wrap">${esc(state.launchPreview)}</div>
+        </details>
       </div>
 
       <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
-        <span style="font-size:11.5px;color:var(--text3);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isBrowser ? '關掉視窗即結束；不影響平常的瀏覽器' : (d.exePath ? '規則對這支程式一律生效，不只這次' : '選擇瀏覽器或程式')}</span>
+        <span style="font-size:11.5px;color:var(--text3);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isBrowser ? '' : (d.exePath ? '規則對這支程式一律生效，不只這次' : '')}</span>
         <button id="lsCancel" class="hvFill2" style="height:32px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>
         <button id="lsGo" ${canLaunch ? '' : 'disabled'} class="${canLaunch ? 'hvBright' : ''}" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:${canLaunch ? 'pointer' : 'not-allowed'};white-space:nowrap;opacity:${canLaunch ? '1' : '.5'}">${state.launchBusy ? '啟動中…' : target ? '啟動 ' + esc(target) : '啟動'}</button>
       </div>
@@ -1986,6 +2002,7 @@ function renderLaunchSheet() {
   $('lsOverlay').onclick = () => closeLaunchSheet();
   $('lsPanel').onclick = e => e.stopPropagation();
   $('lsClose').onclick = () => closeLaunchSheet();
+  $('lsPreviewBox').ontoggle = e => { state.showJson = e.target.open; };
   $('lsCancel').onclick = () => closeLaunchSheet();
   $('lsRoute').onclick = e => { e.stopPropagation(); openMenu('ls-route', $('lsRoute')); };
   m.querySelectorAll('[data-lsmode]').forEach(b => b.onclick = () => { d.mode = b.dataset.lsmode; renderLaunchSheet(); refreshLaunchPreview(); });
@@ -2060,8 +2077,7 @@ function renderInstances() {
   el.innerHTML = `
     <div style="display:flex;align-items:flex-end;gap:12px;margin-bottom:14px">
       <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
-        <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">實例分流</span>
-        <span style="font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">只有從這裡啟動的實例走代理，平常開的同名程式照常</span>
+        <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap;display:flex;align-items:center">實例分流${tipIcon('只有從這裡啟動的實例走代理，平常開的同名程式照常')}</span>
       </div>
       <span style="margin-left:auto;font-size:11.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap">${list.filter(i => i.mode === 'browser').length} 獨立 · ${list.filter(i => i.mode !== 'browser').length} 引擎</span>
     </div>
@@ -2171,9 +2187,10 @@ async function exportData() {
 }
 
 function doExport(servers, routes, withPass) {
+  // id 一定要帶：路由的 hops 存的是伺服器 id，匯入端要靠它把跳點對回新建的伺服器
   const pick = s => withPass
-    ? { name: s.name, host: s.host, port: s.port, type: s.type, note: s.note, username: s.username, password: s.password }
-    : { name: s.name, host: s.host, port: s.port, type: s.type, note: s.note };
+    ? { id: s.id, name: s.name, host: s.host, port: s.port, type: s.type, note: s.note, username: s.username, password: s.password }
+    : { id: s.id, name: s.name, host: s.host, port: s.port, type: s.type, note: s.note };
   const payload = { servers: servers.map(pick), routes, exportedAt: new Date().toISOString(), includesPasswords: !!withPass };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -2228,25 +2245,35 @@ async function doImport(servers, routes, overwrite) {
     const curServers = await window.api.getServers();
     const curRoutes = await window.api.getRoutes();
     let ns = 0, skipped = 0;
+    // 匯出端的伺服器 id → 這台機器上的 id。伺服器匯入時會拿到新 id，
+    // 路由的 hops 不改寫的話會指向不存在的伺服器，路由整條不能用。
+    const idMap = new Map();
     for (const s of servers) {
       const dup = curServers.find(c => c.host === s.host && String(c.port) === String(s.port));
+      if (dup) idMap.set(s.id, dup.id);   // 略過或覆蓋都沿用現有那台
       if (dup && !overwrite) { skipped++; continue; }
       const rec = { name: s.name || s.host, host: s.host, port: s.port, type: s.type || 'socks5', username: s.username || '', password: s.password || '', note: s.note || '' };
-      if (dup) await window.api.updateServer(dup.id, rec); else await window.api.addServer(rec);
+      if (dup) await window.api.updateServer(dup.id, rec);
+      else { const added = await window.api.addServer(rec); if (s.id && added) idMap.set(s.id, added.id); }
       ns++;
     }
-    let nr = 0;
+    const known = new Set([...curServers.map(c => c.id), ...idMap.values()]);
+    let nr = 0, lostHops = 0;
     for (const r of routes) {
       if (!r || !r.id) continue;
       const dup = curRoutes.find(c => c.id === r.id || String(c.localPort) === String(r.localPort));
       if (dup && !overwrite) { skipped++; continue; }
-      await window.api.saveRoute(r); nr++;
+      // 舊版匯出檔沒有伺服器 id，對不回去的跳點只能拿掉，並在結果裡講明
+      const hops = (r.hops || []).map(h => idMap.get(h) || (known.has(h) ? h : null));
+      lostHops += hops.filter(h => !h).length;
+      await window.api.saveRoute({ ...r, hops: hops.filter(Boolean) }); nr++;
     }
     state.servers = await window.api.getServers();
     state.routes = await window.api.getRoutes();
     if (!state.sel && state.routes[0]) state.sel = state.routes[0].id;
     renderSidebar(); showTab(state.tab);
-    flash(`已匯入 ${ns} 台伺服器 · ${nr} 條路由` + (skipped ? `（略過 ${skipped} 筆重複）` : ''));
+    flash(`已匯入 ${ns} 台伺服器 · ${nr} 條路由` + (skipped ? `（略過 ${skipped} 筆重複）` : '')
+      + (lostHops ? `；${lostHops} 個跳點對不到伺服器，已移除，請重新設定` : ''), lostHops ? 'var(--amber)' : undefined);
   } catch (err) { flash('匯入失敗：' + err.message, 'var(--red)'); }
 }
 
@@ -2321,17 +2348,24 @@ function setTheme(mode) {
 // =====================================================================================
 // 傳輸統計 tick（300ms 取樣；速率由真實累計位元組差分推得）
 // =====================================================================================
+// 視窗沒有焦點或被遮住時，Chromium 會把這個 300ms 計時器拉長到約 1 秒（實測 30 秒只跑 31 次）。
+// 所以速率要除以「實際經過的時間」，不是固定的 0.3 秒——否則背景時速率會被放大 3 倍多；
+// 漏掉的格數也要補上，不然「5 分鐘」那 1000 格實際上涵蓋了十幾分鐘。
 setInterval(() => {
   let selDirty = false;
+  const now = performance.now();
   Object.keys(state.sessions).forEach(id => {
     const s = state.sessions[id];
-    if (s.status !== 'running') return;
+    if (s.status !== 'running') { s._pt = 0; return; }
     const pu = s._pu || 0, pd = s._pd || 0;
-    const up = Math.max(0, (s.upT || 0) - pu) / (TICK_MS / 1000), down = Math.max(0, (s.downT || 0) - pd) / (TICK_MS / 1000);
+    const elapsed = s._pt ? Math.max(TICK_MS, now - s._pt) : TICK_MS;
+    s._pt = now;
+    const up = Math.max(0, (s.upT || 0) - pu) / (elapsed / 1000), down = Math.max(0, (s.downT || 0) - pd) / (elapsed / 1000);
     s._pu = s.upT || 0; s._pd = s.downT || 0;
     s.up = up; s.down = down;
     const ser = s.series || (s.series = []);
-    ser.push({ down, up });
+    const n = Math.min(SERIES_MAX, Math.max(1, Math.round(elapsed / TICK_MS)));
+    for (let i = 0; i < n; i++) ser.push({ down, up });
     if (ser.length > SERIES_MAX) ser.splice(0, ser.length - SERIES_MAX);
     if (s.startTs) s.uptime = Math.floor((Date.now() - s.startTs) / 1000);
     if (id === state.sel) selDirty = true;
@@ -2350,7 +2384,8 @@ function reconcileStatus(list) {
     const cur = state.sessions[s.id];
     if (!cur || (cur.status !== 'running' && cur.status !== 'connecting' && cur.status !== 'closing')) {
       setSes(s.id, { status: 'running', prog: 1, settle: false, startTs: (cur && cur.startTs) || Date.now(),
-        series: (cur && cur.series) || [], upT: (cur && cur.upT) || 0, downT: (cur && cur.downT) || 0, conns: (cur && cur.conns) || 0, uptime: (cur && cur.uptime) || 0, _pu: 0, _pd: 0 });
+        series: (cur && cur.series) || [], upT: (cur && cur.upT) || 0, downT: (cur && cur.downT) || 0, conns: (cur && cur.conns) || 0, uptime: (cur && cur.uptime) || 0,
+        _pu: (cur && cur.upT) || 0, _pd: (cur && cur.downT) || 0 });   // 基準接著現有累計，不然第一格會把全部累計算成瞬間流量
     }
   });
   Object.keys(state.sessions).forEach(id => {
@@ -2448,6 +2483,13 @@ async function boot() {
     const s = state.sessions[stats.routeId];
     if (!s) return;
     if (typeof stats.connections === 'number') s.conns = Math.max(0, stats.connections);
+    // 主行程送的是「路由啟動以來的累計位元組」。畫面重建（重新載入、視窗重開）後的第一筆
+    // 只拿來當差分基準——原本會被當成一個 300ms 格子裡的流量，畫出幾百 MB/s 的假尖峰。
+    if (!s._seen) {
+      s._seen = true;
+      if (typeof stats.bytesUp === 'number') s._pu = stats.bytesUp;
+      if (typeof stats.bytesDown === 'number') s._pd = stats.bytesDown;
+    }
     if (typeof stats.bytesUp === 'number') s.upT = stats.bytesUp;
     if (typeof stats.bytesDown === 'number') s.downT = stats.bytesDown;
   });

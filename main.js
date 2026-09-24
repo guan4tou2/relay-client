@@ -417,11 +417,12 @@ ipcMain.handle('test-server', async (_e, serverId, testTarget) => {
       addLog('info', 'test', `Testing ${proxyType} handshake ${server.host}:${server.port}`);
       latency = await testProxyHandshake(server);
     }
-    config.updateServer(serverId, { latency, lastTest: Date.now(), status: 'ok' });
+    config.updateServer(serverId, { latency, lastTest: Date.now(), status: 'ok', lastError: null });
     addLog('info', 'test', `SUCCESS ${server.host}:${server.port} — ${latency}ms`);
     return { success: true, latency };
   } catch (err) {
-    config.updateServer(serverId, { latency: -1, lastTest: Date.now(), status: 'error' });
+    // 失敗原因存起來：伺服器列表原本只寫「測試失敗」，看不出是被拒、逾時還是驗證錯
+    config.updateServer(serverId, { latency: -1, lastTest: Date.now(), status: 'error', lastError: err.message });
     addLog('error', 'test', `FAILED ${server.host}:${server.port} — ${err.message}`);
     return { success: false, error: err.message };
   }
