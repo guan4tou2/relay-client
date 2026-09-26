@@ -364,3 +364,21 @@ describe('config — 密碼加密存放', () => {
     expect(() => config.saveCreds('nope')).toThrow();
   });
 });
+
+describe('config — migrateTlsDefaults（HTTPS 伺服器沿用舊的不驗證行為，只做一次）', () => {
+  test('只標記既有的 https 伺服器，已設定過的不動；第二次呼叫什麼都不做', () => {
+    mockStore.set('servers', [
+      { id: 'a', host: 'h', port: 1, type: 'https' },
+      { id: 'b', host: 'h', port: 2, type: 'https', tlsInsecure: false },
+      { id: 'c', host: 'h', port: 3, type: 'socks5' },
+    ]);
+    expect(config.migrateTlsDefaults()).toBe(1);
+    const [a, b, c] = mockStore.get('servers');
+    expect(a.tlsInsecure).toBe(true);
+    expect(b.tlsInsecure).toBe(false);
+    expect(c.tlsInsecure).toBeUndefined();
+    mockStore.set('servers', [{ id: 'd', host: 'h', port: 4, type: 'https' }]);
+    expect(config.migrateTlsDefaults()).toBe(0);
+    expect(mockStore.get('servers')[0].tlsInsecure).toBeUndefined();
+  });
+});

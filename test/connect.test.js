@@ -182,3 +182,59 @@ describe('openSocketToProxy — TCP', () => {
       .rejects.toThrow(/ECONNREFUSED/);
   });
 });
+
+// 以前三個地方都寫死 rejectUnauthorized: false：路上任何人都能冒充 HTTPS 代理，收走帳密。
+describe('TLS 憑證驗證', () => {
+  const tls = require('tls');
+  const { EventEmitter } = require('events');
+  const { openSocketToProxy, tlsOptions, explainTlsError, chainHop } = require('../src/proxy/connect');
+
+  const fakeTlsSocket = () => {
+    const s = new EventEmitter();
+    s.setTimeout = jest.fn(); s.destroy = jest.fn(); s.write = jest.fn(); s.unshift = jest.fn();
+    return s;
+  };
+
+  test('預設驗證；只有 tlsInsecure 才關', () => {
+    expect(tlsOptions({ host: 'proxy.example.com' }).rejectUnauthorized).toBe(true);
+    expect(tlsOptions({ host: 'proxy.example.com', tlsInsecure: true }).rejectUnauthorized).toBe(false);
+  });
+
+  test('網域放 servername（SNI + 驗證）；IP 不能當 SNI，改放 host 讓驗證比對 IP', () => {
+    expect(tlsOptions({ host: 'proxy.example.com' })).toMatchObject({ servername: 'proxy.example.com' });
+    const ip = tlsOptions({ host: '203.0.113.5' });
+    expect(ip.servername).toBeUndefined();
+    expect(ip.host).toBe('203.0.113.5');
+  });
+
+  test('openSocketToProxy(https) 送出去的選項有驗證憑證', async () => {
+    const spy = jest.spyOn(tls, 'connect').mockImplementation((opts, cb) => { const s = fakeTlsSocket(); setImmediate(cb); return s; });
+    try {
+      await openSocketToProxy({ host: 'proxy.example.com', port: 8443 }, true);
+      expect(spy.mock.calls[0][0]).toMatchObject({ rejectUnauthorized: true, servername: 'proxy.example.com', port: 8443 });
+    } finally { spy.mockRestore(); }
+  });
+
+  test('https 跳點在通道上的 TLS 也驗證憑證', async () => {
+    const spy = jest.spyOn(tls, 'connect').mockImplementation(() => {
+      const s = fakeTlsSocket();
+      setImmediate(() => s.emit('error', Object.assign(new Error('self-signed certificate'), { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' })));
+      return s;
+    });
+    const upstream = fakeTlsSocket();
+    try {
+      await expect(chainHop({ host: 'p.example.com', port: 443, type: 'https' }, { host: 'x', port: 80 }, upstream))
+        .rejects.toThrow(/略過憑證驗證/);
+      expect(spy.mock.calls[0][0]).toMatchObject({ rejectUnauthorized: true, socket: upstream });
+    } finally { spy.mockRestore(); }
+  });
+
+  test('憑證錯誤會附上怎麼處理；其他錯誤原樣傳回', () => {
+    const e = explainTlsError(Object.assign(new Error('certificate has expired'), { code: 'CERT_HAS_EXPIRED' }));
+    expect(e.message).toMatch(/certificate has expired/);
+    expect(e.message).toMatch(/略過憑證驗證/);
+    expect(e.code).toBe('CERT_HAS_EXPIRED');
+    const other = Object.assign(new Error('ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    expect(explainTlsError(other)).toBe(other);
+  });
+});

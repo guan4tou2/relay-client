@@ -264,6 +264,22 @@ function migrateSecrets() {
   return s + c;
 }
 
+// 舊版對 HTTPS 代理一律不驗證憑證。改成預設驗證之後，既有的 HTTPS 伺服器先沿用舊行為
+// （很多是自簽憑證，一更新就全部連不上比較糟），介面上會標出「未驗證憑證」讓使用者自己關掉。
+// 只做一次；之後新增的伺服器預設驗證。回傳這次標記了幾台。
+function migrateTlsDefaults() {
+  if (getSettings().tlsDefaultsMigrated) return 0;
+  const servers = rawServers();
+  let n = 0;
+  const next = servers.map(x => {
+    if (x && x.type === 'https' && x.tlsInsecure === undefined) { n++; return { ...x, tlsInsecure: true }; }
+    return x;
+  });
+  if (n) store.set('servers', next);
+  updateSettings({ tlsDefaultsMigrated: true });
+  return n;
+}
+
 function reorderServers(orderedIds) {
   const servers = rawServers();
   const map = new Map(servers.map(s => [s.id, s]));
@@ -280,7 +296,7 @@ module.exports = {
   getRoutes, setRoutes,
   getSplit, saveSplit,
   getCreds, saveCreds,
-  setCipher, migrateSecrets,
+  setCipher, migrateSecrets, migrateTlsDefaults,
   decryptFailures: () => decryptFailures,
   recoveredFrom: () => recoveredFrom,
 };

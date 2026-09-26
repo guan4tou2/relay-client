@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const net = require('net');
 const tls = require('tls');
-const { connectViaProxy, connectViaChain } = require('./src/proxy/connect');
+const { connectViaProxy, connectViaChain, tlsOptions, explainTlsError } = require('./src/proxy/connect');
 // 一次性搬遷：舊 userData（開發代號 socks5-client）→ 現在的 app 名 RelayClient，
 // 讓更名後不遺失既有 config（servers / routes / settings）。只在新位置尚無 config 時搬。
 (function migrateLegacyUserData() {
@@ -398,7 +398,7 @@ function testRawHandshake(server, useTls, sendFn, validateFn) {
     const onConnect = () => sendFn(socket);
     let socket;
     if (useTls) {
-      socket = tls.connect(server.port, server.host, { rejectUnauthorized: false }, onConnect);
+      socket = tls.connect({ ...tlsOptions(server), port: server.port, host: server.host }, onConnect);
     } else {
       socket = net.connect(server.port, server.host, onConnect);
     }
@@ -413,7 +413,7 @@ function testRawHandshake(server, useTls, sendFn, validateFn) {
       }
     });
     socket.once('timeout', () => { socket.destroy(); reject(new Error('Connection timeout')); });
-    socket.once('error', (err) => { socket.destroy(); reject(err); });
+    socket.once('error', (err) => { socket.destroy(); reject(explainTlsError(err)); });
   });
 }
 
@@ -485,7 +485,7 @@ ipcMain.handle('test-server', async (_e, serverId, testTarget) => {
     let latency;
     if (target) {
       addLog('info', 'test', `Testing ${server.host}:${server.port} [${proxyType}] → ${target.host}:${target.port}`);
-      const proxy = { host: server.host, port: server.port, type: proxyType, username: server.username, password: server.password };
+      const proxy = serverToProxy(server);
       const sock = await connectViaProxy(proxy, { host: target.host, port: target.port });
       sock.destroy();
       latency = Date.now() - start;
@@ -641,7 +641,8 @@ function serverToProxy(s) {
   if (!s) return null;
   return {
     host: s.host, port: s.port, type: s.type || 'socks5',
-    username: s.username || undefined, password: s.password || undefined
+    username: s.username || undefined, password: s.password || undefined,
+    tlsInsecure: !!s.tlsInsecure,
   };
 }
 
@@ -1353,6 +1354,8 @@ app.whenReady().then(async () => {
   initFileLog();
   mainMark('fileLog');
   initSecretStorage();          // 要在任何路由啟動（會讀伺服器密碼）之前
+  const tlsMigrated = config.migrateTlsDefaults();
+  if (tlsMigrated) addLog('warn', 'system', `${tlsMigrated} 台 HTTPS 伺服器沿用舊版行為：不驗證代理的憑證。可在伺服器設定關閉「略過憑證驗證」`);
   if (config.recoveredFrom()) {
     addLog('error', 'system', '設定檔損毀，已改用預設值重建', `損毀的檔案保留在：${config.recoveredFrom()}`);
   }

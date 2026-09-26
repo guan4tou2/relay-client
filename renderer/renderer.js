@@ -786,7 +786,7 @@ function copyAddr() {
 // =====================================================================================
 // 各欄 min-width 加左右 padding 的總和。預設視窗 900px 只給內容區 583px，所以這個值
 // 必須低於它，否則常態就會出現橫向捲軸；低於此寬度才讓表格橫向捲動，不讓欄位被擠沒。
-const SRV_MINW = 84 + 150 + 58 + 56 + 104 + 90 + 32;
+const SRV_MINW = 84 + 150 + 58 + 66 + 104 + 90 + 32;
 
 function renderServers() {
   const rows = state.servers.map(s => {
@@ -803,8 +803,8 @@ function renderServers() {
     return `<div class="hvFill2" style="display:flex;align-items:center;padding:11px 16px;border-bottom:1px solid var(--sep);font-size:12.5px;min-width:${SRV_MINW}px">
       <span title="${nm}" style="flex:1 1 0;min-width:84px;max-width:220px;font-weight:600;padding-right:10px;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nm}</span>
       <button class="hvFill" data-scopy="${esc(addr)}" title="點擊複製位址 ${esc(addr)}" style="flex:1.9 1 0;min-width:150px;max-width:260px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;color:var(--text2);padding:4px 10px 4px 0;border:none;border-radius:6px;background:transparent;text-align:left;cursor:pointer;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(addr)}</button>
-      <span style="width:58px;flex-shrink:0"><span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);white-space:nowrap">${PROTO[sProto(s)].label}</span></span>
-      <span style="width:56px;flex-shrink:0;color:var(--text2);display:flex;align-items:center;gap:5px;white-space:nowrap">${authIcon}${sUser(s) ? '已設定' : '無'}</span>
+      <span style="width:58px;flex-shrink:0"><span${s.tlsInsecure && sProto(s) === 'https' ? ' data-tip="不驗證代理的憑證：帳號密碼可能被攔截。可在編輯伺服器時關閉「略過憑證驗證」" aria-label="HTTPS，不驗證憑證"' : ''} style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:${s.tlsInsecure && sProto(s) === 'https' ? 'var(--amber)' : 'var(--text2)'};${s.tlsInsecure && sProto(s) === 'https' ? 'box-shadow:inset 0 0 0 1px var(--amber);' : ''}white-space:nowrap">${PROTO[sProto(s)].label}</span></span>
+      <span style="width:66px;flex-shrink:0;padding-right:8px;box-sizing:border-box;color:var(--text2);display:flex;align-items:center;gap:5px;white-space:nowrap">${authIcon}${sUser(s) ? '已設定' : '無'}</span>
       <span style="flex:1 1 0;min-width:104px;padding-right:12px;box-sizing:border-box;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:${testColor(lat)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis"${lat < 0 && s.lastError ? ` data-tip="${esc(s.lastError)}"` : ''}>${esc(tText)}</span>
       <span style="width:90px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
         <button class="hvAcc" data-stest="${s.id}" title="測試連線" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z"></path></svg></button>
@@ -820,7 +820,7 @@ function renderServers() {
       <span style="font-size:16px;font-weight:700;letter-spacing:-.2px;white-space:nowrap;display:flex;align-items:center">伺服器${tipIcon('你的上游代理。路由會從這裡挑跳點組成鏈路')}</span>
       <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;overflow-x:auto">
         <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid var(--sep);font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.3px;min-width:${SRV_MINW}px">
-          <span style="flex:1 1 0;min-width:84px;max-width:220px;padding-right:10px;box-sizing:border-box;white-space:nowrap">名稱</span><span style="flex:1.9 1 0;min-width:150px;max-width:260px;padding-right:10px;box-sizing:border-box;white-space:nowrap">位址</span><span style="width:58px;flex-shrink:0;white-space:nowrap">協定</span><span style="width:56px;flex-shrink:0;white-space:nowrap">認證</span><span style="flex:1 1 0;min-width:104px;padding-right:12px;box-sizing:border-box;white-space:nowrap">測試結果</span><span style="width:90px;flex-shrink:0"></span>
+          <span style="flex:1 1 0;min-width:84px;max-width:220px;padding-right:10px;box-sizing:border-box;white-space:nowrap">名稱</span><span style="flex:1.9 1 0;min-width:150px;max-width:260px;padding-right:10px;box-sizing:border-box;white-space:nowrap">位址</span><span style="width:58px;flex-shrink:0;white-space:nowrap">協定</span><span style="width:66px;flex-shrink:0;white-space:nowrap">認證</span><span style="flex:1 1 0;min-width:104px;padding-right:12px;box-sizing:border-box;white-space:nowrap">測試結果</span><span style="width:90px;flex-shrink:0"></span>
         </div>
         ${rows}
         ${state.servers.length === 0 ? `<div style="padding:44px 20px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">還沒有伺服器<br>新增後即可組成路由</div>` : ''}
@@ -848,6 +848,7 @@ async function testServerRow(id) {
 function testFailReason(msg) {
   const m = String(msg || '');
   if (!m) return '';
+  if (/certificate|CERT_|憑證/i.test(m)) return '憑證無法驗證';
   if (/ECONNREFUSED/i.test(m)) return '連線被拒';
   if (/ETIMEDOUT|timed? ?out|逾時/i.test(m)) return '逾時';
   if (/ENOTFOUND|EAI_AGAIN/i.test(m)) return '找不到主機';
@@ -1621,6 +1622,7 @@ function openSrv(id) {
   S.srvSheet = true; S.srvEditing = id || null; S.showPass = false; S.credPick = ''; S.srvBusy = false; closeMenu();
   S.proto = s ? sProto(s) : 'socks5';
   S.authOpen = s ? !!sUser(s) : false;
+  S.tlsInsecure = s ? !!s.tlsInsecure : false;   // 新伺服器預設驗證憑證
   S._form = {
     name: s ? (s.name || '') : '',
     host: s ? (s.host || '') : '',
@@ -1715,6 +1717,18 @@ function renderSrvSheet() {
             </div>` : ''}
           </div>
 
+          ${S.proto === 'https' ? `<div style="background:var(--bg);border:1px solid ${S.tlsInsecure ? 'var(--amber)' : 'var(--sep)'};border-radius:12px">
+            <div style="padding:11px 13px;display:flex;align-items:center;gap:12px">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12.5px;font-weight:600;display:flex;align-items:center">略過憑證驗證${tipIcon('只在代理使用自簽憑證時開啟。\n開啟後無法確認連到的是真的代理，帳號密碼可能被攔截。')}</div>
+                ${S.tlsInsecure ? '<div style="font-size:11.5px;color:var(--amber);margin-top:3px">不驗證代理的憑證：帳號密碼可能被攔截</div>' : ''}
+              </div>
+              <button id="tlsToggle" role="switch" aria-checked="${!!S.tlsInsecure}" aria-label="略過憑證驗證" style="width:44px;height:26px;border-radius:13px;border:none;padding:0;cursor:pointer;position:relative;background:${S.tlsInsecure ? 'var(--amber)' : 'var(--fill)'};transition:background .22s;flex-shrink:0">
+                <span style="position:absolute;top:3px;left:${S.tlsInsecure ? '21px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span>
+              </button>
+            </div>
+          </div>` : ''}
+
           <div style="display:flex;flex-direction:column;gap:7px">
             <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">備註</span>
             <input id="fNote" value="${esc(F.note)}" placeholder="例如：VPS 上的 SSH 通道" style="padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
@@ -1734,6 +1748,7 @@ function renderSrvSheet() {
   $('ssSave').onclick = () => saveSrvSheet();
   $('protoBtn').onclick = e => { e.stopPropagation(); syncForm(); openMenu('proto', $('protoBtn')); };
   $('authToggle').onclick = () => { syncForm(); state.authOpen = !state.authOpen; renderSrvSheet(); };
+  if ($('tlsToggle')) $('tlsToggle').onclick = () => { syncForm(); state.tlsInsecure = !state.tlsInsecure; renderSrvSheet(); };
   if ($('credBtn')) $('credBtn').onclick = e => { e.stopPropagation(); syncForm(); openMenu('cred', $('credBtn')); };
   if ($('passEye')) $('passEye').onclick = () => { syncForm(); state.showPass = !state.showPass; renderSrvSheet(); };
   if ($('ssBody')) $('ssBody').scrollTop = scrollTop;
@@ -1767,7 +1782,7 @@ async function saveSrvSheet() {
   const pass = state.authOpen ? F.pass : '';
   const note = F.note.trim();
   const saveCred = $('fSaveCred') && $('fSaveCred').checked;
-  const data = { name: name || host, host, port, type: state.proto, username: user, password: pass, note };
+  const data = { name: name || host, host, port, type: state.proto, username: user, password: pass, note, tlsInsecure: state.proto === 'https' && !!state.tlsInsecure };
   let id;
   state.srvBusy = true; setSheetBusy('ssSave', '儲存中…');
   try {
