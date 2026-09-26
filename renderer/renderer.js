@@ -89,6 +89,110 @@ function closeAllSheets() {
   if (state.launchSheet) closeLaunchSheet();
 }
 
+// =====================================================================================
+// 對話框的焦點管理（鍵盤與螢幕閱讀器）
+// =====================================================================================
+// 各個面板、對話框都是 innerHTML 整塊重畫的，一個一個去補焦點處理會漏。
+// 這裡改成監看它們的掛載點：最上層的對話框一出現就把焦點移進去、記住原本在哪，
+// Tab 只在對話框裡循環，對話框消失時把焦點還回去。
+// 陣列順序 = 疊放順序（前面的蓋在後面的上面）。
+const DIALOGS = [
+  { root: 'menuBox', role: 'menu' },
+  { root: 'ksBox', initial: () => $('ksReconnect') },            // z-index 150
+  { root: 'spUacBox', initial: () => $('spUacGrant') },          // 150
+  { root: 'alertBox', initial: () => (state.alert && state.alert.danger ? ($('alertDismiss') || $('alertCancel')) : $('alertPrimary')) },   // 140
+  { root: 'lsPanel' }, { root: 'spSheetPanel' }, { root: 'ssPanel' }, { root: 'rdPanel' },
+];
+const FOCUSABLE = 'button:not([disabled]),input:not([disabled]):not([type="hidden"]),textarea:not([disabled]),select:not([disabled]),summary,a[href],[tabindex]:not([tabindex="-1"])';
+const focusStack = [];      // [{ root, el, ret: { el, id } }]
+const lastFocusIn = {};     // root → 對話框裡最後一個有焦點的元素 id（重畫後接回去）
+
+const topDialog = () => { for (const d of DIALOGS) { const el = $(d.root); if (el) return { d, el }; } return null; };
+const focusablesIn = el => [...el.querySelectorAll(FOCUSABLE)].filter(x => x.getClientRects().length);
+
+function dialogInitial(d, el) {
+  const pick = d.initial && d.initial();
+  if (pick && el.contains(pick)) return pick;
+  if (d.role === 'menu') return el.querySelector('[data-mi][aria-checked="true"]') || el.querySelector('[data-mi]');
+  return el.querySelector('input:not([disabled]):not([type="checkbox"]),textarea:not([disabled])') || focusablesIn(el)[0] || el;
+}
+
+function decorateDialog(d, el) {
+  if (d.role === 'menu') {
+    el.setAttribute('role', 'menu');
+    el.querySelectorAll('[data-mi]').forEach(b => b.setAttribute('role', 'menuitemradio'));
+  } else {
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+    const title = el.querySelector('span[style*="font-weight:700"]');
+    if (title && !el.getAttribute('aria-label')) el.setAttribute('aria-label', title.textContent.trim());
+  }
+  if (!el.hasAttribute('tabindex')) el.tabIndex = -1;   // 沒有可聚焦元素時至少能把焦點放在框上
+}
+
+function restoreFocus(ret) {
+  if (!ret) return;
+  const t = (ret.el && ret.el.isConnected) ? ret.el : (ret.id ? $(ret.id) : null);
+  if (t && t.focus) t.focus();
+}
+
+function syncDialogFocus() {
+  // 1. 已經不在畫面上的對話框出棧，焦點還給開它之前的元素
+  while (focusStack.length && !$(focusStack[focusStack.length - 1].root)) {
+    const gone = focusStack.pop();
+    const under = topDialog();
+    if (under && !under.el.contains(gone.ret.el) && !(gone.ret.id && under.el.querySelector('#' + CSS.escape(gone.ret.id)))) {
+      const t = dialogInitial(under.d, under.el); if (t) t.focus();
+    } else restoreFocus(gone.ret);
+  }
+  const top = topDialog();
+  if (!top) return;
+  decorateDialog(top.d, top.el);
+  const cur = focusStack[focusStack.length - 1];
+  if (!cur || cur.root !== top.d.root) {
+    const a = document.activeElement;
+    focusStack.push({ root: top.d.root, el: top.el, ret: { el: a, id: a && a.id } });
+    delete lastFocusIn[top.d.root];
+  }
+  focusStack[focusStack.length - 1].el = top.el;
+  // 2. 焦點不在最上層對話框裡（剛打開，或整塊重畫把原本的元素換掉了）→ 接回去
+  if (!top.el.contains(document.activeElement)) {
+    const back = lastFocusIn[top.d.root] && top.el.querySelector('#' + CSS.escape(lastFocusIn[top.d.root]));
+    const t = back || dialogInitial(top.d, top.el);
+    if (t) t.focus({ preventScroll: true });
+  }
+}
+
+function initDialogFocus() {
+  const mo = new MutationObserver(() => syncDialogFocus());
+  ['menuMount', 'alertMount', 'ksMount', 'splitUacMount', 'launchSheetMount', 'splitSheetMount', 'srvSheetMount', 'sheetMount']
+    .forEach(id => { const m = $(id); if (m) mo.observe(m, { childList: true }); });
+  document.addEventListener('focusin', e => {
+    const top = topDialog();
+    if (top && top.el.contains(e.target) && e.target.id) lastFocusIn[top.d.root] = e.target.id;
+  });
+  document.addEventListener('keydown', e => {
+    const top = topDialog();
+    if (!top) return;
+    if (e.key === 'Tab') {
+      const list = focusablesIn(top.el);
+      if (!list.length) { e.preventDefault(); return; }
+      const i = list.indexOf(document.activeElement);
+      const next = e.shiftKey ? (i <= 0 ? list.length - 1 : i - 1) : (i === -1 || i === list.length - 1 ? 0 : i + 1);
+      e.preventDefault();
+      list[next].focus();
+    } else if (top.d.role === 'menu' && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+      const items = [...top.el.querySelectorAll('[data-mi]')];
+      if (!items.length) return;
+      const i = items.indexOf(document.activeElement);
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1
+        : e.key === 'ArrowDown' ? (i + 1) % items.length : (i <= 0 ? items.length - 1 : i - 1);
+      e.preventDefault();
+      items[next].focus();
+    }
+  }, true);
+}
+
 // 任一 session 狀態轉變後的統一刷新（不在 300ms tick 呼叫，避免 sidebar dotBeat 每 tick 重置）
 function afterStatusChange() {
   renderSidebar();
@@ -123,7 +227,7 @@ function mount() {
         <button id="btnTheme" class="hvFill2" title="切換深淺色" aria-label="切換深淺色" style="width:28px;height:28px;border:none;border-radius:7px;background:transparent;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"></path></svg>
         </button>
-        <button id="btnAdd" class="hvBright" title="新增路由 (Ctrl+N)" style="display:flex;align-items:center;justify-content:center;gap:5px;border:none;cursor:pointer;height:30px;min-width:104px;padding:0 11px;border-radius:8px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;white-space:nowrap">
+        <button id="btnAdd" class="hvBright" title="新增路由 (Ctrl+N)" style="display:flex;align-items:center;justify-content:center;gap:5px;border:none;cursor:pointer;height:30px;min-width:104px;padding:0 11px;border-radius:8px;background:var(--accent);color:var(--on-accent);font-size:12.5px;font-weight:600;white-space:nowrap">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>新增路由
         </button>
         <div style="display:flex;gap:1px;margin-left:2px">
@@ -169,7 +273,7 @@ function mount() {
       <div id="alertMount"></div>
       <div id="ksMount"></div>
       <div id="menuMount"></div>
-      <div id="toast" style="display:none;position:absolute;bottom:18px;left:0;right:0;margin:0 auto;width:max-content;max-width:calc(100% - 32px);z-index:80;padding:10px 15px;background:var(--panelq);backdrop-filter:blur(20px);border:1px solid var(--sep);border-radius:11px;box-shadow:var(--shadow);font-size:12.5px;animation:toastIn .2s ease-out;align-items:center;gap:8px">
+      <div id="toast" role="status" aria-live="polite" aria-atomic="true" style="display:none;position:absolute;bottom:18px;left:0;right:0;margin:0 auto;width:max-content;max-width:calc(100% - 32px);z-index:80;padding:10px 15px;background:var(--panelq);backdrop-filter:blur(20px);border:1px solid var(--sep);border-radius:11px;box-shadow:var(--shadow);font-size:12.5px;animation:toastIn .2s ease-out;align-items:center;gap:8px">
         <span id="toastDot" style="width:7px;height:7px;border-radius:50%;background:var(--accent)"></span><span id="toastText"></span>
       </div>
     </div>
@@ -209,9 +313,15 @@ function mount() {
       if (rid) openLaunchSheet(rid); else flash('請先建立一條路由', 'var(--amber)');
     }
     if (e.code === 'Space' && state.tab !== 'split' && !anyOverlayOpen() && e.target === document.body) { e.preventDefault(); togglePower(); }
-    if (e.key === 'Escape') { closeMenu(); if (state.launchSheet) closeLaunchSheet(); else if (state.splitUac) closeSplitUac(); else if (state.splitSheet) closeSplitSheet(); else if (state.alert) closeAlert(); else if (state.srvSheet) closeSrvSheet(); else if (state.routeSheet) closeRouteSheet(); }
+    // 一次只關最上面那一層：以前選單跟底下的面板會一起被關掉，填到一半的表單就沒了
+    if (e.key === 'Escape' && state.menu) { e.preventDefault(); closeMenu(); return; }
+    if (e.key === 'Escape' && $('ksBox')) return;   // 斷線保護對話框必須做出選擇
+    if (e.key === 'Escape' && $('tipBox')) { hideTip(); return; }
+    // 順序照疊放：告警 > 權限說明 > 各面板（斷線保護對話框刻意不能用 Esc 關）
+    if (e.key === 'Escape') { if (state.alert) closeAlert(); else if (state.splitUac) closeSplitUac(); else if (state.launchSheet) closeLaunchSheet(); else if (state.splitSheet) closeSplitSheet(); else if (state.srvSheet) closeSrvSheet(); else if (state.routeSheet) closeRouteSheet(); }
   });
   document.addEventListener('click', () => closeMenu(), true);
+  initDialogFocus();
 }
 
 // =====================================================================================
@@ -221,11 +331,14 @@ function renderTabs() {
   // v7 定案的順序：先選出口（路由）→ 再定規則（分流）→ 再看結果（紀錄）
   const tabs = [['dashboard', '路由'], ['split', '分流'], ['servers', '伺服器'], ['logs', '紀錄'], ['creds', '憑證'], ['settings', '設定']];
   $('tabseg').setAttribute('role', 'tablist');
+  // 每次狀態變化都會整排重畫；焦點在分頁鈕上的話要接回同一顆，不然鍵盤使用者會被丟回 body
+  const focusedTab = $('tabseg').contains(document.activeElement) ? document.activeElement.dataset.tab : null;
   // 快捷鍵提示原本常駐在狀態列右端，改成各分頁鈕的 title
   $('tabseg').innerHTML = tabs.map(([k, label], i) =>
     `<button data-tab="${k}" role="tab" aria-selected="${state.tab === k}" aria-label="${label}" title="${label}（Ctrl+${i + 1}）" style="border:none;cursor:pointer;padding:6px 13px;border-radius:7px;font-size:12.5px;${segCss(state.tab === k)};transition:background .18s,color .18s;white-space:nowrap;flex-shrink:0">${label}</button>`
   ).join('');
   $('tabseg').querySelectorAll('button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  if (focusedTab) { const b = $('tabseg').querySelector(`[data-tab="${focusedTab}"]`); if (b) b.focus(); }
 }
 
 function syncTitlebar() {
@@ -261,7 +374,8 @@ function renderDashStatus(runIds, actIds) {
     state.killswitch && state.killswitch.tripped
       ? { label: '斷線保護已觸發', color: 'var(--red)', tab: 'split' }
       // 斷線保護只在分流引擎執行時才有作用；引擎沒開時寫「就緒」會讓人以為有保護
-      : { label: !state.settings.killSwitch ? '斷線保護停用' : splitRunning() ? '斷線保護就緒' : '斷線保護待命（引擎未執行）',
+      : { label: !state.settings.killSwitch ? '斷線保護停用' : splitRunning() ? '斷線保護就緒' : '斷線保護待命',
+          tip: state.settings.killSwitch && !splitRunning() ? '分流引擎沒有執行，斷線保護目前不起作用；啟動引擎後才會保護' : '',
           color: state.settings.killSwitch && splitRunning() ? 'var(--good)' : 'var(--text2)', tab: state.settings.killSwitch && !splitRunning() ? 'split' : 'settings' },
   ];
   // 末端的分流引擎開關：設計稿是「迷你開關 + 文字」包在一顆有框的鈕裡，
@@ -272,7 +386,7 @@ function renderDashStatus(runIds, actIds) {
     <span style="width:32px;height:18px;border-radius:9px;position:relative;background:${engOn ? 'var(--good)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:2px;left:${engOn ? '16px' : '2px'};width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></span>${engBusy ? '分流引擎啟動中' : engOn ? '分流引擎執行中' : '分流引擎未執行'}
   </button>`;
   st.innerHTML = segs.map((g, i) =>
-    `${i ? '<span style="color:var(--text3);margin:0 6px">·</span>' : ''}<button data-stseg="${g.tab}" style="border:none;background:transparent;padding:0;cursor:pointer;font-weight:500;font-size:12.5px;white-space:nowrap;color:${g.color}">${esc(g.label)}</button>`).join('') + pill;
+    `${i ? '<span style="color:var(--text3);margin:0 6px">·</span>' : ''}<button data-stseg="${g.tab}"${g.tip ? ` data-tip="${esc(g.tip)}"` : ''} style="border:none;background:transparent;padding:0;cursor:pointer;font-weight:500;font-size:12.5px;white-space:nowrap;color:${g.color}">${esc(g.label)}</button>`).join('') + pill;
   st.querySelectorAll('[data-stseg]').forEach(b => b.onclick = () => showTab(b.dataset.stseg));
   $('stEnginePill').onclick = () => toggleSplitEngine();
 }
@@ -318,6 +432,10 @@ function renderSidebar() {
   $('sideCount').textContent = `路由 · ${state.routes.length}`;
   $('sideRunning').textContent = runIds.length ? runIds.length + ' 執行中' : '';
   const list = $('routeList');
+  // 同上：路由狀態一變就整個側欄重畫，焦點要接回原本那一列（或那一列上的同一顆按鈕）
+  const fa = list.contains(document.activeElement) ? document.activeElement : null;
+  const focusRid = fa && fa.closest('[data-rid]') ? fa.closest('[data-rid]').dataset.rid : null;
+  const focusAct = fa && fa.dataset ? fa.dataset.act : null;
   if (state.routes.length === 0) {
     list.innerHTML = `<div style="padding:20px 10px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">還沒有路由<br>從右側開始新增</div>`;
     return;
@@ -331,7 +449,7 @@ function renderSidebar() {
     const refs = routeRefLabel(r.id);   // 「2 條規則」——被分流規則引用時取代出口名顯示
     // 側欄只有 264px，這欄常被截：讓它吃掉剩餘寬度，出口與引用完整內容放懸浮提示
     const powerBg = conn ? 'var(--good)' : busy ? 'var(--amber)' : 'var(--fill2)';
-    const powerColor = (conn || busy) ? '#fff' : 'var(--text2)';
+    const powerColor = conn ? 'var(--on-good)' : busy ? 'var(--on-amber)' : 'var(--text2)';
     const powerTip = conn ? '停止這條路由' : busy ? '正在啟動…' : '啟動這條路由';
     const delIcon = pend
       ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
@@ -348,10 +466,10 @@ function renderSidebar() {
         <span data-tip="${esc('出口：' + exitName + (refs ? '\n使用中：' + refs : ''))}" style="margin-left:auto;flex:1;min-width:0;text-align:right;font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(refs || exitName)}</span>
       </div>
       ${active ? `<div style="display:flex;gap:6px;padding-top:2px">
-        <button class="hvBright" data-act="power" title="${powerTip}（空白鍵）" style="flex:1;height:26px;border:none;border-radius:7px;background:${powerBg};color:${powerColor};cursor:pointer;display:flex;align-items:center;justify-content:center">${POWER_ICON}</button>
-        <button class="hvAcc" data-act="edit" title="編輯路由" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
-        <button class="hvAcc" data-act="browser" title="以此路由啟動程式（Ctrl+L）" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></button>
-        <button class="hvRed" data-act="del" title="${pend ? '再按一次確認刪除' + (refs ? '（' + refs + '將失效）' : '') : '刪除路由'}" style="flex:1;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
+        <button class="hvBright" data-act="power" title="${powerTip}（空白鍵）" aria-label="${powerTip}" style="flex:1;height:26px;border:none;border-radius:7px;background:${powerBg};color:${powerColor};cursor:pointer;display:flex;align-items:center;justify-content:center">${POWER_ICON}</button>
+        <button class="hvAcc" data-act="edit" title="編輯路由" aria-label="編輯路由" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
+        <button class="hvAcc" data-act="browser" title="以此路由啟動程式（Ctrl+L）" aria-label="以此路由啟動程式（Ctrl+L）" style="flex:1;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></button>
+        <button class="hvRed" data-act="del" title="${pend ? '再按一次確認刪除' + (refs ? '（' + refs + '將失效）' : '') : '刪除路由'}" aria-label="${pend ? '再按一次確認刪除路由' : '刪除路由'}" style="flex:1;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? 'var(--on-red)' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
       </div>` : ''}
     </div>`;
   }).join('');
@@ -369,6 +487,11 @@ function renderSidebar() {
     row.querySelector('[data-act="edit"]')?.addEventListener('click', e => { e.stopPropagation(); openRoute(id); });
     row.querySelector('[data-act="del"]')?.addEventListener('click', e => { e.stopPropagation(); deleteRoute(id); });
   });
+  if (focusRid) {
+    const row = list.querySelector(`[data-rid="${CSS.escape(focusRid)}"]`);
+    const t = row && (focusAct ? row.querySelector(`[data-act="${focusAct}"]`) : row);
+    if (t) t.focus({ preventScroll: true }); else if (row) row.focus({ preventScroll: true });
+  }
 }
 
 function selectRoute(id) {
@@ -459,7 +582,7 @@ function renderGuide() {
         <span style="font-size:13px;color:var(--text2);line-height:1.65;text-wrap:pretty">${esc(G.body)}</span>
       </div>
       <div style="display:flex;gap:10px">
-        <button id="guideAdd" class="hvBright" style="height:38px;padding:0 20px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(G.primary)}</button>
+        <button id="guideAdd" class="hvBright" style="height:38px;padding:0 20px;border:none;border-radius:10px;background:var(--accent);color:var(--on-accent);font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(G.primary)}</button>
         <button id="guideAlt" class="hvFill2" style="height:38px;padding:0 20px;border:1px solid var(--sep);border-radius:10px;background:var(--card);color:var(--text);font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(G.secondary)}</button>
       </div>
       <span style="font-size:11.5px;color:var(--text3)">Ctrl + N 新增 · 空白鍵啟動選取的路由</span>
@@ -827,8 +950,8 @@ function renderServers() {
       <span style="flex:1 1 0;min-width:104px;padding-right:12px;box-sizing:border-box;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:${testColor(lat)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis"${lat < 0 && s.lastError ? ` data-tip="${esc(s.lastError)}"` : ''}>${esc(tText)}</span>
       <span style="width:90px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
         <button class="hvAcc" data-stest="${esc(s.id)}" title="${testingServers.has(s.id) ? '測試中…' : '測試連線'}" aria-label="${testingServers.has(s.id) ? '測試中' : '測試連線'}" ${testingServers.has(s.id) ? 'disabled aria-busy="true"' : ''} style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:${testingServers.has(s.id) ? 'progress' : 'pointer'};opacity:${testingServers.has(s.id) ? '.5' : '1'};display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z"></path></svg></button>
-        <button class="hvAcc" data-sedit="${esc(s.id)}" title="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
-        <button class="hvRed" data-sdel="${esc(s.id)}" title="${pend ? '再按一次確認刪除' : '刪除'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
+        <button class="hvAcc" data-sedit="${esc(s.id)}" title="編輯" aria-label="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
+        <button class="hvRed" data-sdel="${esc(s.id)}" title="${pend ? '再按一次確認刪除' : '刪除'}" aria-label="${pend ? '再按一次確認刪除伺服器' : '刪除伺服器'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? 'var(--on-red)' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
       </span>
     </div>`;
   }).join('');
@@ -935,7 +1058,7 @@ function buildLogs() {
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:9px">
         <div id="levelSeg" style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px;flex-shrink:0"></div>
         <div style="flex:1 1 auto;display:flex;align-items:center;justify-content:flex-end;gap:7px;min-width:0">
-          <input id="logSearch" placeholder="搜尋…" style="width:92px;min-width:88px;flex:1 1 auto;height:30px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-size:12.5px;outline:none">
+          <input id="logSearch" aria-label="搜尋紀錄" placeholder="搜尋…" style="width:92px;min-width:88px;flex:1 1 auto;height:30px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-size:12.5px;outline:none">
           <button id="logOpen" class="hvFill2" title="開啟紀錄檔資料夾" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">紀錄檔</button>
           <button id="logCopy" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">複製</button>
           <button id="logClear" class="hvFill2" style="height:30px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--red);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0">清除</button>
@@ -958,7 +1081,7 @@ function clearLogsRow() {
     el.textContent = pending ? '再按一次清除' : '清除';
     el.className = pending ? 'hvRed' : 'hvFill2';
     el.style.background = pending ? 'var(--red)' : 'var(--card)';
-    el.style.color = pending ? '#fff' : 'var(--red)';
+    el.style.color = pending ? 'var(--on-red)' : 'var(--red)';
   };
   if (!state.pendingLogClear) {
     state.pendingLogClear = true;
@@ -1035,7 +1158,7 @@ function logRowHtml(l) {
 function logGroupHtml(k, rows) {
   const g = logGroupTitle(k);
   return `<div data-loggroup>
-      <div style="position:sticky;top:0;padding:7px 14px;background:var(--panelq);backdrop-filter:blur(12px);border-bottom:1px solid var(--sep);display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text2)">
+      <div style="position:sticky;top:0;z-index:1;padding:7px 14px;background:var(--card);border-bottom:1px solid var(--sep);display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text2)">
         <span style="font-weight:600;color:var(--text)">${esc(g.title)}</span>
         <span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">${esc(g.meta)}</span>
         <span data-logcount style="margin-left:auto;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text3)">${rows.length} 筆</span>
@@ -1234,14 +1357,14 @@ function renderCreds() {
     if (S.credEdit === c.id) {
       return `<div style="border-bottom:1px solid var(--sep);background:var(--accent-dim)">
         <div style="padding:13px 16px;display:flex;align-items:center;flex-wrap:wrap;row-gap:9px;box-sizing:border-box;animation:fadeUp .18s ease-out">
-          <span style="width:150px;padding-right:10px;box-sizing:border-box"><input id="cdName" value="${esc(S.cdraft.name)}" placeholder="名稱" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--accent);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:600;outline:none"></span>
-          <span style="width:130px;padding-right:10px;box-sizing:border-box"><input id="cdUser" value="${esc(S.cdraft.user)}" placeholder="帳號" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none"></span>
+          <span style="width:150px;padding-right:10px;box-sizing:border-box"><input id="cdName" aria-label="憑證名稱" value="${esc(S.cdraft.name)}" placeholder="名稱" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--accent);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:600;outline:none"></span>
+          <span style="width:130px;padding-right:10px;box-sizing:border-box"><input id="cdUser" aria-label="帳號" value="${esc(S.cdraft.user)}" placeholder="帳號" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none"></span>
           <span style="width:120px;padding-right:10px;box-sizing:border-box"><input id="cdPass" type="password" autocomplete="new-password" aria-label="密碼" value="${esc(S.cdraft.pass)}" placeholder="密碼" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none"></span>
           <div style="order:2;margin-left:auto;display:flex;justify-content:flex-end;gap:6px">
-            <button id="cdCancel" class="hvFill" title="取消" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"></line><line x1="19" y1="5" x2="5" y2="19"></line></svg></button>
-            <button id="cdSave" class="hvBright" title="完成" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12.5 9.5 18 20 6.5"></polyline></svg></button>
+            <button id="cdCancel" class="hvFill" title="取消" aria-label="取消" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"></line><line x1="19" y1="5" x2="5" y2="19"></line></svg></button>
+            <button id="cdSave" class="hvBright" title="完成" aria-label="完成" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--accent);color:var(--on-accent);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12.5 9.5 18 20 6.5"></polyline></svg></button>
           </div>
-          <span style="order:3;width:100%;box-sizing:border-box"><input id="cdNote" value="${esc(S.cdraft.note)}" placeholder="備註" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none"></span>
+          <span style="order:3;width:100%;box-sizing:border-box"><input id="cdNote" aria-label="備註" value="${esc(S.cdraft.note)}" placeholder="備註" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none"></span>
         </div>
       </div>`;
     }
@@ -1253,8 +1376,8 @@ function renderCreds() {
         <button data-ctoggle="${esc(c.id)}" title="點擊顯示 / 隱藏" aria-label="顯示或隱藏密碼" style="flex:1 1 0;min-width:96px;max-width:190px;padding:0 10px 0 0;box-sizing:border-box;text-align:left;border:none;background:transparent;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.shown ? esc(c.pass) : '••••••••'}</button>
         <span title="${esc(c.note || '')}" style="flex:1 1 0;min-width:80px;padding-right:10px;box-sizing:border-box;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.note || '—')}</span>
         <span style="width:58px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
-          <button data-cedit="${esc(c.id)}" class="hvAcc" title="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
-          <button data-cdel="${esc(c.id)}" class="hvRed" title="${cpend ? '再按一次確認刪除' : '刪除'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${cpend ? 'var(--red)' : 'var(--fill2)'};color:${cpend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${cpend
+          <button data-cedit="${esc(c.id)}" class="hvAcc" title="編輯" aria-label="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
+          <button data-cdel="${esc(c.id)}" class="hvRed" title="${cpend ? '再按一次確認刪除' : '刪除'}" aria-label="${cpend ? '再按一次確認刪除憑證' : '刪除憑證'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${cpend ? 'var(--red)' : 'var(--fill2)'};color:${cpend ? 'var(--on-red)' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${cpend
             ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
             : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>'}</button>
         </span>
@@ -1357,9 +1480,9 @@ function buildSettings() {
         <div style="padding:13px 16px;display:flex;align-items:center;gap:14px">
           <div style="flex:1;min-width:0">${rowTitle('連線測試目標', '測試伺服器時要連去的網站；留空則只測協定握手')}</div>
           <div style="display:flex;align-items:center;gap:5px">
-            <input id="setTestHost" placeholder="example.com" style="width:158px;height:30px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
+            <input id="setTestHost" aria-label="連線測試目標主機" placeholder="example.com" style="width:158px;height:30px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
             <span style="color:var(--text3)">:</span>
-            <input id="setTestPort" placeholder="443" style="width:56px;height:30px;padding:0 8px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none;text-align:center">
+            <input id="setTestPort" aria-label="連線測試目標連接埠" placeholder="443" style="width:56px;height:30px;padding:0 8px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none;text-align:center">
           </div>
         </div>`)}
 
@@ -1566,9 +1689,9 @@ function renderRouteSheet() {
         <span style="font-size:11px;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc((s.host || '?') + ':' + (s.port || '?'))}</span>
       </div>
       <span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);flex-shrink:0">${s.type ? PROTO[sProto(s)].label : '—'}</span>
-      <button data-hup="${i}" title="上移" style="width:24px;height:24px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:${i === 0 ? '.3' : '1'}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 14 12 8 18 14"></polyline></svg></button>
-      <button data-hdown="${i}" title="下移" style="width:24px;height:24px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:${i === d.hops.length - 1 ? '.3' : '1'}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 10 12 16 18 10"></polyline></svg></button>
-      <button data-hrem="${i}" title="移除跳點" style="width:24px;height:24px;border:none;border-radius:7px;background:var(--fill2);color:var(--red);cursor:pointer;display:flex;align-items:center;justify-content:center" class="hvRed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>
+      <button data-hup="${i}" title="上移" aria-label="上移" style="width:24px;height:24px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:${i === 0 ? '.3' : '1'}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 14 12 8 18 14"></polyline></svg></button>
+      <button data-hdown="${i}" title="下移" aria-label="下移" style="width:24px;height:24px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:${i === d.hops.length - 1 ? '.3' : '1'}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 10 12 16 18 10"></polyline></svg></button>
+      <button data-hrem="${i}" title="移除跳點" aria-label="移除跳點" style="width:24px;height:24px;border:none;border-radius:7px;background:var(--fill2);color:var(--red);cursor:pointer;display:flex;align-items:center;justify-content:center" class="hvRed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>
     </div>`;
   }).join('');
 
@@ -1577,12 +1700,12 @@ function renderRouteSheet() {
       <div id="rdPanel" style="width:470px;height:100%;background:var(--panel);border-left:1px solid var(--sep);box-shadow:-12px 0 40px rgba(0,0,0,.18);display:flex;flex-direction:column;animation:sheetIn .26s cubic-bezier(.32,.72,0,1)">
         <div style="padding:16px 20px;border-bottom:1px solid var(--sep);display:flex;align-items:center">
           <span style="font-size:15px;font-weight:700;letter-spacing:-.2px">${S.routeEditing ? '編輯路由' : '新增路由'}</span>
-          <button id="rdClose" class="hvFill" title="關閉面板" style="margin-left:auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button>
+          <button id="rdClose" class="hvFill" title="關閉面板" aria-label="關閉面板" style="margin-left:auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button>
         </div>
         <div id="rdBody" style="flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px">
           <div style="display:flex;flex-direction:column;gap:7px">
             <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">名稱</span>
-            <input id="rdLabel" value="${esc(d.label)}" placeholder="例如：主要節點 SOCKS5" style="padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
+            <input id="rdLabel" aria-label="路由名稱" value="${esc(d.label)}" placeholder="例如：主要節點 SOCKS5" style="padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
           </div>
 
           <div style="display:flex;gap:10px">
@@ -1595,7 +1718,7 @@ function renderRouteSheet() {
             </div>
             <div style="width:118px;flex-shrink:0;display:flex;flex-direction:column;gap:7px">
               <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">本地端口</span>
-              <input id="rdPort" value="${esc(d.localPort)}" class="${dupPort ? 'inErr' : ''}" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid ${dupPort ? 'var(--red)' : 'var(--sep)'};border-radius:10px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:13px;text-align:center;outline:none">
+              <input id="rdPort" aria-label="本地端口" value="${esc(d.localPort)}" class="${dupPort ? 'inErr' : ''}" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid ${dupPort ? 'var(--red)' : 'var(--sep)'};border-radius:10px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:13px;text-align:center;outline:none">
             </div>
           </div>
           <div id="rdPortWarn"></div>
@@ -1629,7 +1752,7 @@ function renderRouteSheet() {
         <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
           <span style="flex:1"></span>
           <button id="rdCancel" class="hvFill2" style="height:32px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>
-          <button id="rdSave" class="hvBright" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">儲存路由</button>
+          <button id="rdSave" class="hvBright" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">儲存路由</button>
         </div>
       </div>
     </div>`;
@@ -1745,7 +1868,7 @@ function renderSrvSheet() {
       <div id="ssPanel" style="width:470px;height:100%;background:var(--panel);border-left:1px solid var(--sep);box-shadow:-12px 0 40px rgba(0,0,0,.18);display:flex;flex-direction:column;animation:sheetIn .26s cubic-bezier(.32,.72,0,1)">
         <div style="padding:16px 20px;border-bottom:1px solid var(--sep);display:flex;align-items:center">
           <span style="font-size:15px;font-weight:700;letter-spacing:-.2px">${S.srvEditing ? '編輯伺服器' : '新增伺服器'}</span>
-          <button id="ssClose" class="hvFill" title="關閉面板" style="margin-left:auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button>
+          <button id="ssClose" class="hvFill" title="關閉面板" aria-label="關閉面板" style="margin-left:auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button>
         </div>
         <div id="ssBody" style="flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px">
           <div style="display:flex;flex-direction:column;gap:7px">
@@ -1758,17 +1881,17 @@ function renderSrvSheet() {
 
           <div style="display:flex;flex-direction:column;gap:7px">
             <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">名稱</span>
-            <input id="fName" value="${esc(F.name)}" placeholder="例如：主要節點" style="padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
+            <input id="fName" aria-label="伺服器名稱" value="${esc(F.name)}" placeholder="例如：主要節點" style="padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
           </div>
 
           <div style="display:flex;gap:10px">
             <div style="flex:3;display:flex;flex-direction:column;gap:7px">
               <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">主機</span>
-              <input id="fHost" value="${esc(F.host)}" placeholder="192.168.1.100" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:13px;outline:none">
+              <input id="fHost" aria-label="主機" value="${esc(F.host)}" placeholder="192.168.1.100" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:13px;outline:none">
             </div>
             <div style="flex:1;display:flex;flex-direction:column;gap:7px">
               <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">端口</span>
-              <input id="fPort" value="${esc(F.port)}" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:13px;text-align:center;outline:none">
+              <input id="fPort" aria-label="端口" value="${esc(F.port)}" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:13px;text-align:center;outline:none">
             </div>
           </div>
 
@@ -1789,17 +1912,17 @@ function renderSrvSheet() {
               </div>
               ${isSocks4 ? `<div style="display:flex;flex-direction:column;gap:6px">
                 <span style="font-size:11px;font-weight:600;color:var(--text2);white-space:nowrap">User ID</span>
-                <input id="fUser" value="${esc(F.user)}" style="padding:8px 10px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none">
+                <input id="fUser" aria-label="User ID" value="${esc(F.user)}" style="padding:8px 10px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none">
               </div>` : `<div style="display:flex;gap:10px">
                 <div style="flex:1;display:flex;flex-direction:column;gap:6px">
                   <span style="font-size:11px;font-weight:600;color:var(--text2);white-space:nowrap">帳號</span>
-                  <input id="fUser" value="${esc(F.user)}" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none">
+                  <input id="fUser" aria-label="帳號" value="${esc(F.user)}" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none">
                 </div>
                 <div style="flex:1;display:flex;flex-direction:column;gap:6px">
                   <span style="font-size:11px;font-weight:600;color:var(--text2);white-space:nowrap">密碼</span>
                   <div style="position:relative;display:flex">
-                    <input id="fPass" type="${S.showPass ? 'text' : 'password'}" value="${esc(F.pass)}" style="width:100%;box-sizing:border-box;padding:8px 32px 8px 10px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none">
-                    <button id="passEye" title="顯示 / 隱藏密碼" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:24px;height:24px;border:none;background:transparent;color:var(--text3);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+                    <input id="fPass" aria-label="密碼" type="${S.showPass ? 'text' : 'password'}" value="${esc(F.pass)}" style="width:100%;box-sizing:border-box;padding:8px 32px 8px 10px;border:1px solid var(--sep);border-radius:9px;background:var(--card);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none">
+                    <button id="passEye" title="顯示 / 隱藏密碼" aria-label="顯示 / 隱藏密碼" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:24px;height:24px;border:none;background:transparent;color:var(--text3);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
                   </div>
                 </div>
               </div>`}
@@ -1821,13 +1944,13 @@ function renderSrvSheet() {
 
           <div style="display:flex;flex-direction:column;gap:7px">
             <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">備註</span>
-            <input id="fNote" value="${esc(F.note)}" placeholder="例如：VPS 上的 SSH 通道" style="padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
+            <input id="fNote" aria-label="備註" value="${esc(F.note)}" placeholder="例如：VPS 上的 SSH 通道" style="padding:9px 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
           </div>
         </div>
         <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
           <span style="flex:1"></span>
           <button id="ssCancel" class="hvFill2" style="height:32px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>
-          <button id="ssSave" class="hvBright" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">儲存並測試</button>
+          <button id="ssSave" class="hvBright" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">儲存並測試</button>
         </div>
       </div>
     </div>`;
@@ -1956,7 +2079,7 @@ function renderMenu() {
     <div id="menuBox" style="position:fixed;top:${m.top}px;left:${m.left}px;width:${m.width}px;z-index:120;background:var(--panel);border:1px solid var(--sep);border-radius:12px;box-shadow:0 14px 36px rgba(0,0,0,.26);padding:4px;display:flex;flex-direction:column;gap:1px;animation:fadeUp .16s ease-out;max-height:260px;overflow-y:auto">
       ${m.items.map((o, i) => o.header
         ? `<span style="padding:7px 9px 3px;font-size:10.5px;font-weight:600;color:var(--text3);letter-spacing:.3px">${esc(o.header)}</span>`
-        : `<button data-mi="${i}" class="hvFill2" style="display:flex;align-items:center;gap:9px;padding:8px 9px;border:none;border-radius:9px;background:${o.check ? 'var(--accent-dim)' : 'transparent'};color:var(--text);font-size:12.5px;cursor:pointer;text-align:left;width:100%">
+        : `<button data-mi="${i}" aria-checked="${!!o.check}" class="hvFill2" style="display:flex;align-items:center;gap:9px;padding:8px 9px;border:none;border-radius:9px;background:${o.check ? 'var(--accent-dim)' : 'transparent'};color:var(--text);font-size:12.5px;cursor:pointer;text-align:left;width:100%">
         <span style="width:12px;flex-shrink:0;color:var(--accent);font-size:11px">${o.check ? '✓' : ''}</span>
         ${o.dot ? `<span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${o.dot}"></span>` : ''}
         ${o.badge && !o.dot ? `<span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--fill2);color:var(--text2);flex-shrink:0;width:52px;text-align:center">${o.badge}</span>` : ''}
@@ -1993,7 +2116,7 @@ function renderAlert() {
         <div style="display:flex;gap:9px;width:100%;padding-top:4px">
           ${a.cancel ? '<button id="alertDismiss" class="hvFill2" style="flex:1;height:34px;border:1px solid var(--sep);border-radius:9px;background:transparent;color:var(--text2);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>' : ''}
           <button id="alertCancel" class="hvFill2" style="flex:1;height:34px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">${esc(secondary)}</button>
-          <button id="alertPrimary" class="hvBright" style="flex:1;height:34px;border:none;border-radius:9px;background:${a.danger ? 'var(--red)' : 'var(--accent)'};color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(primary)}</button>
+          <button id="alertPrimary" class="hvBright" style="flex:1;height:34px;border:none;border-radius:9px;background:${a.danger ? 'var(--red)' : 'var(--accent)'};color:${a.danger ? 'var(--on-red)' : 'var(--on-accent)'};font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(primary)}</button>
         </div>
       </div>
     </div>`;
@@ -2077,10 +2200,10 @@ function renderLaunchSheet() {
   const programBody = `
         <div style="display:flex;flex-direction:column;gap:8px">
           <div style="display:flex;gap:8px">
-            <input id="lsPath" value="${esc(d.exePath)}" placeholder="程式的完整路徑" style="flex:1;min-width:0;height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12px;outline:none">
+            <input id="lsPath" aria-label="程式路徑" value="${esc(d.exePath)}" placeholder="程式的完整路徑" style="flex:1;min-width:0;height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12px;outline:none">
             <button id="lsBrowse" class="hvFill2" style="flex-shrink:0;height:34px;padding:0 13px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">瀏覽…</button>
           </div>
-          <input id="lsArgs" value="${esc(d.exeArgs)}" placeholder="啟動參數（選填）" style="height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12px;outline:none">
+          <input id="lsArgs" aria-label="啟動參數" value="${esc(d.exeArgs)}" placeholder="啟動參數（選填）" style="height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12px;outline:none">
           ${engineOff ? '<span style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:9px;background:var(--amber-dim);font-size:11px;color:var(--amber);line-height:1.5"><span style="flex:1;text-wrap:pretty">分流引擎未執行。這支程式要走代理，得先到分流頁啟動引擎。</span></span>' : ''}
           <div style="background:var(--bg);border:1px solid var(--sep);border-radius:12px;overflow:hidden">
             <div style="display:flex;align-items:center;gap:12px;padding:10px 13px">
@@ -2098,7 +2221,7 @@ function renderLaunchSheet() {
     <div id="lsPanel" style="width:470px;height:100%;background:var(--panel);border-left:1px solid var(--sep);box-shadow:-12px 0 40px rgba(0,0,0,.18);display:flex;flex-direction:column;animation:sheetIn .26s cubic-bezier(.32,.72,0,1)">
       <div style="padding:16px 20px;border-bottom:1px solid var(--sep);display:flex;align-items:center;gap:10px">
         <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">以路由啟動程式</span>
-        <button id="lsClose" class="hvFill2" title="關閉面板（Esc）" style="margin-left:auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button>
+        <button id="lsClose" class="hvFill2" title="關閉面板（Esc）" aria-label="關閉面板（Esc）" style="margin-left:auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button>
       </div>
 
       <div style="flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px">
@@ -2129,7 +2252,7 @@ function renderLaunchSheet() {
       <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
         <span style="font-size:11.5px;color:var(--text3);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isBrowser ? '' : (d.exePath ? '規則對這支程式一律生效，不只這次' : '')}</span>
         <button id="lsCancel" class="hvFill2" style="height:32px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>
-        <button id="lsGo" ${canLaunch ? '' : 'disabled'} class="${canLaunch ? 'hvBright' : ''}" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:${canLaunch ? 'pointer' : 'not-allowed'};white-space:nowrap;opacity:${canLaunch ? '1' : '.5'}">${state.launchBusy ? '啟動中…' : target ? '啟動 ' + esc(target) : '啟動'}</button>
+        <button id="lsGo" ${canLaunch ? '' : 'disabled'} class="${canLaunch ? 'hvBright' : ''}" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:12.5px;font-weight:600;cursor:${canLaunch ? 'pointer' : 'not-allowed'};white-space:nowrap;opacity:${canLaunch ? '1' : '.5'}">${state.launchBusy ? '啟動中…' : target ? '啟動 ' + esc(target) : '啟動'}</button>
       </div>
     </div>
   </div>`;
@@ -2202,7 +2325,7 @@ function renderInstances() {
         </span>
       </span>
       <span style="width:64px;flex-shrink:0;display:flex;justify-content:flex-end">
-        <button data-killinst="${esc(i.id)}" class="hvRed" title="${pend ? '再按一次確認結束' : '結束此實例'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${pend
+        <button data-killinst="${esc(i.id)}" class="hvRed" title="${pend ? '再按一次確認結束' : '結束此實例'}" aria-label="${pend ? '再按一次確認結束實例' : '結束此實例'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? 'var(--on-red)' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${pend
           ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 13l4 4L19 7"></path></svg>'
           : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>'}</button>
       </span>
@@ -2246,10 +2369,10 @@ function renderKillswitch() {
   // 設計稿是兩層：觸發時彈對話框讓使用者做決定，
   // 決定完（或重連失敗）之後仍留一條紅帶，按「查看」可以把對話框叫回來。
   if (bar) {
-    bar.innerHTML = `<div style="flex-shrink:0;display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--red);color:#fff;font-size:12.5px;font-weight:500;animation:fadeUp .2s ease-out">
+    bar.innerHTML = `<div style="flex-shrink:0;display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--red);color:var(--on-red);font-size:12.5px;font-weight:500;animation:fadeUp .2s ease-out">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z"></path><path d="M12 9v4M12 16.5h.01"></path></svg>
       <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">斷線保護已啟動 · ${k.blocking ? '依規則分流的連線已暫停' : '封鎖模式未生效，目前沒有保護'}</span>
-      <button id="ksBarOpen" style="height:26px;padding:0 11px;border:1px solid rgba(255,255,255,.5);border-radius:8px;background:transparent;color:#fff;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">查看</button>
+      <button id="ksBarOpen" style="height:26px;padding:0 11px;border:1px solid color-mix(in srgb, var(--on-red) 55%, transparent);border-radius:8px;background:transparent;color:var(--on-red);font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">查看</button>
     </div>`;
     $('ksBarOpen').onclick = () => { state.ksAlertOpen = true; renderKillswitch(); };
   }
@@ -2268,7 +2391,7 @@ function renderKillswitch() {
   const row = (label, value, color) => `<div style="display:flex;align-items:center;gap:8px;font-size:11.5px"><span style="color:var(--text3);width:56px;flex-shrink:0">${label}</span><span style="flex:1;color:${color || 'var(--text)'};word-break:break-all">${value}</span></div>`;
   m.innerHTML = `
     <div style="position:absolute;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:150">
-      <div style="width:440px;background:var(--panel);border:1px solid var(--sep);border-radius:20px;box-shadow:0 28px 70px rgba(0,0,0,.36);padding:26px 26px 22px;display:flex;flex-direction:column;gap:16px;animation:fadeUp .22s ease-out">
+      <div id="ksBox" style="width:440px;background:var(--panel);border:1px solid var(--sep);border-radius:20px;box-shadow:0 28px 70px rgba(0,0,0,.36);padding:26px 26px 22px;display:flex;flex-direction:column;gap:16px;animation:fadeUp .22s ease-out">
         <div style="display:flex;align-items:center;gap:14px">
           <div style="width:52px;height:52px;flex-shrink:0;border-radius:15px;background:var(--red-dim);display:flex;align-items:center;justify-content:center;color:var(--red);animation:shieldIn .35s cubic-bezier(.32,.72,0,1)">
             <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3.5v5c0 4.2-2.9 7-7 8.5-4.1-1.5-7-4.3-7-8.5v-5L12 3z"></path><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"></path></svg>
@@ -2286,7 +2409,7 @@ function renderKillswitch() {
         </div>
         <div style="display:flex;gap:9px">
           <button id="ksClear" title="停用分流，受保護程式改為直連" style="flex:1;height:38px;border:1px solid var(--sep);border-radius:11px;background:var(--bg);color:var(--red);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">停用分流並直連</button>
-          <button id="ksReconnect" class="hvBright" style="flex:1;height:38px;border:none;border-radius:11px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:7px">${k.reconnecting ? '重新啟動引擎…' : '重新連線'}</button>
+          <button id="ksReconnect" class="hvBright" style="flex:1;height:38px;border:none;border-radius:11px;background:var(--accent);color:var(--on-accent);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:7px">${k.reconnecting ? '重新啟動引擎…' : '重新連線'}</button>
         </div>
         <span style="font-size:11px;color:var(--text3);text-align:center;line-height:1.5">此視窗無法以 Esc 關閉，必須選擇其一。</span>
       </div>
@@ -2428,11 +2551,17 @@ let toastTimer;
 const toastQueue = [];
 // 連續的訊息原本會互相覆蓋（例如一次下載多個規則庫、每個都失敗，只看得到最後一則），
 // 所以排隊依序顯示；長訊息也給多一點時間讀完。
+const isErrToast = c => c === 'var(--red)';
 function flash(text, color) {
   if (state.toast) {
     const last = toastQueue.length ? toastQueue[toastQueue.length - 1] : null;
     if (state.toast === text || (last && last.text === text)) return;   // 同一則不重複排隊
-    if (toastQueue.length < 3) toastQueue.push({ text, color });
+    if (toastQueue.length < 5) toastQueue.push({ text, color });
+    else if (isErrToast(color)) {
+      // 佇列滿了：錯誤不能被丟掉，擠掉最舊的一則非錯誤訊息
+      const i = toastQueue.findIndex(t => !isErrToast(t.color));
+      if (i >= 0) { toastQueue.splice(i, 1); toastQueue.push({ text, color }); }
+    }
     return;
   }
   showToast(text, color);
@@ -2444,17 +2573,19 @@ function showToast(text, color) {
   const t = $('toast'); t.style.display = 'flex';
   t.style.animation = 'none'; void t.offsetHeight; t.style.animation = 'toastIn .2s ease-out';
   clearTimeout(toastTimer);
+  // 錯誤要讀得完：至少 5 秒；一般訊息照長度 2.2–5 秒
+  const base = Math.min(5000, 2200 + Math.max(0, text.length - 10) * 60);
   toastTimer = setTimeout(() => {
     state.toast = '';
     const next = toastQueue.shift();
     if (next) { showToast(next.text, next.color); return; }
     t.style.display = 'none';
-  }, Math.min(5000, 2200 + Math.max(0, text.length - 10) * 60));
+  }, isErrToast(color) ? Math.max(5000, base + 2000) : base);
 }
 // ---- 懸浮說明 ----
 // 次要說明不再常駐在畫面上：標題旁放一顆 ⓘ（tipIcon），或直接在元素上掛 data-tip，
 // 滑鼠停 250ms 才出現。原生 title 要等一秒多、樣式也跟不上主題，所以自己畫。
-const tipIcon = text => `<span class="tipI" data-tip="${esc(text)}" aria-label="${esc(text)}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 7.6h.01"></path></svg></span>`;
+const tipIcon = text => `<span class="tipI" data-tip="${esc(text)}" role="img" tabindex="0" aria-label="${esc(text)}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 7.6h.01"></path></svg></span>`;
 let tipTimer = null, tipFor = null;
 function hideTip() { clearTimeout(tipTimer); tipFor = null; const b = $('tipBox'); if (b) b.remove(); }
 function showTipFor(el) {
@@ -2472,6 +2603,12 @@ document.addEventListener('mouseover', e => {
   hideTip();
   if (el && el.dataset.tip) { tipFor = el; tipTimer = setTimeout(() => { if (tipFor === el && el.isConnected) showTipFor(el); }, 250); }
 });
+// 鍵盤也要看得到說明：Tab 到 ⓘ（或任何帶 data-tip 的元素）時直接顯示，離開就收
+document.addEventListener('focusin', e => {
+  const el = e.target.closest && e.target.closest('[data-tip]');
+  if (el && el.dataset.tip && e.target.matches(':focus-visible')) showTipFor(el);
+});
+document.addEventListener('focusout', e => { if (tipFor && tipFor.contains(e.target)) hideTip(); });
 document.addEventListener('mousedown', hideTip, true);
 document.addEventListener('scroll', hideTip, true);
 window.addEventListener('blur', hideTip);
@@ -2802,7 +2939,7 @@ function buildSplit() {
 
     <div style="background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:14px;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:18px">
-        <button id="spEngineBtn" title="啟動分流引擎" style="width:78px;height:78px;flex-shrink:0;position:relative;border:none;background:transparent;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center">
+        <button id="spEngineBtn" title="啟動分流引擎" aria-label="啟動分流引擎" style="width:78px;height:78px;flex-shrink:0;position:relative;border:none;background:transparent;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center">
           <svg width="78" height="78" viewBox="0 0 256 256" style="position:absolute;inset:0">
             <circle cx="128" cy="128" r="92" fill="none" stroke="var(--fill2)" stroke-width="14"></circle>
             <g id="spEngineSpin" style="transform-origin:128px 128px;animation:none;opacity:0">
@@ -2854,18 +2991,18 @@ function buildSplit() {
 
     <div id="spRulesHead" style="display:flex;align-items:center;gap:10px;flex-shrink:0">
       <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap;display:flex;align-items:center">規則${tipIcon('由上往下比對，第一條命中即生效；一條規則可同時限定程式、目的地、埠與協定')}</span>
-      <button id="spSimToggle" class="hvFill2" title="測試某個網址會走哪一條規則" style="margin-left:auto;display:flex;align-items:center;gap:5px;height:28px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg>模擬</button>
+      <button id="spSimToggle" class="hvFill2" title="測試某個網址會走哪一條規則" aria-label="測試某個網址會走哪一條規則" style="margin-left:auto;display:flex;align-items:center;gap:5px;height:28px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg>模擬</button>
       <div id="spTools" style="display:none;align-items:center;gap:8px;flex-shrink:0">
-        <input id="spSearch" placeholder="搜尋…" style="width:150px;height:28px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text);font-size:12px;outline:none">
+        <input id="spSearch" aria-label="搜尋規則" placeholder="搜尋…" style="width:150px;height:28px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--card);color:var(--text);font-size:12px;outline:none">
         <div id="spFilterSeg" style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px"></div>
       </div>
     </div>
 
     <div id="spSimPanel" style="display:none;flex-direction:column;gap:9px;background:var(--card);border:1px solid var(--sep);border-radius:16px;padding:13px 16px;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:8px">
-        <input id="spSimHost" placeholder="輸入網域、IP 或 IP:埠，例如 www.netflix.com" style="flex:1;min-width:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
+        <input id="spSimHost" aria-label="要模擬的網域或 IP" placeholder="輸入網域、IP 或 IP:埠，例如 www.netflix.com" style="flex:1;min-width:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none">
         <button id="spSimExeBtn" class="hvFill2" title="只測某支程式" style="display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text2);font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0"><span id="spSimExeLabel">不限程式</span><span style="color:var(--text3);font-size:9px">▾</span></button>
-        <button id="spSimRun" class="hvBright" style="height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">模擬</button>
+        <button id="spSimRun" class="hvBright" style="height:32px;padding:0 15px;border:none;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">模擬</button>
       </div>
       <div id="spSimResult"></div>
     </div>
@@ -2902,6 +3039,7 @@ function updateSplit() {
   const ring = $('spEngineRing'); if (ring) { ring.setAttribute('stroke-dashoffset', String(running ? 0 : 578)); ring.style.opacity = running ? '1' : '0'; }
   const ig = $('spEngineIcon'); if (ig) ig.style.color = running ? 'var(--good)' : starting ? 'var(--accent)' : 'var(--text3)';
   $('spEngineBtn').title = running ? '停止分流引擎' : '啟動分流引擎（需管理員權限）';
+  $('spEngineBtn').setAttribute('aria-label', $('spEngineBtn').title);
   $('spEngineTitle').textContent = running ? '分流引擎執行中' : starting ? '正在啟動…' : '分流引擎未執行';
 
   const badge = $('spEngineBadge');
@@ -2913,7 +3051,12 @@ function updateSplit() {
   if (needUac) badge.dataset.tip = '首次啟動需要系統管理員權限，用於建立虛擬網卡並注入路由表，只需同意一次。點擊了解權限用途';
   else delete badge.dataset.tip;
   badge.style.cursor = needUac ? 'pointer' : '';
-  badge.onclick = needUac ? () => { state.splitUac = true; renderSplitUac(); } : null;
+  const openUac = () => { state.splitUac = true; renderSplitUac(); };
+  badge.onclick = needUac ? openUac : null;
+  // 可點時要讓鍵盤也按得到
+  if (needUac) { badge.setAttribute('role', 'button'); badge.tabIndex = 0; badge.setAttribute('aria-label', '需要授權：了解權限用途'); }
+  else { badge.removeAttribute('role'); badge.removeAttribute('tabindex'); badge.removeAttribute('aria-label'); }
+  badge.onkeydown = needUac ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openUac(); } } : null;
 
   $('spEngineDesc').textContent = running
     ? (ruleMode ? '依規則表分流；規則變更約 1–2 秒生效。切換模式不需重新提權。'
@@ -3069,14 +3212,14 @@ function renderSplitRules() {
       <span style="flex:1 1 0;min-width:110px;padding-right:10px;box-sizing:border-box;display:flex;align-items:center;gap:7px">
         <span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${dot};animation:${dotAnim}"></span>
         <span title="${esc(targetLabel)}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:${targetColor}">${esc(targetLabel)}</span>
-        ${miss.length ? `<button data-sact="dl" class="hvBright" style="flex-shrink:0;height:22px;padding:0 9px;border:none;border-radius:6px;background:var(--amber);color:#fff;font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap">下載規則庫</button>` : ''}
+        ${miss.length ? `<button data-sact="dl" class="hvBright" style="flex-shrink:0;height:22px;padding:0 9px;border:none;border-radius:6px;background:var(--amber);color:var(--on-amber);font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap">下載規則庫</button>` : ''}
       </span>
       <span style="width:${SPLIT_ACTW}px;flex-shrink:0;display:flex;justify-content:flex-end;align-items:center;gap:6px">
         <button data-sact="toggle" role="switch" aria-checked="${on}" title="${on ? '停用規則：' : '啟用規則：'}${esc(name)}" style="width:40px;height:24px;border-radius:12px;border:none;padding:0;cursor:pointer;position:relative;background:${on ? 'var(--accent)' : 'var(--fill)'};transition:background .22s;flex-shrink:0"><span style="position:absolute;top:3px;left:${on ? '19px' : '3px'};width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .22s cubic-bezier(.32,.72,0,1)"></span></button>
-        <button data-sact="up" title="上移一列" ${pos === 0 ? 'disabled' : ''} style="width:22px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:${pos === 0 ? 'not-allowed' : 'pointer'};opacity:${pos === 0 ? '.35' : '1'};display:flex;align-items:center;justify-content:center;flex-shrink:0" class="${pos === 0 ? '' : 'hvAcc'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 14 12 8 18 14"></polyline></svg></button>
-        <button data-sact="down" title="下移一列" ${pos === state.splitRules.length - 1 ? 'disabled' : ''} style="width:22px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:${pos === state.splitRules.length - 1 ? 'not-allowed' : 'pointer'};opacity:${pos === state.splitRules.length - 1 ? '.35' : '1'};display:flex;align-items:center;justify-content:center;flex-shrink:0" class="${pos === state.splitRules.length - 1 ? '' : 'hvAcc'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 10 12 16 18 10"></polyline></svg></button>
-        <button data-sact="edit" class="hvAcc" title="編輯規則" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
-        <button data-sact="del" class="hvRed" title="${pend ? '再按一次確認刪除' : '刪除規則'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">${pend
+        <button data-sact="up" title="上移一列" aria-label="上移一列" ${pos === 0 ? 'disabled' : ''} style="width:22px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:${pos === 0 ? 'not-allowed' : 'pointer'};opacity:${pos === 0 ? '.35' : '1'};display:flex;align-items:center;justify-content:center;flex-shrink:0" class="${pos === 0 ? '' : 'hvAcc'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 14 12 8 18 14"></polyline></svg></button>
+        <button data-sact="down" title="下移一列" aria-label="下移一列" ${pos === state.splitRules.length - 1 ? 'disabled' : ''} style="width:22px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:${pos === state.splitRules.length - 1 ? 'not-allowed' : 'pointer'};opacity:${pos === state.splitRules.length - 1 ? '.35' : '1'};display:flex;align-items:center;justify-content:center;flex-shrink:0" class="${pos === state.splitRules.length - 1 ? '' : 'hvAcc'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 10 12 16 18 10"></polyline></svg></button>
+        <button data-sact="edit" class="hvAcc" title="編輯規則" aria-label="編輯規則" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
+        <button data-sact="del" class="hvRed" title="${pend ? '再按一次確認刪除' : '刪除規則'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? 'var(--on-red)' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">${pend
           ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
           : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>'}</button>
       </span>
@@ -3160,7 +3303,7 @@ function renderSplitEmpty() {
       <span style="font-size:12.5px;color:var(--text2);line-height:1.6;text-wrap:pretty;max-width:440px">一條規則＝「誰／連去哪／哪個埠」的組合 → 走哪條路。內建的「本機與內網直連」已在保護你。</span>
     </div>
     <div style="display:flex;gap:9px">
-      <button id="spEmptyAdd" class="hvBright" style="height:34px;padding:0 16px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增規則</button>
+      <button id="spEmptyAdd" class="hvBright" style="height:34px;padding:0 16px;border:none;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">新增規則</button>
       <button id="spEmptyBrowser" class="${state.browser ? 'hvFill2' : ''}" ${state.browser ? '' : 'disabled'} title="${state.browser ? '不用規則、不用引擎：用路由開一個只有它走代理的瀏覽器' : '找不到 Chrome 或 Edge，裝了其中一個才能用'}" style="display:flex;align-items:center;gap:6px;height:34px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>用這條路由開瀏覽器</button>
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;width:100%;padding-top:4px">
@@ -3473,7 +3616,7 @@ function renderSplitSheet() {
     if (c.k === 'app') {
       body = `<div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px">${seg([['name', '程式名稱'], ['path', '完整路徑']], appMatch, 'sappmode')}</div>
         <div style="display:flex;gap:8px">
-          <input id="spAppValue" value="${esc((w.app || {}).value || '')}" placeholder="${appMatch === 'path' ? 'C:\\Program Files\\...\\app.exe' : 'chrome.exe'}" style="flex:1;min-width:0;height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;outline:none;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">
+          <input id="spAppValue" aria-label="程式" value="${esc((w.app || {}).value || '')}" placeholder="${appMatch === 'path' ? 'C:\\Program Files\\...\\app.exe' : 'chrome.exe'}" style="flex:1;min-width:0;height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;outline:none;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">
           <button id="spPickProc" class="hvFill2" style="flex-shrink:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap">從執行中挑選</button>
           <button id="spBrowseExe" class="hvFill2" style="flex-shrink:0;height:32px;padding:0 11px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap">瀏覽…</button>
         </div>`;
@@ -3482,18 +3625,18 @@ function renderSplitSheet() {
       const ui = DEST_UI[dest.match] || DEST_UI.suffix;
       body = `<div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px">${seg(DEST_KINDS, dest.match, 'sdestkind')}</div>`;
       if (!isRs) {
-        body += `<textarea id="spDestValue" rows="3" placeholder="${esc(ui.ph)}" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;outline:none;resize:vertical;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;line-height:1.6">${esc(dest.value || '')}</textarea>
+        body += `<textarea id="spDestValue" aria-label="目的地" rows="3" placeholder="${esc(ui.ph)}" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;outline:none;resize:vertical;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;line-height:1.6">${esc(dest.value || '')}</textarea>
           <span style="font-size:11px;color:var(--text3);line-height:1.5">${esc(ui.hint)}</span>`;
       } else {
         body += `<button id="spRsPick" class="hvFill2" style="display:flex;align-items:center;gap:9px;height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--panel);color:${dTags.length ? 'var(--text)' : 'var(--text3)'};font-size:12.5px;cursor:pointer;text-align:left"><span style="flex:1">${dTags.length ? `已選 ${dTags.length} 個` : '選擇地區或分類…'}</span><span style="color:var(--text3);font-size:9px">▾</span></button>
           ${dTags.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${dTags.map(t => {
             const ok = isInstalled(t);
-            return `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 6px 0 9px;border-radius:13px;background:${ok ? 'var(--accent-dim)' : 'var(--amber-dim)'};color:${ok ? 'var(--accent)' : 'var(--amber)'};font-size:11.5px;font-weight:500;white-space:nowrap">${esc(catLabel(t))}<span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:10px;opacity:.7">${esc(t)}</span><button data-schip="${esc(t)}" title="移除" style="width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.12);color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="8" height="8" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button></span>`;
+            return `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 6px 0 9px;border-radius:13px;background:${ok ? 'var(--accent-dim)' : 'var(--amber-dim)'};color:${ok ? 'var(--accent)' : 'var(--amber)'};font-size:11.5px;font-weight:500;white-space:nowrap">${esc(catLabel(t))}<span style="font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:10px;opacity:.7">${esc(t)}</span><button data-schip="${esc(t)}" title="移除" aria-label="移除" style="width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.12);color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="8" height="8" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button></span>`;
           }).join('')}</div>` : ''}
           <span style="font-size:11px;color:var(--text3);line-height:1.5;text-wrap:pretty">依「目的地在哪個國家」或「屬於哪類網站」（如 Netflix、廣告）比對，選了才下載對應清單，可複選。</span>`;
       }
     } else if (c.k === 'port') {
-      body = `<input id="spPortValue" value="${esc(w.port || '')}" placeholder="443, 80, 3000-3999" style="height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;outline:none;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">
+      body = `<input id="spPortValue" aria-label="埠" value="${esc(w.port || '')}" placeholder="443, 80, 3000-3999" style="height:32px;padding:0 10px;border:1px solid var(--sep);border-radius:8px;background:var(--panel);color:var(--text);font-size:12px;outline:none;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace">
         <span style="font-size:11px;color:var(--text3);line-height:1.5">目的地埠，逗號分隔，可寫範圍。</span>`;
     } else {
       body = `<div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px">${seg([['', 'TCP + UDP'], ['tcp', '僅 TCP'], ['udp', '僅 UDP']], w.network || '', 'snetmode')}</div>`;
@@ -3514,7 +3657,7 @@ function renderSplitSheet() {
       <div id="spSheetPanel" style="width:480px;height:100%;background:var(--panel);border-left:1px solid var(--sep);box-shadow:-12px 0 40px rgba(0,0,0,.18);display:flex;flex-direction:column;animation:sheetIn .26s cubic-bezier(.32,.72,0,1)">
         <div style="padding:16px 20px;border-bottom:1px solid var(--sep);display:flex;align-items:center">
           <span style="font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap">${state.splitEditing ? '編輯規則' : '新增規則'}</span>
-          <button id="spSheetClose" class="hvFill" title="關閉面板" style="margin-left:auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button>
+          <button id="spSheetClose" class="hvFill" title="關閉面板" aria-label="關閉面板" style="margin-left:auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button>
         </div>
         <div id="spSheetBody" style="flex:1;min-height:0;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:14px">
           <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap;display:flex;align-items:center;flex-shrink:0">條件${tipIcon('全部條件同時成立才算命中；沒展開的條件＝不限。至少填一項')}</span>
@@ -3531,7 +3674,7 @@ function renderSplitSheet() {
           </div>
           <div style="display:flex;flex-direction:column;gap:7px;flex-shrink:0">
             <span style="font-size:11.5px;font-weight:600;color:var(--text2);white-space:nowrap">顯示名稱</span>
-            <input id="spDraftName" value="${esc(d.name)}" placeholder="${nameAuto ? esc('留空自動使用「' + nameAuto + '」') : '例如 Chrome 連公司系統'}" style="height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
+            <input id="spDraftName" aria-label="規則名稱" value="${esc(d.name)}" placeholder="${nameAuto ? esc('留空自動使用「' + nameAuto + '」') : '例如 Chrome 連公司系統'}" style="height:34px;padding:0 11px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:13px;outline:none">
           </div>
           <details id="spJson" ${state.showJson ? 'open' : ''} style="background:var(--fill2);border-radius:12px;padding:11px 15px;flex-shrink:0">
             <summary style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;cursor:pointer;white-space:nowrap">對應 config.json</summary>
@@ -3541,7 +3684,7 @@ function renderSplitSheet() {
         <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
           <span style="flex:1"></span>
           <button id="spSheetCancel" class="hvFill2" style="height:32px;padding:0 16px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>
-          <button id="spSheetSave" class="hvBright" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">儲存規則</button>
+          <button id="spSheetSave" class="hvBright" style="height:32px;padding:0 18px;border:none;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">儲存規則</button>
         </div>
       </div>
     </div>`;
@@ -3649,7 +3792,7 @@ function renderKsScope() {
   const apps = state.settings.killSwitchApps || [];
   const seg = [['all', '所有走代理的程式'], ['apps', '只有以下程式']].map(([k, label]) =>
     `<button data-ksscope="${k}" style="border:none;cursor:pointer;height:26px;padding:0 10px;border-radius:6px;font-size:12px;white-space:nowrap;${segCss(scope === k)}">${label}</button>`).join('');
-  const chips = apps.map(a => `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 6px 0 9px;border-radius:13px;background:var(--purple-dim);color:var(--purple);font-size:11.5px;font-weight:500;white-space:nowrap">${esc(a)}<button data-kschip="${esc(a)}" title="移除" style="width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.12);color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="8" height="8" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button></span>`).join('');
+  const chips = apps.map(a => `<span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 6px 0 9px;border-radius:13px;background:var(--purple-dim);color:var(--purple);font-size:11.5px;font-weight:500;white-space:nowrap">${esc(a)}<button data-kschip="${esc(a)}" title="移除" aria-label="移除" style="width:16px;height:16px;border:none;border-radius:50%;background:rgba(0,0,0,.12);color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0"><svg width="8" height="8" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"></line><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"></line></svg></button></span>`).join('');
 
   el.innerHTML = `
     <div style="padding:13px 16px;display:flex;align-items:center;gap:14px;border-top:1px solid var(--sep)">
@@ -3701,9 +3844,9 @@ function renderRuleSets() {
       </span>
       ${busy ? `<span style="flex-shrink:0;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text2)"><span style="width:76px;height:4px;border-radius:2px;background:var(--fill);overflow:hidden"><span style="display:block;width:45%;height:100%;background:var(--accent)"></span></span>下載中…</span>`
         : e.missing
-        ? `<button data-setdl="${esc(e.tag)}" class="hvBright" style="flex-shrink:0;height:28px;padding:0 12px;border:none;border-radius:8px;background:var(--amber);color:#fff;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">重新下載</button>`
+        ? `<button data-setdl="${esc(e.tag)}" class="hvBright" style="flex-shrink:0;height:28px;padding:0 12px;border:none;border-radius:8px;background:var(--amber);color:var(--on-amber);font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">重新下載</button>`
         : `<button data-setup="${esc(e.tag)}" ${canUpdate ? '' : 'disabled'} class="${canUpdate ? 'hvFill2' : ''}" title="${e.source === 'import' ? '手動匯入的規則庫沒有更新來源' : '從目錄重新下載最新版'}" style="flex-shrink:0;height:28px;padding:0 12px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:${canUpdate ? 'var(--text)' : 'var(--text3)'};font-size:11.5px;cursor:${canUpdate ? 'pointer' : 'not-allowed'};white-space:nowrap">更新</button>`}
-      <button data-setdel="${esc(e.tag)}" class="hvRed" title="${pend ? '再按一次確認移除' : used ? used + ' 條規則將失效' : '移除規則庫'}" style="flex-shrink:0;width:28px;height:28px;border:none;border-radius:8px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${pend
+      <button data-setdel="${esc(e.tag)}" class="hvRed" title="${pend ? '再按一次確認移除' : used ? used + ' 條規則將失效' : '移除規則庫'}" style="flex-shrink:0;width:28px;height:28px;border:none;border-radius:8px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? 'var(--on-red)' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${pend
         ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
         : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>'}</button>
     </div>`;
@@ -3867,7 +4010,7 @@ function renderSplitUac() {
         </div>
         <div style="display:flex;gap:9px">
           <button id="spUacCancel" class="hvFill2" style="flex:1;height:36px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">稍後再說</button>
-          <button id="spUacGrant" class="hvBright" style="flex:1;height:36px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">繼續並提權</button>
+          <button id="spUacGrant" class="hvBright" style="flex:1;height:36px;border:none;border-radius:10px;background:var(--accent);color:var(--on-accent);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">繼續並提權</button>
         </div>
       </div>
     </div>`;
