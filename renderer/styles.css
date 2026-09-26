@@ -16,19 +16,23 @@ body{
   user-select:none;
 
   --bg:#f2f2f7;--panel:#fff;--panelq:rgba(255,255,255,.72);--card:#fff;--fill:#78788029;--fill2:#7878801f;
-  /* 淺色 text3 原本 30%（對比 1.7:1，分組標題、表頭幾乎看不見），拉到 50%（2.6:1）；
-     再高就跟 text2（60%）分不出層級 */
-  --text:#1c1c1e;--text2:#3c3c4399;--text3:#3c3c4380;--sep:#3c3c431f;--accent:#4470c4;--accent-dim:#4470c414;
-  --good:#2f9e78;--amber:#d98b1f;--red:#d9534a;--purple:#7a72cf;
-  --good-dim:#2f9e7824;--amber-dim:#d98b1f1f;--red-dim:#d9534a24;--purple-dim:#7a72cf24;
-  --ring:#4470c440;--ring-red:#d9534a4d;
+  /* 對比度一律照 WCAG AA（一般文字 4.5:1），對 bg 與 panel 兩種底色都算過：
+     text2 5.9:1、text3 4.7:1（以前 3.3 / 2.6）；層級改靠字級與字重拉開。
+     彩色用在文字與按鈕底色兩種場合，所以選「在白底上 ≥4.5、白字在它上面也 ≥4.5」的值。 */
+  --text:#1c1c1e;--text2:#3c3c43d1;--text3:#3c3c43bd;--sep:#3c3c431f;--accent:#3f69b8;--accent-dim:#3f69b814;
+  --good:#237d5a;--amber:#9e5f0c;--red:#c9433a;--purple:#6259bd;
+  --good-dim:#237d5a24;--amber-dim:#9e5f0c1f;--red-dim:#c9433a24;--purple-dim:#6259bd24;
+  --on-accent:#fff;--on-good:#fff;--on-amber:#fff;--on-red:#fff;
+  --ring:#3f69b840;--ring-red:#c9433a4d;
   --shadow:0 8px 24px rgba(0,0,0,.10),0 1px 2px rgba(0,0,0,.06);
 }
 body[data-theme="dark"]{
   --bg:#1c1c1e;--panel:#2c2c2e;--panelq:rgba(44,44,46,.72);--card:#2c2c2e;--fill:#7878805c;--fill2:#78788033;
-  --text:#fff;--text2:#ebebf599;--text3:#ebebf566;--sep:#54545899;--accent:#8cb0ef;--accent-dim:#8cb0ef1f;
+  /* 深色的彩色偏亮（當文字用才看得清楚），白字放在上面只有 2–2.7:1 → 按鈕上的字改用深色 */
+  --text:#fff;--text2:#ebebf599;--text3:#ebebf58c;--sep:#54545899;--accent:#8cb0ef;--accent-dim:#8cb0ef1f;
   --good:#54c69b;--amber:#e8b055;--red:#ef7a70;--purple:#a49ce6;
   --good-dim:#54c69b2e;--amber-dim:#e8b0552e;--red-dim:#ef7a702e;--purple-dim:#a49ce62e;
+  --on-accent:#10213f;--on-good:#1c1c1e;--on-amber:#1c1c1e;--on-red:#1c1c1e;
   --ring:#8cb0ef55;--ring-red:#ef7a7066;
   --shadow:0 10px 30px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.3);
 }
@@ -64,8 +68,8 @@ button:focus-visible,[tabindex]:focus-visible,label:focus-visible{outline:2px so
 .hvFill2:hover{background:var(--fill2)!important}
 .hvFill:hover{background:var(--fill)!important;color:var(--text)!important}
 .hvBright:hover{filter:brightness(1.08)}
-.hvRed:hover{background:var(--red)!important;color:#fff!important}
-.hvAcc:hover{background:var(--accent)!important;color:#fff!important}
+.hvRed:hover{background:var(--red)!important;color:var(--on-red)!important}
+.hvAcc:hover{background:var(--accent)!important;color:var(--on-accent)!important}
 .hvAccDim:hover{background:var(--accent-dim)!important}
 
 /* 懸浮說明：原本常駐在畫面上的副標收進 ⓘ，滑鼠停上去才出現（renderer 的 tipIcon / data-tip） */

@@ -120,3 +120,31 @@ describe('RouteManager — 多端口、各自綁不同上游', () => {
     await expect(mgr.start({ id: 'x', localPort: 1080, kind: 'socks5', hops: [] })).rejects.toThrow('non-empty');
   });
 });
+
+describe('normalizeRouteDef / isValidRouteId（save-route 的存檔前檢查）', () => {
+  const { normalizeRouteDef, isValidRouteId } = RouteManager;
+  const base = { id: 'r-1700000000000', label: 'A', localPort: 10808, kind: 'socks5', hops: ['s1'], enabled: true };
+
+  test('一般的 id 通過；會拿去組目錄名的危險 id 一律擋掉', () => {
+    for (const ok of ['r-1700000000000', 'r-oracle', 'abc_123']) expect(isValidRouteId(ok)).toBe(true);
+    for (const bad of ['..', '.', '../x', 'a/b', 'a\\b', '', 'x'.repeat(65), 123, null, undefined]) expect(isValidRouteId(bad)).toBe(false);
+  });
+
+  test('id 是 `..` 的路由存不進去（刪除時會變成刪掉整個 userData）', () => {
+    expect(() => normalizeRouteDef({ ...base, id: '..' })).toThrow(/id/);
+  });
+
+  test('埠與類型不合法就丟例外', () => {
+    expect(() => normalizeRouteDef({ ...base, localPort: 0 })).toThrow();
+    expect(() => normalizeRouteDef({ ...base, localPort: 65536 })).toThrow();
+    expect(() => normalizeRouteDef({ ...base, localPort: '1" & calc' })).toThrow();
+    expect(() => normalizeRouteDef({ ...base, kind: 'ftp' })).toThrow();
+  });
+
+  test('字串埠號轉成整數；hops 只留非空字串；允許沒有跳點（匯入後讓使用者補）', () => {
+    const r = normalizeRouteDef({ ...base, localPort: '10810', hops: ['s1', '', null, 5, 's2'] });
+    expect(r.localPort).toBe(10810);
+    expect(r.hops).toEqual(['s1', 's2']);
+    expect(normalizeRouteDef({ ...base, hops: undefined }).hops).toEqual([]);
+  });
+});

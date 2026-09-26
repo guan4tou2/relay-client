@@ -158,14 +158,17 @@ function dedupeDns(list) {
     .filter(x => (seen.has(x) ? false : (seen.add(x), true)));
 }
 
+// 陣列參數、不經 shell：埠號最終來自 renderer，拼進指令字串就是一個注入點。
+const reg = (...args) => execFileSync('reg', args, { encoding: 'utf8', windowsHide: true });
+
 const systemProxy = {
   get() {
     try {
-      const enableOut = execSync(`reg query "${REG_PATH}" /v ProxyEnable`, { encoding: 'utf8', windowsHide: true });
+      const enableOut = reg('query', REG_PATH, '/v', 'ProxyEnable');
       const enabled = enableOut.includes('0x1');
       let server = '';
       try {
-        const serverOut = execSync(`reg query "${REG_PATH}" /v ProxyServer`, { encoding: 'utf8', windowsHide: true });
+        const serverOut = reg('query', REG_PATH, '/v', 'ProxyServer');
         const match = serverOut.match(/ProxyServer\s+REG_SZ\s+(.+)/);
         if (match) server = match[1].trim();
       } catch (e) {}
@@ -174,17 +177,19 @@ const systemProxy = {
   },
 
   enable(httpPort) {
-    const server = `127.0.0.1:${httpPort}`;
+    const port = Number(httpPort);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`系統代理埠不合法：${httpPort}`);
+    const server = `127.0.0.1:${port}`;
     // 先寫 server / override，最後才 ProxyEnable=1；任一步失敗都不會停在「已啟用但指向壞位址」的狀態。
-    execSync(`reg add "${REG_PATH}" /v ProxyServer /t REG_SZ /d "${server}" /f`, { windowsHide: true });
-    execSync(`reg add "${REG_PATH}" /v ProxyOverride /t REG_SZ /d "${PROXY_BYPASS}" /f`, { windowsHide: true });
-    execSync(`reg add "${REG_PATH}" /v ProxyEnable /t REG_DWORD /d 1 /f`, { windowsHide: true });
+    reg('add', REG_PATH, '/v', 'ProxyServer', '/t', 'REG_SZ', '/d', server, '/f');
+    reg('add', REG_PATH, '/v', 'ProxyOverride', '/t', 'REG_SZ', '/d', PROXY_BYPASS, '/f');
+    reg('add', REG_PATH, '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '1', '/f');
     refresh();
     return { enabled: true, server };
   },
 
   disable() {
-    execSync(`reg add "${REG_PATH}" /v ProxyEnable /t REG_DWORD /d 0 /f`, { windowsHide: true });
+    reg('add', REG_PATH, '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '0', '/f');
     refresh();
     return { enabled: false, server: '' };
   },

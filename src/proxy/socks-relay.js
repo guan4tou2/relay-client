@@ -21,6 +21,8 @@ class SocksRelay extends EventEmitter {
     this.bytesUp = 0;
     this.bytesDown = 0;
     this.activeSockets = new Set();
+    this.pendingSockets = new Set();   // 還在握手／等上游的客戶端：stop() 也要收掉
+    this._gen = 0;                     // stop() 的世代：握手途中被停，連上上游後就不該再轉送
     this._statsTimer = null;
     this._statsDirty = false;
   }
@@ -68,6 +70,8 @@ class SocksRelay extends EventEmitter {
   async _handleClient(clientSocket) {
     this.connections++;
     this._flushStats();
+    const gen = this._gen;
+    this.pendingSockets.add(clientSocket);
 
     // 一進來就先掛 error。下面每一步都有 await（讀問候、讀請求、連上游），
     // 在那期間客戶端斷線的話，這個 socket 還沒有任何 error 監聽 ——
@@ -88,6 +92,12 @@ class SocksRelay extends EventEmitter {
       const remoteSocket = this.chain.length > 1
         ? await connectViaChain(this.chain, { host, port })
         : await connectViaProxy(this.chain[0], { host, port });
+      this.pendingSockets.delete(clientSocket);
+      if (gen !== this._gen) {   // 等上游期間路由被停了：不再轉送
+        remoteSocket.destroy();
+        clientSocket.destroy();
+        return;
+      }
 
       const reply = Buffer.alloc(10);
       reply[0] = 0x05; // version
@@ -126,8 +136,10 @@ class SocksRelay extends EventEmitter {
       remoteSocket.on('error', cleanup);
 
     } catch (err) {
+      this.pendingSockets.delete(clientSocket);
       this.connections = Math.max(0, this.connections - 1); // 計數永不為負（防重複遞減顯示 -1）
       this._flushStats();
+      if (gen !== this._gen) { clientSocket.destroy(); return; }
       this.emit('log', 'error', `FAILED ${err.message}`);
       const errReply = Buffer.from([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
       clientSocket.write(errReply);
@@ -194,7 +206,13 @@ class SocksRelay extends EventEmitter {
           return reject(new Error('Unknown address type'));
         }
         const port = buf.readUInt16BE(offset);
+        const leftover = buf.slice(offset + 2);
         cleanup();
+        // 接下來要等上游連線（可能好幾百毫秒）。拿掉 data 監聽不會讓 stream 停下來，
+        // 這段期間客戶端先送的資料（例如不等回覆就送 TLS ClientHello）會直接掉在地上。
+        // 先暫停，並把跟請求一起送來的 bytes 退回去，pipe() 時會一起送出。
+        if (socket.pause) socket.pause();
+        if (leftover.length && socket.unshift) socket.unshift(leftover);
         resolve({ host, port });
       };
       const onErr = (err) => { cleanup(); reject(err); };
@@ -214,11 +232,14 @@ class SocksRelay extends EventEmitter {
   }
 
   stop() {
+    this._gen++;
     if (this._statsTimer) { clearTimeout(this._statsTimer); this._statsTimer = null; }
     for (const socket of this.activeSockets) {
       socket.destroy();
     }
     this.activeSockets.clear();
+    for (const socket of this.pendingSockets) socket.destroy();
+    this.pendingSockets.clear();
     return new Promise(resolve => {
       if (!this.server) return resolve();
       let resolved = false;

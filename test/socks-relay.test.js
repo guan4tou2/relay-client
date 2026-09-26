@@ -498,3 +498,66 @@ describe('SocksRelay — stop cleans up sockets', () => {
     expect(relay.server).toBeNull();
   });
 });
+
+describe('SocksRelay — 握手期間與握手後的邊界', () => {
+  let relay, port, upstream, upstreamPort;
+  beforeEach(async () => {
+    connectViaProxy.mockReset();
+    relay = new SocksRelay();
+    port = await getFreePort();
+    await relay.start(port, { host: '127.0.0.1', port: 1 });
+  });
+  afterEach(async () => {
+    if (relay && relay.running) await relay.stop();
+    if (upstream) await new Promise(r => upstream.close(r));
+    upstream = null;
+  });
+
+  // 以前 _readRequest 把請求後面的 bytes 丟掉，等上游期間送來的也會因為 stream 還在 flowing 而掉在地上
+  test('跟 CONNECT 請求一起送來的資料，以及等上游期間送的資料，都會送到上游', async () => {
+    const got = [];
+    upstream = net.createServer(s => s.on('data', d => got.push(d)));
+    await new Promise(r => upstream.listen(0, '127.0.0.1', r));
+    upstreamPort = upstream.address().port;
+    let release;
+    connectViaProxy.mockImplementation(() => new Promise(r => { release = () => r(net.connect(upstreamPort, '127.0.0.1')); }));
+
+    const c = net.connect(port, '127.0.0.1');
+    c.on('error', () => {});
+    await new Promise(r => c.once('connect', r));
+    c.write(Buffer.from([0x05, 0x01, 0x00]));
+    await new Promise(r => c.once('data', r));
+    const req = Buffer.from([0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x01, 0xbb]);
+    c.write(Buffer.concat([req, Buffer.from('EARLY1')]));
+    await new Promise(r => setTimeout(r, 50));
+    c.write('EARLY2');                    // 上游還沒連上
+    await new Promise(r => setTimeout(r, 50));
+    release();
+    await new Promise(r => setTimeout(r, 150));
+    expect(Buffer.concat(got).toString()).toBe('EARLY1EARLY2');
+    c.destroy();
+  });
+
+  test('stop() 會收掉還在等上游的連線，上游連上後也不再轉送', async () => {
+    let release;
+    const fakeRemote = { destroyed: false, destroy() { this.destroyed = true; }, on() {}, pipe() {} };
+    connectViaProxy.mockImplementation(() => new Promise(r => { release = () => r(fakeRemote); }));
+
+    const c = net.connect(port, '127.0.0.1');
+    c.on('error', () => {});
+    await new Promise(r => c.once('connect', r));
+    c.write(Buffer.from([0x05, 0x01, 0x00]));
+    await new Promise(r => c.once('data', r));
+    c.write(Buffer.from([0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x01, 0xbb]));
+    await new Promise(r => setTimeout(r, 50));
+    expect(relay.pendingSockets.size).toBe(1);
+
+    const closed = new Promise(r => c.once('close', r));
+    await relay.stop();
+    await closed;                          // 客戶端被斷線
+    release();
+    await new Promise(r => setTimeout(r, 30));
+    expect(fakeRemote.destroyed).toBe(true);
+    expect(relay.activeSockets.size).toBe(0);
+  });
+});

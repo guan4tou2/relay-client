@@ -186,3 +186,49 @@ describe('交給引擎的形狀（resolveForEngine）', () => {
     expect(mk().list()).toEqual([]);
   });
 });
+
+// 經由路由下載：以前 createConnection 回傳的原始通道直接拿來送請求，
+// https 模組不會自己包 TLS，送到 443 的是明文 GET —— 經由路由下載從來沒成功過。
+describe('經由路由下載（connectChain）', () => {
+  test('通道上送出的第一個 byte 是 TLS ClientHello（0x16），不是明文 GET', async () => {
+    const net = require('net');
+    let first = null;
+    const srv = net.createServer(sock => { sock.once('data', d => { first = d; sock.destroy(); }); });
+    await new Promise(r => srv.listen(0, '127.0.0.1', r));
+    try {
+      const store = new RuleSetStore({
+        dir,
+        connectChain: () => Promise.resolve(net.connect(srv.address().port, '127.0.0.1')),
+      });
+      const r = await store.install('geoip-tw', { hops: [{ host: 'x', port: 1 }], timeout: 3000 });
+      expect(r.ok).toBe(false);          // 假伺服器收到就斷線
+      expect(first).not.toBe(null);
+      expect(first[0]).toBe(0x16);
+      expect(first.toString('latin1')).not.toMatch(/^GET /);
+    } finally { srv.close(); }
+  });
+});
+
+describe('寫檔是原子的', () => {
+  test('寫入失敗時不留下暫存檔，也不動原本的檔案', async () => {
+    const s = mk(fakeHttps({ body: 'OLD' }));
+    await s.install('geoip-tw');
+    const orig = fs.renameSync;
+    fs.renameSync = () => { throw new Error('ENOSPC'); };
+    try {
+      const s2 = mk(fakeHttps({ body: 'NEW-HALF' }));
+      const r = await s2.install('geoip-tw');
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/ENOSPC/);
+    } finally { fs.renameSync = orig; }
+    expect(fs.readFileSync(path.join(dir, 'geoip-tw.srs'), 'utf8')).toBe('OLD');
+    expect(fs.readdirSync(dir).filter(f => f.includes('.tmp-'))).toEqual([]);
+  });
+
+  test('下載到空內容 → 不覆蓋既有檔案', async () => {
+    await mk(fakeHttps({ body: 'OLD' })).install('geoip-tw');
+    const r = await mk(fakeHttps({ body: '' })).install('geoip-tw');
+    expect(r.ok).toBe(false);
+    expect(fs.readFileSync(path.join(dir, 'geoip-tw.srs'), 'utf8')).toBe('OLD');
+  });
+});

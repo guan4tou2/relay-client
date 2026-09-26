@@ -115,24 +115,24 @@ describe('Launcher — 實例登記與結束', () => {
     expect(r.error).toContain('找不到');
   });
 
-  test('kill 會呼叫 platform.killTree 並把列拿掉；重複 kill 不會炸', () => {
+  test('kill 會呼叫 platform.killTree 並把列拿掉；重複 kill 不會炸', async () => {
     const L = mk();
     const inst = L._add({ name: 'Chrome', exe: 'chrome.exe', mode: 'browser', routeId: 'r1', pid: 4242 });
     expect(L.list()).toHaveLength(1);
     platform.killTree.mockClear();
-    expect(L.kill(inst.id).ok).toBe(true);
+    expect((await L.kill(inst.id)).ok).toBe(true);
     expect(platform.killTree).toHaveBeenCalledWith(4242);
     expect(L.list()).toEqual([]);
-    expect(L.kill(inst.id).ok).toBe(false);
+    expect((await L.kill(inst.id)).ok).toBe(false);
   });
 
-  test('onChange 在新增與結束時都會被通知（UI 靠它更新）', () => {
+  test('onChange 在新增與結束時都會被通知（UI 靠它更新）', async () => {
     const seen = [];
     const L = new Launcher({ platform, userDataDir: 'C:\\UD', onChange: l => seen.push(l.length) });
     L._exists = () => true;
     const a = L._add({ name: 'A', mode: 'browser', routeId: 'r1', pid: 1 });
     L._add({ name: 'B', mode: 'engine', routeId: 'r1', pid: 2 });
-    L.kill(a.id);
+    await L.kill(a.id);
     expect(seen).toEqual([1, 2, 1]);
   });
 
@@ -140,5 +140,28 @@ describe('Launcher — 實例登記與結束', () => {
     const L = mk();
     const ids = [L._add({ name: 'A', pid: 1 }).id, L._add({ name: 'B', pid: 2 }).id];
     expect(new Set(ids).size).toBe(2);
+  });
+});
+
+describe('Launcher — profileDir 不能跳出 browser-profiles', () => {
+  test('`..` 與路徑分隔字元都被換掉', () => {
+    const L = mk();
+    expect(L.profileDir('..')).toBe('C:\\UD\\browser-profiles\\__');
+    expect(L.profileDir('../../x')).toBe('C:\\UD\\browser-profiles\\______x');
+    expect(L.profileDir('.')).toBe('C:\\UD\\browser-profiles\\_');
+  });
+
+  test('空 id 直接丟例外，不回傳 browser-profiles 本身', () => {
+    expect(() => mk().profileDir('')).toThrow();
+    expect(() => mk().profileDir(null)).toThrow();
+  });
+});
+
+describe('Launcher — _splitArgs', () => {
+  test('雙引號包住的參數保留空白', () => {
+    expect(mk()._splitArgs('--dir "C:\\Program Files\\x" -v')).toEqual(['--dir', 'C:\\Program Files\\x', '-v']);
+  });
+  test('多個空白不會產生空參數', () => {
+    expect(mk()._splitArgs('a   b')).toEqual(['a', 'b']);
   });
 });

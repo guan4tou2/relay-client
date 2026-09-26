@@ -305,3 +305,72 @@ describe('SingBoxEngine start/startBlock 分派（不實際 spawn）', () => {
     expect(e._userStopping).toBe(true);
   });
 });
+
+// 啟動中間隔著 validate 與清殘留兩個 await。以前 state 要到 spawn 前才變 starting，
+// 連點兩下就會 spawn 兩個 sing-box；停止或結束程式發生在 validate 期間也擋不住 spawn。
+describe('SingBoxEngine 啟動競態', () => {
+  const deferred = () => { let resolve; const p = new Promise(r => { resolve = r; }); return { p, resolve }; };
+  const mkReady = () => {
+    const e = mk();
+    e.binPath = process.execPath;              // 存在的檔案，過得了 existsSync
+    e.isElevated = () => true;
+    e.platform = { ...e.platform, staleEngineCleanupCommand: () => null, killTree: async () => {} };
+    return e;
+  };
+
+  test('同時呼叫兩次 start，只驗證（也只會 spawn）一次', async () => {
+    const e = mkReady();
+    const d = deferred(); let calls = 0;
+    e.validate = () => { calls++; return d.p; };
+    const a = e.start({ rules: [], routes: [] });
+    const b = e.start({ rules: [], routes: [] });
+    d.resolve({ ok: false, error: 'stop here' });   // 不讓它真的 spawn
+    const [ra, rb] = await Promise.all([a, b]);
+    expect(calls).toBe(1);
+    expect(ra).toBe(rb);
+    expect(e._inflight).toBe(null);
+  });
+
+  test('validate 期間被 stop()，之後不會 spawn', async () => {
+    const e = mkReady();
+    const d = deferred();
+    e.validate = () => d.p;
+    const p = e.start({ rules: [], routes: [] });
+    await e.stop();
+    d.resolve({ ok: true });
+    const r = await p;
+    expect(r.ok).toBe(false);
+    expect(r.cancelled).toBe(true);
+    expect(e.proc).toBe(null);
+    expect(e.state).toBe('off');
+  });
+
+  test('上一次啟動結束後可以再啟動（in-flight 會清掉）', async () => {
+    const e = mkReady();
+    let calls = 0;
+    e.validate = async () => { calls++; return { ok: false, error: 'x' }; };
+    await e.start({ rules: [], routes: [] });
+    await e.start({ rules: [], routes: [] });
+    expect(calls).toBe(2);
+  });
+});
+
+describe('SingBoxEngine 啟動 → 停止 → 再啟動', () => {
+  test('停止後馬上再啟動，不會拿到被作廢的那次結果（會真的重新啟動）', async () => {
+    const e = mk();
+    e.binPath = process.execPath;
+    e.isElevated = () => true;
+    e.platform = { ...e.platform, staleEngineCleanupCommand: () => null, killTree: async () => {} };
+    let calls = 0; let release;
+    e.validate = () => { calls++; return calls === 1 ? new Promise(r => { release = r; }) : Promise.resolve({ ok: false, error: 'second run' }); };
+    const first = e.start({ rules: [], routes: [] });
+    await e.stop();
+    const second = e.start({ rules: [], routes: [] });
+    release({ ok: true });
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(r1.cancelled).toBe(true);
+    expect(r2.cancelled).toBeUndefined();
+    expect(r2.error).toBe('設定無效：second run');   // 第二次真的跑了 validate
+    expect(calls).toBe(2);
+  });
+});

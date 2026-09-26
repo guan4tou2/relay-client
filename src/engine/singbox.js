@@ -84,6 +84,8 @@ class SingBoxEngine extends EventEmitter {
     this.state = 'off'; // off | starting | running
     this.tun = null;
     this.lastError = '';
+    this._gen = 0;          // stop() 的世代；_launch 用它判斷中途被喊停
+    this._inflight = null;  // 進行中的啟動（同時只允許一個）
   }
 
   _resolveBin() {
@@ -467,22 +469,50 @@ class SingBoxEngine extends EventEmitter {
     catch (e) { return { ok: false, error: (e.stderr || e.stdout || e.message || '').toString().trim() }; }
   }
 
-  async start(params) {
-    this._blocking = false;
-    return this._launch(this.generateConfig(params));
+  start(params) {
+    return this._launchOnce(() => { this._blocking = false; return this.generateConfig(params); });
   }
 
   // 斷線保護：引擎異常中止時，以 block 設定重啟 TUN，讓受保護程式 fail-closed（其餘 direct）。
-  async startBlock(params) {
-    this._blocking = true;
-    return this._launch(this.generateBlockConfig(params));
+  startBlock(params) {
+    return this._launchOnce(() => { this._blocking = true; return this.generateBlockConfig(params); });
   }
 
-  async _launch(cfg) {
+  // 同一時間只會有一個啟動在跑。state 要到 spawn 前才變成 starting，
+  // 中間隔著 validate 與清殘留兩個 await —— 連點兩下、或存規則與規則庫重載同時發生，
+  // 以前會 spawn 兩個 sing-box，第一個的 handle 被蓋掉，之後永遠殺不到。
+  // 進行中的啟動記著自己屬於哪個世代：stop() 之後的新 start 不能拿到被作廢的那一個
+  // （那會回 cancelled，使用者按了啟動卻什麼都沒發生）。要等舊的收完再重新啟動。
+  _launchOnce(makeCfg) {
+    if (this.state === 'running') return Promise.resolve({ ok: true });
+    const gen = this._gen;
+    if (this._inflight && this._inflight.gen === gen) return this._inflight.p;
+    const prev = this._inflight ? this._inflight.p : null;
+    const p = (async () => {
+      if (prev) { try { await prev; } catch (e) {} }
+      if (gen !== this._gen) return { ok: false, cancelled: true, error: '啟動已取消' };
+      if (this.state === 'running') return { ok: true };
+      return this._launch(makeCfg(), gen);
+    })();
+    const entry = { p, gen };
+    this._inflight = entry;
+    const clear = () => { if (this._inflight === entry) this._inflight = null; };
+    p.then(clear, clear);
+    return p;
+  }
+
+  async _launch(cfg, gen = this._gen) {
     if (this.state === 'running' || this.state === 'starting') return { ok: true };
     if (!fs.existsSync(this.binPath)) return { ok: false, error: 'sing-box 未安裝（找不到執行檔）' };
 
+    // stop() 會遞增 _gen。每個 await 之後都要確認沒有人在中途喊停，
+    // 否則「結束程式／按停止」發生在 validate 期間時，sing-box 會在停止之後才被 spawn。
+    const cancelled = () => gen !== this._gen;
+    const CANCELLED = { ok: false, cancelled: true, error: '啟動已取消' };
+    if (cancelled()) return CANCELLED;
+
     const check = await this.validate(cfg);
+    if (cancelled()) return CANCELLED;
     if (!check.ok) { this.lastError = check.error; return { ok: false, error: '設定無效：' + check.error }; }
 
     if (!this.isElevated()) {
@@ -499,6 +529,7 @@ class SingBoxEngine extends EventEmitter {
       try { await execFileP(cleanup.cmd, cleanup.args, { windowsHide: true, timeout: 4000 }); } catch (e) {}
       await new Promise(r => setTimeout(r, 300));
     }
+    if (cancelled()) return CANCELLED;
     const clean = this._forEngine(cfg);
     fs.writeFileSync(this.configPath, JSON.stringify(clean, null, 2));
 
@@ -543,6 +574,7 @@ class SingBoxEngine extends EventEmitter {
   }
 
   async stop() {
+    this._gen = (this._gen || 0) + 1;   // 作廢還沒 spawn 的啟動
     this._userStopping = true; // 標記為使用者主動停止 → exit 不觸發斷線保護
     if (this.proc) {
       // 先禮貌後強制：讓 sing-box 有機會移除 TUN 網卡與系統路由，逾時再殺，避免殘留把網路卡住。

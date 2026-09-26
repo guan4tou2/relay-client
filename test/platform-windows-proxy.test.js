@@ -14,9 +14,13 @@ beforeEach(() => {
   execFileSync.mockReset();
 });
 
+// reg 一律走 execFileSync('reg', [...])；refresh 走 execFileSync('powershell', [...])。
+const regCalls = () => execFileSync.mock.calls.filter(c => c[0] === 'reg').map(c => c[1]);
+const psCalls = () => execFileSync.mock.calls.filter(c => c[0] === 'powershell');
+
 describe('platform/windows systemProxy — getProxyState', () => {
   test('returns enabled=true when registry has 0x1', () => {
-    execSync
+    execFileSync
       .mockReturnValueOnce('    ProxyEnable    REG_DWORD    0x1\r\n')
       .mockReturnValueOnce('    ProxyServer    REG_SZ    127.0.0.1:10808\r\n');
 
@@ -26,7 +30,7 @@ describe('platform/windows systemProxy — getProxyState', () => {
   });
 
   test('returns enabled=false when registry has 0x0', () => {
-    execSync
+    execFileSync
       .mockReturnValueOnce('    ProxyEnable    REG_DWORD    0x0\r\n')
       .mockReturnValueOnce('    ProxyServer    REG_SZ    \r\n');
 
@@ -35,14 +39,14 @@ describe('platform/windows systemProxy — getProxyState', () => {
   });
 
   test('returns default when ProxyEnable query throws', () => {
-    execSync.mockImplementation(() => { throw new Error('not found'); });
+    execFileSync.mockImplementation(() => { throw new Error('not found'); });
     const state = winProxy.get();
     expect(state.enabled).toBe(false);
     expect(state.server).toBe('');
   });
 
   test('handles missing ProxyServer gracefully', () => {
-    execSync
+    execFileSync
       .mockReturnValueOnce('    ProxyEnable    REG_DWORD    0x1\r\n')
       .mockImplementationOnce(() => { throw new Error('not found'); });
 
@@ -53,89 +57,95 @@ describe('platform/windows systemProxy — getProxyState', () => {
 });
 
 describe('platform/windows systemProxy — enableProxy', () => {
-  test('sets ProxyEnable, ProxyServer, ProxyOverride and refreshes', () => {
-    execSync.mockReturnValue('');
+  test('sets ProxyServer, ProxyOverride, then ProxyEnable and refreshes', () => {
+    execFileSync.mockReturnValue('');
     const result = winProxy.enable(10808);
 
     expect(result.enabled).toBe(true);
     expect(result.server).toBe('127.0.0.1:10808');
 
-    // 先寫 server/override，最後才 Enable=1（避免停在「已啟用但指向壞位址」）。
-    // refresh 已改走 execFileSync，所以 execSync 只剩三個 reg add。
-    expect(execSync).toHaveBeenCalledTimes(3);
-    expect(execFileSync).toHaveBeenCalledTimes(1);
-
-    const calls = execSync.mock.calls.map(c => c[0]);
-    expect(calls[0]).toMatch(/ProxyServer.*127\.0\.0\.1:10808/);
-    expect(calls[1]).toMatch(/ProxyOverride/);
-    expect(calls[2]).toMatch(/ProxyEnable.*\/d 1/);
+    // 先寫 server/override，最後才 Enable=1（避免停在「已啟用但指向壞位址」）
+    const calls = regCalls();
+    expect(calls).toHaveLength(3);
+    expect(psCalls()).toHaveLength(1);
+    expect(calls[0]).toEqual(expect.arrayContaining(['add', 'ProxyServer', '127.0.0.1:10808']));
+    expect(calls[1]).toEqual(expect.arrayContaining(['add', 'ProxyOverride']));
+    expect(calls[2]).toEqual(expect.arrayContaining(['add', 'ProxyEnable', 'REG_DWORD', '1']));
   });
 
   test('uses the port number provided', () => {
-    execSync.mockReturnValue('');
+    execFileSync.mockReturnValue('');
     winProxy.enable(9999);
-
-    const serverCall = execSync.mock.calls[0][0];
-    expect(serverCall).toContain('127.0.0.1:9999');
+    expect(regCalls()[0]).toContain('127.0.0.1:9999');
   });
 
   test('includes common bypass addresses', () => {
-    execSync.mockReturnValue('');
+    execFileSync.mockReturnValue('');
     winProxy.enable(10808);
+    const override = regCalls()[1].join(' ');
+    expect(override).toContain('localhost');
+    expect(override).toContain('127.*');
+    expect(override).toContain('<local>');
+  });
 
-    const overrideCall = execSync.mock.calls[1][0];
-    expect(overrideCall).toContain('localhost');
-    expect(overrideCall).toContain('127.*');
-    expect(overrideCall).toContain('<local>');
+  // 埠號最終來自 renderer；以前是拼進 execSync 的字串，`1" & calc & "` 就能執行任意指令
+  test('不合法的埠直接丟例外，而且一個 reg 都不送', () => {
+    execFileSync.mockReturnValue('');
+    for (const bad of ['1" & calc & "', 0, 70000, 1.5, null]) {
+      expect(() => winProxy.enable(bad)).toThrow();
+    }
+    expect(regCalls()).toHaveLength(0);
+  });
+
+  test('不經 shell：execSync 完全沒被用到', () => {
+    execFileSync.mockReturnValue('');
+    winProxy.enable(10808);
+    winProxy.disable();
+    winProxy.get();
+    expect(execSync).not.toHaveBeenCalled();
   });
 });
 
 describe('platform/windows systemProxy — disableProxy', () => {
   test('sets ProxyEnable=0 and refreshes', () => {
-    execSync.mockReturnValue('');
+    execFileSync.mockReturnValue('');
     const result = winProxy.disable();
 
     expect(result.enabled).toBe(false);
     expect(result.server).toBe('');
-
-    // ProxyEnable=0 + refresh
-    expect(execSync).toHaveBeenCalledTimes(1);      // 只剩 ProxyEnable=0
-    expect(execFileSync).toHaveBeenCalledTimes(1);  // refresh
-    expect(execSync.mock.calls[0][0]).toMatch(/ProxyEnable.*\/d 0/);
+    expect(regCalls()).toHaveLength(1);
+    expect(regCalls()[0]).toEqual(expect.arrayContaining(['ProxyEnable', '0']));
+    expect(psCalls()).toHaveLength(1);
   });
 });
 
 describe('platform/windows systemProxy — refresh fallback', () => {
-  // refresh 現在走 execFileSync，所以要從那裡丟例外才測得到。
-  // 舊版是 mock execSync 的第 4 次呼叫 —— 改完之後 execSync 只剩 3 次，
-  // 那個例外永遠不會發生，測試變成空轉還照樣綠燈。
-  test('enableProxy succeeds even if refresh throws', () => {
-    execSync.mockReturnValue('');
-    execFileSync.mockImplementation(() => { throw new Error('powershell failed'); });
+  const failPowershell = () => execFileSync.mockImplementation((cmd) => {
+    if (cmd === 'powershell') throw new Error('powershell failed');
+    return '';
+  });
 
+  test('enableProxy succeeds even if refresh throws', () => {
+    failPowershell();
     const result = winProxy.enable(10808);
     expect(result.enabled).toBe(true);
-    expect(execFileSync).toHaveBeenCalled();
+    expect(psCalls().length).toBeGreaterThan(0);
   });
 
   test('disableProxy succeeds even if refresh throws', () => {
-    execSync.mockReturnValue('');
-    execFileSync.mockImplementation(() => { throw new Error('powershell failed'); });
-
+    failPowershell();
     const result = winProxy.disable();
     expect(result.enabled).toBe(false);
-    expect(execFileSync).toHaveBeenCalled();
+    expect(psCalls().length).toBeGreaterThan(0);
   });
 });
 
 describe('platform/windows systemProxy — registry calls use windowsHide', () => {
-  test('all execSync calls use windowsHide: true', () => {
-    execSync.mockReturnValue('');
+  test('all reg calls use windowsHide: true', () => {
+    execFileSync.mockReturnValue('');
     winProxy.enable(10808);
-
-    for (const call of execSync.mock.calls) {
-      const opts = call[1] || {};
-      expect(opts.windowsHide).toBe(true);
+    for (const call of execFileSync.mock.calls.filter(c => c[0] === 'reg')) {
+      expect((call[2] || {}).windowsHide).toBe(true);
     }
   });
 });
@@ -144,7 +154,7 @@ describe('platform/windows systemProxy — registry calls use windowsHide', () =
 // @" here-string 的換行變成字面的反斜線 n，PowerShell 每次都 parser error ——
 // 結果是登錄檔寫了但不生效，要等瀏覽器重啟。這幾條守住修正後的結構。
 describe('refresh()：WinInet 通知', () => {
-  const psCall = () => execFileSync.mock.calls.find(c => c[0] === 'powershell');
+  const psCall = () => psCalls()[0];
 
   test('走 execFileSync + 陣列參數，不是拼字串丟 shell', () => {
     winProxy.disable();
@@ -173,9 +183,9 @@ describe('refresh()：WinInet 通知', () => {
   });
 
   test('refresh 失敗不能影響登錄檔已寫入的事實', () => {
-    execFileSync.mockImplementation(() => { throw new Error('boom'); });
+    execFileSync.mockImplementation((cmd) => { if (cmd === 'powershell') throw new Error('boom'); return ''; });
     expect(() => winProxy.enable(1080)).not.toThrow();
     // 三個 reg add 都要有送出去
-    expect(execSync.mock.calls.filter(c => /reg add/.test(String(c[0])))).toHaveLength(3);
+    expect(regCalls().filter(a => a[0] === 'add')).toHaveLength(3);
   });
 });

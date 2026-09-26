@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const tls = require('tls');
 const crypto = require('crypto');
 const { URL } = require('url');
 
@@ -54,6 +55,19 @@ const fmtOf = f => (isSrs(f) ? 'binary' : 'source');
 // tag 會直接寫進 sing-box 設定並用來組檔名 → 只允許安全字元，擋掉路徑穿越
 const safeTag = t => /^[A-Za-z0-9!_.-]{1,64}$/.test(String(t || ''));
 
+// 先寫暫存檔再 rename：直接覆寫的話，磁碟滿或寫到一半失敗會留下一個壞掉的 .srs，
+// index 還指著它，下次啟動 sing-box 直接 FATAL。rename 在同一個目錄裡是原子的。
+function writeFileAtomic(file, data) {
+  const tmp = `${file}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+  try {
+    fs.writeFileSync(tmp, data);
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (err) {}
+    throw e;
+  }
+}
+
 class RuleSetStore {
   constructor(opts = {}) {
     this.dir = opts.dir;
@@ -74,7 +88,7 @@ class RuleSetStore {
 
   _writeIndex(list) {
     fs.mkdirSync(this.dir, { recursive: true });
-    fs.writeFileSync(this._indexPath(), JSON.stringify(list, null, 2));
+    writeFileAtomic(this._indexPath(), JSON.stringify(list, null, 2));
     return list;
   }
 
@@ -126,8 +140,12 @@ class RuleSetStore {
     catch (e) { return { ok: false, error: e.message }; }
 
     const file = item.tag + (isSrs(item.url) ? '.srs' : '.json');
-    fs.mkdirSync(this.dir, { recursive: true });
-    fs.writeFileSync(path.join(this.dir, file), buf);
+    if (!buf || !buf.length) return { ok: false, error: '下載到的規則庫是空的' };
+    if (!isSrs(file)) { try { JSON.parse(buf.toString('utf8')); } catch (e) { return { ok: false, error: '下載到的 .json 規則庫格式錯誤：' + e.message }; } }
+    try {
+      fs.mkdirSync(this.dir, { recursive: true });
+      writeFileAtomic(path.join(this.dir, file), buf);
+    } catch (e) { return { ok: false, error: '寫入規則庫失敗：' + e.message }; }
 
     const rec = {
       tag: item.tag, kind: item.kind, label: item.label || item.tag, url: item.url,
@@ -154,7 +172,7 @@ class RuleSetStore {
 
       const file = tag + ext;
       fs.mkdirSync(this.dir, { recursive: true });
-      fs.writeFileSync(path.join(this.dir, file), buf);
+      writeFileAtomic(path.join(this.dir, file), buf);
       const rec = {
         tag, kind: meta.kind || (/^geoip/i.test(tag) ? 'geoip' : 'geosite'), label: meta.label || tag,
         url: '', file, bytes: buf.length, sha256: crypto.createHash('sha256').update(buf).digest('hex'),
@@ -187,9 +205,15 @@ class RuleSetStore {
         hostname: u.hostname, path: u.pathname + u.search, port: 443,
         headers: { 'User-Agent': 'RelayClient', Accept: '*/*' },
         timeout: opts.timeout || 30000,
-        // 經由路由下載：用既有的 connectViaChain 建通道，再在上面跑 TLS
+        // 經由路由下載：用既有的 connectViaChain 建通道，再在上面跑 TLS。
+        // 給了 createConnection 又沒給 agent 時，https 模組會直接拿這個 socket 送請求、不會自己包 TLS ——
+        // 以前就是這樣，送到 443 的是明文 GET，經由路由下載從來沒成功過。
         ...(opts.hops && opts.hops.length && this.connectChain
-          ? { createConnection: (o, cb) => { this.connectChain(opts.hops, { host: u.hostname, port: 443 }).then(s => cb(null, s), cb); } }
+          ? { createConnection: (o, cb) => {
+              // 憑證驗證照預設（rejectUnauthorized: true）；失敗會以 'error' 傳到 req
+              this.connectChain(opts.hops, { host: u.hostname, port: 443 })
+                .then(raw => cb(null, tls.connect({ socket: raw, servername: u.hostname, ALPNProtocols: ['http/1.1'] })), cb);
+            } }
           : {}),
       }, res => {
         if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
