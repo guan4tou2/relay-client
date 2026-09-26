@@ -37,6 +37,7 @@ let routeManager = null;
 let engine = null;
 let ruleSets = null;
 let systemProxyEnabled = false;
+let systemProxyTargetPort = null;   // 系統代理目前指向哪個本地埠（停掉那條路由時要跟著處理）
 let startTime = null;
 
 // Debug log buffer（記憶體，供「紀錄」分頁即時顯示）
@@ -233,6 +234,13 @@ function systemProxyPort() {
   return (running.find(r => r.kind === 'http') || running[0]).localPort;
 }
 
+function resolveSystemProxyPort(requested) {
+  const n = Number(requested);
+  const running = routeManager ? routeManager.status().filter(r => r.running) : [];
+  if (Number.isInteger(n) && running.some(r => r.localPort === n)) return n;
+  return systemProxyPort();
+}
+
 // 系統代理狀態變了就告訴視窗一聲。少了這個，從系統匣切換之後主視窗的開關
 // 還停在舊狀態，使用者看到的跟實際的不一樣。
 function sendSystemProxyState() {
@@ -258,8 +266,8 @@ function updateTrayMenu() {
       enabled: systemProxyEnabled || !!port,
       click: () => {
         try {
-          if (systemProxyEnabled) { systemProxy.disable(); systemProxyEnabled = false; }
-          else if (port) { systemProxy.enable(port); systemProxyEnabled = true; }
+          if (systemProxyEnabled) { systemProxy.disable(); systemProxyEnabled = false; systemProxyTargetPort = null; }
+          else if (port) { systemProxy.enable(port); systemProxyEnabled = true; systemProxyTargetPort = port; }
         } catch (e) { addLog('error', 'system', `系統匣切換系統代理失敗：${e.message}`); }
         updateTrayMenu();
         sendSystemProxyState();
@@ -380,19 +388,27 @@ ipcMain.handle('delete-server', (_e, id) => {
   return true;
 });
 ipcMain.handle('toggle-system-proxy', (_e, enable, port) => {
-  if (enable) {
-    // 呼叫端沒指定就自己找一個跑著的路由；再找不到就不動手，
-    // 免得把整台機器指到一個沒人在聽的埠。
-    const target = port || systemProxyPort();
-    if (!target) return { systemProxyEnabled, error: '沒有路由在跑' };
-    systemProxy.enable(target);
-    systemProxyEnabled = true;
-  } else {
-    systemProxy.disable();
-    systemProxyEnabled = false;
+  try {
+    if (enable) {
+      // 只接受「正在跑的路由」的埠：這個值會寫進系統設定（Windows 還是拼進 reg 指令），
+      // 而且指到沒人在聽的埠整台機器就上不了網。不合的一律改用自己挑的那條。
+      const target = resolveSystemProxyPort(port);
+      if (!target) return { systemProxyEnabled, error: '沒有路由在跑' };
+      systemProxy.enable(target);
+      systemProxyEnabled = true;
+      systemProxyTargetPort = target;
+    } else {
+      systemProxy.disable();
+      systemProxyEnabled = false;
+      systemProxyTargetPort = null;
+    }
+  } catch (e) {
+    addLog('error', 'win-proxy', `切換系統代理失敗：${e.message}`);
+    return { systemProxyEnabled, error: e.message };
+  } finally {
+    sendSystemProxyState();
+    updateTrayMenu();
   }
-  sendSystemProxyState();
-  updateTrayMenu();
   return { systemProxyEnabled };
 });
 
@@ -685,7 +701,8 @@ ipcMain.handle('route-stop', async (_e, id) => {
 });
 
 // 新增/更新單一路由（只 persist，不自動啟動；由 renderer 決定啟停）
-ipcMain.handle('save-route', (_e, route) => {
+ipcMain.handle('save-route', (_e, input) => {
+  const route = RouteManager.normalizeRouteDef(input);
   const routes = config.getRoutes();
   const i = routes.findIndex(r => r.id === route.id);
   if (i >= 0) routes[i] = route; else routes.push(route);
@@ -728,6 +745,14 @@ ipcMain.handle('launch-instance', async (_e, d = {}) => {
     if (!def) return { ok: false, error: '找不到該路由' };
     const r = resolveRoute(def);
     if (!r.hops || r.hops.length === 0) return { ok: false, error: '此路由沒有有效跳點（先在路由裡加伺服器）' };
+    if (d.mode !== 'browser') {
+      // exePath 來自 renderer，交給 spawn 之前至少確認它是一個實際存在的絕對路徑
+      const exePath = typeof d.exePath === 'string' ? d.exePath.trim() : '';
+      if (!exePath || !platform.path.isAbsolute(exePath) || !fs.existsSync(exePath)) {
+        return { ok: false, error: '找不到這支程式，請重新選擇' };
+      }
+      d.exePath = exePath;
+    }
     setupRouteManager();
     if (!routeManager.isRunning(def.id)) {
       if (!(await checkPortFree(r.localPort))) return { ok: false, error: `本地埠 ${r.localPort} 已被占用，無法啟動路由` };
@@ -761,8 +786,8 @@ ipcMain.handle('browser-info', () => { const b = findBrowser(); return b ? { nam
 // 這條路由有沒有留下瀏覽器 profile（沒有就不用多問一句）
 ipcMain.handle('route-profile-info', (_e, id) => {
   try {
-    const dir = path.join(app.getPath('userData'), 'browser-profiles', String(id).replace(/[^\w.-]/g, '_'));
-    return { exists: fs.existsSync(dir) };
+    if (!RouteManager.isValidRouteId(id)) return { exists: false };
+    return { exists: fs.existsSync(setupLauncher().profileDir(id)) };
   } catch (e) { return { exists: false }; }
 });
 
@@ -773,7 +798,8 @@ ipcMain.handle('delete-route', async (_e, id, opts) => {
   // 不問就刪等於連帶把使用者在那個視窗裡的登入狀態一起清掉。
   if (opts && opts.keepProfile) { sendRouteStatus(); return config.getRoutes(); }
   try {
-    const dir = path.join(app.getPath('userData'), 'browser-profiles', String(id).replace(/[^\w.-]/g, '_'));
+    if (!RouteManager.isValidRouteId(id)) throw new Error(`路由 id 不合法，不清除 profile：${String(id).slice(0, 80)}`);
+    const dir = setupLauncher().profileDir(id);
     if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); addLog('info', 'launch', `已清除路由 ${id} 的瀏覽器 profile`); }
   } catch (e) { addLog('warn', 'launch', `清除瀏覽器 profile 失敗：${e.message}`); }
   sendRouteStatus();

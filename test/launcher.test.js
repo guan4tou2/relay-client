@@ -142,3 +142,26 @@ describe('Launcher — 實例登記與結束', () => {
     expect(new Set(ids).size).toBe(2);
   });
 });
+
+describe('Launcher — profileDir 不能跳出 browser-profiles', () => {
+  test('`..` 與路徑分隔字元都被換掉', () => {
+    const L = mk();
+    expect(L.profileDir('..')).toBe('C:\\UD\\browser-profiles\\__');
+    expect(L.profileDir('../../x')).toBe('C:\\UD\\browser-profiles\\______x');
+    expect(L.profileDir('.')).toBe('C:\\UD\\browser-profiles\\_');
+  });
+
+  test('空 id 直接丟例外，不回傳 browser-profiles 本身', () => {
+    expect(() => mk().profileDir('')).toThrow();
+    expect(() => mk().profileDir(null)).toThrow();
+  });
+});
+
+describe('Launcher — _splitArgs', () => {
+  test('雙引號包住的參數保留空白', () => {
+    expect(mk()._splitArgs('--dir "C:\\Program Files\\x" -v')).toEqual(['--dir', 'C:\\Program Files\\x', '-v']);
+  });
+  test('多個空白不會產生空參數', () => {
+    expect(mk()._splitArgs('a   b')).toEqual(['a', 'b']);
+  });
+});

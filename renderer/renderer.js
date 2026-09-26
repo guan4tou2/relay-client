@@ -2259,21 +2259,27 @@ async function doImport(servers, routes, overwrite) {
     }
     const known = new Set([...curServers.map(c => c.id), ...idMap.values()]);
     let nr = 0, lostHops = 0;
+    let badRoutes = 0;
     for (const r of routes) {
       if (!r || !r.id) continue;
-      const dup = curRoutes.find(c => c.id === r.id || String(c.localPort) === String(r.localPort));
+      const port = Number(r.localPort);
+      if (!Number.isInteger(port) || port < 1 || port > 65535 || (r.kind && r.kind !== 'socks5' && r.kind !== 'http')) { badRoutes++; continue; }
+      // 匯入檔是外部資料：id 會拿去組 profile 目錄，不合格式的換一個新的
+      const id = /^[\w-]{1,64}$/.test(String(r.id)) ? String(r.id) : 'r-' + Date.now() + '-' + nr;
+      const dup = curRoutes.find(c => c.id === id || String(c.localPort) === String(port));
       if (dup && !overwrite) { skipped++; continue; }
       // 舊版匯出檔沒有伺服器 id，對不回去的跳點只能拿掉，並在結果裡講明
-      const hops = (r.hops || []).map(h => idMap.get(h) || (known.has(h) ? h : null));
+      const hops = (Array.isArray(r.hops) ? r.hops : []).map(h => idMap.get(h) || (known.has(h) ? h : null));
       lostHops += hops.filter(h => !h).length;
-      await window.api.saveRoute({ ...r, hops: hops.filter(Boolean) }); nr++;
+      await window.api.saveRoute({ id, label: String(r.label || ''), localPort: port, kind: r.kind || 'socks5', hops: hops.filter(Boolean), enabled: r.enabled !== false }); nr++;
     }
     state.servers = await window.api.getServers();
     state.routes = await window.api.getRoutes();
     if (!state.sel && state.routes[0]) state.sel = state.routes[0].id;
     renderSidebar(); showTab(state.tab);
     flash(`已匯入 ${ns} 台伺服器 · ${nr} 條路由` + (skipped ? `（略過 ${skipped} 筆重複）` : '')
-      + (lostHops ? `；${lostHops} 個跳點對不到伺服器，已移除，請重新設定` : ''), lostHops ? 'var(--amber)' : undefined);
+      + (lostHops ? `；${lostHops} 個跳點對不到伺服器，已移除，請重新設定` : '')
+      + (badRoutes ? `；${badRoutes} 條路由格式不正確，已略過` : ''), (lostHops || badRoutes) ? 'var(--amber)' : undefined);
   } catch (err) { flash('匯入失敗：' + err.message, 'var(--red)'); }
 }
 

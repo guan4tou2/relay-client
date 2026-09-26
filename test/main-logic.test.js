@@ -207,3 +207,47 @@ describe('main.js — toggle-system-proxy 的埠來源', () => {
     expect(r.systemProxyEnabled).toBe(false);
   });
 });
+
+describe('main.js — save-route / delete-route 的路由 id 防護', () => {
+  const fs = require('fs');
+
+  test('save-route 擋掉 id 是 `..` 的路由', async () => {
+    expect(() => ipcHandlers['save-route'](null, { id: '..', localPort: 10808, kind: 'socks5', hops: [] })).toThrow(/id/);
+  });
+
+  test('save-route 擋掉不合法的埠', async () => {
+    expect(() => ipcHandlers['save-route'](null, { id: 'r-x', localPort: 99999, kind: 'socks5', hops: [] })).toThrow();
+  });
+
+  test('delete-route 對不合法的 id 絕不呼叫 rmSync', async () => {
+    const rm = jest.spyOn(fs, 'rmSync').mockImplementation(() => {});
+    const ex = jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+    try {
+      await ipcHandlers['delete-route'](null, '..', {});
+      expect(rm).not.toHaveBeenCalled();
+    } finally { rm.mockRestore(); ex.mockRestore(); }
+  });
+
+  test('delete-route 對合法的 id 只刪 browser-profiles 底下那一層', async () => {
+    const path = require('path');
+    const rm = jest.spyOn(fs, 'rmSync').mockImplementation(() => {});
+    const ex = jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+    try {
+      await ipcHandlers['delete-route'](null, 'r-123', {});
+      expect(rm).toHaveBeenCalledTimes(1);
+      const target = rm.mock.calls[0][0];
+      expect(path.basename(path.dirname(target))).toBe('browser-profiles');
+      expect(path.basename(target)).toBe('r-123');
+    } finally { rm.mockRestore(); ex.mockRestore(); }
+  });
+});
+
+describe('main.js — toggle-system-proxy 不信任 renderer 傳來的埠', () => {
+  test('帶一個不是路由的埠（或注入字串）也不會寫進系統設定', async () => {
+    const { systemProxy } = require('../src/platform').current;
+    systemProxy.enable.mockClear();
+    const r = await ipcHandlers['toggle-system-proxy'](null, true, '1" & calc & "');
+    expect(systemProxy.enable).not.toHaveBeenCalled();
+    expect(r.error).toBeTruthy();
+  });
+});

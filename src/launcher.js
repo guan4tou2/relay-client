@@ -54,8 +54,11 @@ class Launcher {
     return args;
   }
 
+  // 不放行 `.`：`..` 會讓目錄跳出 browser-profiles，刪路由時等於刪掉整個 userData。
   profileDir(routeId) {
-    return this.path.join(this.userDataDir, 'browser-profiles', String(routeId).replace(/[^\w.-]/g, '_'));
+    const name = String(routeId == null ? '' : routeId).replace(/[^\w-]/g, '_');
+    if (!name) throw new Error('路由 id 不合法');
+    return this.path.join(this.userDataDir, 'browser-profiles', name);
   }
 
   // 瀏覽器的啟動參數。抽出來是為了讓「將執行」預覽與實際啟動用同一份，不會對不上。
