@@ -252,14 +252,22 @@ describe('main.js — toggle-system-proxy 不信任 renderer 傳來的埠', () =
   });
 });
 
+// SingBoxEngine 在 main.js 裡是單例：第一次 setupEngine() 掛上的事件處理器要記下來給之後的測試用。
+// 照常註冊（呼叫原本的 on），只是順便抄一份。
+const engineHandlers = {};
+{
+  const SingBoxEngine = require('../src/engine/singbox');
+  const realOn = SingBoxEngine.prototype.on;
+  jest.spyOn(SingBoxEngine.prototype, 'on').mockImplementation(function (ev, fn) { engineHandlers[ev] = fn; return realOn.call(this, ev, fn); });
+}
+
 // 斷線保護觸發後使用者按「停止」：以前 engine-stop 不清重試計時器，
 // 4 秒內計時器看到 tripped 還是 true，就違背使用者的意思把引擎重新拉起來。
 describe('main.js — engine-stop 會解除斷線保護與重試計時器', () => {
   test('觸發 → 停止 → tripped 歸零，而且計時器到期也不會再 start', async () => {
     jest.useFakeTimers();
     const SingBoxEngine = require('../src/engine/singbox');
-    const handlers = {};
-    const onSpy = jest.spyOn(SingBoxEngine.prototype, 'on').mockImplementation(function (ev, fn) { handlers[ev] = fn; return this; });
+    const handlers = engineHandlers;
     const startBlock = jest.spyOn(SingBoxEngine.prototype, 'startBlock').mockResolvedValue({ ok: true });
     const start = jest.spyOn(SingBoxEngine.prototype, 'start').mockResolvedValue({ ok: true });
     const stop = jest.spyOn(SingBoxEngine.prototype, 'stop').mockResolvedValue({ ok: true });
@@ -278,9 +286,52 @@ describe('main.js — engine-stop 會解除斷線保護與重試計時器', () =
       await jest.advanceTimersByTimeAsync(10000);
       expect(start).not.toHaveBeenCalled();
     } finally {
-      onSpy.mockRestore(); startBlock.mockRestore(); start.mockRestore(); stop.mockRestore();
+      startBlock.mockRestore(); start.mockRestore(); stop.mockRestore();
       await ipcHandlers['update-settings'](null, { killSwitch: false });
       jest.useRealTimers();
     }
+  });
+});
+
+describe('main.js — 斷線保護重連失敗要回到封鎖模式', () => {
+  test('自動重連 start 失敗 → 再次 startBlock，blocking 仍為 true', async () => {
+    jest.useFakeTimers();
+    const SingBoxEngine = require('../src/engine/singbox');
+    const handlers = engineHandlers;
+    const startBlock = jest.spyOn(SingBoxEngine.prototype, 'startBlock').mockResolvedValue({ ok: true });
+    const start = jest.spyOn(SingBoxEngine.prototype, 'start').mockResolvedValue({ ok: false, error: 'boom' });
+    const stop = jest.spyOn(SingBoxEngine.prototype, 'stop').mockResolvedValue({ ok: true });
+    try {
+      await ipcHandlers['update-settings'](null, { killSwitch: true, killSwitchAutoReconnect: true });
+      ipcHandlers['get-engine-status']();
+      handlers.exit(1);
+      await Promise.resolve(); await Promise.resolve();
+      expect(startBlock).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(4100);   // 第一次自動重連
+      expect(start).toHaveBeenCalled();
+      expect(startBlock).toHaveBeenCalledTimes(2); // 失敗後回封鎖模式
+      const ks = await ipcHandlers['get-killswitch']();
+      expect(ks.tripped).toBe(true);
+      expect(ks.blocking).toBe(true);
+      await ipcHandlers['engine-stop']();
+    } finally {
+      startBlock.mockRestore(); start.mockRestore(); stop.mockRestore();
+      await ipcHandlers['update-settings'](null, { killSwitch: false });
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe('main.js — 啟動途中按停止', () => {
+  test('engine-start 還在帶路由時按了停止，之後不會再呼叫 engine.start', async () => {
+    const SingBoxEngine = require('../src/engine/singbox');
+    const start = jest.spyOn(SingBoxEngine.prototype, 'start').mockResolvedValue({ ok: true });
+    try {
+      const p = ipcHandlers['engine-start']();
+      await ipcHandlers['engine-stop']();
+      const r = await p;
+      expect(r.cancelled).toBe(true);
+      expect(start).not.toHaveBeenCalled();
+    } finally { start.mockRestore(); }
   });
 });

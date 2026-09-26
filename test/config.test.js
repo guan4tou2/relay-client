@@ -385,3 +385,63 @@ describe('config — migrateTlsDefaults（HTTPS 伺服器沿用舊的不驗證�
     expect(mockStore.get('servers')[0].tlsInsecure).toBeUndefined();
   });
 });
+
+describe('config — 解不開的密文不會被存檔蓋掉', () => {
+  const pw = tag => `${tag}-${process.pid}`;
+  const good = { encrypt: s => Buffer.from('X' + s), decrypt: b => { const t = b.toString(); if (!t.startsWith('X')) throw new Error('bad'); return t.slice(1); } };
+  const other = { encrypt: s => Buffer.from('Y' + s), decrypt: () => { throw new Error('wrong key'); } };
+  beforeEach(() => mockStore.set('creds', []));
+  afterEach(() => config.setCipher(null));
+
+  test('憑證庫：換了金鑰之後讀到空密碼，原樣存回去不會清掉密文', () => {
+    config.setCipher(good);
+    config.saveCreds([{ id: 'c1', name: 'A', user: 'u', pass: pw('a') }]);
+    const sealed = mockStore.get('creds')[0].pass;
+    config.setCipher(other);
+    const seen = config.getCreds();
+    expect(seen[0].pass).toBe('');
+    config.saveCreds(seen.map(c => ({ ...c, name: 'renamed' })));
+    expect(mockStore.get('creds')[0].pass).toBe(sealed);
+    config.setCipher(good);
+    expect(config.getCreds()[0].pass).toBe(pw('a'));
+  });
+
+  test('伺服器：同上；但使用者真的輸入新密碼時照常覆寫', () => {
+    config.setCipher(good);
+    const s = config.addServer({ host: 'h', port: 1, password: pw('b') });
+    const sealed = mockStore.get('servers')[0].password;
+    config.setCipher(other);
+    config.updateServer(s.id, { name: 'x', password: '' });
+    expect(mockStore.get('servers')[0].password).toBe(sealed);
+    config.setCipher(good);
+    config.updateServer(s.id, { password: pw('c') });
+    expect(config.getServer(s.id).password).toBe(pw('c'));
+  });
+});
+
+describe('config — migrateRouteIds（舊版匯入留下的路由 id）', () => {
+  test('不合格式的 id 換新，規則／預設走向／全域目標／下載路由的引用一起改；缺 kind 補 socks5', () => {
+    mockStore.set('settings', {
+      routes: [
+        { id: 'r-ok', localPort: 1, kind: 'http', hops: [] },
+        { id: 'r.1', localPort: 2, hops: [] },
+        { id: '..', localPort: 3, kind: 'socks5', hops: [] },
+      ],
+      split: { schema: 2, rules: [{ id: 'u1', target: 'r.1' }, { id: 'u2', target: 'direct' }], defaultTarget: '..', globalTarget: 'r.1' },
+      rulesetDetourRouteId: '..',
+    });
+    expect(config.migrateRouteIds()).toBe(3);   // 2 個 id + 1 個 kind
+    const st = mockStore.get('settings');
+    const ids = st.routes.map(r => r.id);
+    expect(ids[0]).toBe('r-ok');
+    for (const id of ids) expect(id).toMatch(/^[\w-]{1,64}$/);
+    expect(new Set(ids).size).toBe(3);
+    expect(st.routes[1].kind).toBe('socks5');
+    expect(st.split.rules[0].target).toBe(ids[1]);
+    expect(st.split.rules[1].target).toBe('direct');
+    expect(st.split.globalTarget).toBe(ids[1]);
+    expect(st.split.defaultTarget).toBe(ids[2]);
+    expect(st.rulesetDetourRouteId).toBe(ids[2]);
+    expect(config.migrateRouteIds()).toBe(0);
+  });
+});

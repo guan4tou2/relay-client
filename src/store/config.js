@@ -79,6 +79,15 @@ function unseal(v) {
   catch (e) { decryptFailures++; return ''; }
 }
 
+// 解不開的密文：畫面上看到的是空字串。使用者沒動密碼欄就存檔時，送回來的也是空字串 ——
+// 直接存下去就把原本的密文永久蓋掉了（金鑰圈換了、之後又換回來的話本來還救得回來）。
+function isUndecryptable(v) {
+  if (typeof v !== 'string' || !v.startsWith(ENC_PREFIX)) return false;
+  if (!cipher) return true;
+  try { cipher.decrypt(Buffer.from(v.slice(ENC_PREFIX.length), 'base64')); return false; } catch (e) { return true; }
+}
+const keepOrSeal = (incoming, stored) => (incoming === '' && isUndecryptable(stored) ? stored : seal(incoming));
+
 const rawServers = () => store.get('servers') || [];
 const openServer = s => (s && s.password ? { ...s, password: unseal(s.password) } : s);
 const sealServer = s => (s && s.password ? { ...s, password: seal(s.password) } : s);
@@ -118,7 +127,7 @@ function updateServer(id, updates) {
   const idx = servers.findIndex(s => s.id === id);
   if (idx === -1) return null;
   const patch = { ...updates };
-  if ('password' in patch) patch.password = seal(patch.password);
+  if ('password' in patch) patch.password = keepOrSeal(patch.password, servers[idx].password);
   servers[idx] = { ...servers[idx], ...patch, id };
   store.set('servers', servers);
   return openServer(servers[idx]);
@@ -243,10 +252,11 @@ function getCreds() {
 
 function saveCreds(list) {
   if (!Array.isArray(list)) throw new Error('憑證資料不合法');
-  const clean = list.filter(c => c && typeof c === 'object').map(c => ({
-    id: str(c.id, 64) || 'c' + Date.now() + Math.random().toString(36).slice(2, 6),
-    name: str(c.name, 200), user: str(c.user), pass: seal(str(c.pass)), note: str(c.note),
-  }));
+  const stored = new Map((Array.isArray(store.get('creds')) ? store.get('creds') : []).map(c => [c && c.id, c && c.pass]));
+  const clean = list.filter(c => c && typeof c === 'object').map(c => {
+    const id = str(c.id, 64) || 'c' + Date.now() + Math.random().toString(36).slice(2, 6);
+    return { id, name: str(c.name, 200), user: str(c.user), pass: keepOrSeal(str(c.pass), stored.get(id)), note: str(c.note) };
+  });
   store.set('creds', clean);
   return getCreds();
 }
@@ -280,6 +290,42 @@ function migrateTlsDefaults() {
   return n;
 }
 
+// 舊版匯入會把檔案裡的路由 id 原樣存進來；現在 save-route 只收 ^[\w-]{1,64}$
+// （id 會拿去組 profile 目錄，刪路由時整個 rmSync）。不合格式的 id 換成新的，
+// 並把分流規則、預設走向、全域目標、規則庫下載路由裡的引用一起改掉。缺 kind 的補 socks5。
+const ROUTE_ID_OK = /^[\w-]{1,64}$/;
+function migrateRouteIds() {
+  const settings = getSettings();
+  const routes = Array.isArray(settings.routes) ? settings.routes : [];
+  const map = new Map();
+  let fixedKind = 0;
+  const used = new Set(routes.map(r => r && r.id).filter(id => ROUTE_ID_OK.test(String(id))));
+  const next = routes.map((r, i) => {
+    if (!r || typeof r !== 'object') return r;
+    let out = r;
+    if (!ROUTE_ID_OK.test(String(r.id))) {
+      let id = 'r-' + (String(r.id).replace(/[^\w-]/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'migrated') ;
+      while (used.has(id)) id = `${id}-${i}`;
+      used.add(id);
+      map.set(r.id, id);
+      out = { ...out, id };
+    }
+    if (out.kind !== 'socks5' && out.kind !== 'http') { out = { ...out, kind: 'socks5' }; fixedKind++; }
+    return out;
+  });
+  if (!map.size && !fixedKind) return 0;
+  const re = t => (map.has(t) ? map.get(t) : t);
+  const patch = { routes: next };
+  if (settings.split) {
+    const sp = settings.split;
+    patch.split = { ...sp, rules: (sp.rules || []).map(r => (r && map.has(r.target) ? { ...r, target: re(r.target) } : r)),
+      defaultTarget: re(sp.defaultTarget), globalTarget: re(sp.globalTarget) };
+  }
+  if (map.has(settings.rulesetDetourRouteId)) patch.rulesetDetourRouteId = re(settings.rulesetDetourRouteId);
+  updateSettings(patch);
+  return map.size + fixedKind;
+}
+
 function reorderServers(orderedIds) {
   const servers = rawServers();
   const map = new Map(servers.map(s => [s.id, s]));
@@ -296,7 +342,7 @@ module.exports = {
   getRoutes, setRoutes,
   getSplit, saveSplit,
   getCreds, saveCreds,
-  setCipher, migrateSecrets, migrateTlsDefaults,
+  setCipher, migrateSecrets, migrateTlsDefaults, migrateRouteIds,
   decryptFailures: () => decryptFailures,
   recoveredFrom: () => recoveredFrom,
 };

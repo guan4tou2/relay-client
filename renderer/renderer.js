@@ -104,11 +104,21 @@ const DIALOGS = [
   { root: 'lsPanel' }, { root: 'spSheetPanel' }, { root: 'ssPanel' }, { root: 'rdPanel' },
 ];
 const FOCUSABLE = 'button:not([disabled]),input:not([disabled]):not([type="hidden"]),textarea:not([disabled]),select:not([disabled]),summary,a[href],[tabindex]:not([tabindex="-1"])';
-const focusStack = [];      // [{ root, el, ret: { el, id } }]
-const lastFocusIn = {};     // root → 對話框裡最後一個有焦點的元素 id（重畫後接回去）
+const focusStack = [];      // [{ root, el, ret }]；ret = 關掉之後焦點要回去的元素 { el, key }
+const lastFocusIn = {};     // root → 對話框裡最後一個有焦點的元素選擇器（重畫後接回去）
 
 const topDialog = () => { for (const d of DIALOGS) { const el = $(d.root); if (el) return { d, el }; } return null; };
 const focusablesIn = el => [...el.querySelectorAll(FOCUSABLE)].filter(x => x.getClientRects().length);
+
+// 重畫之後元素是新的，要靠選擇器找回「同一顆」：有 id 用 id，沒有就用第一個 data-* 屬性
+// （路由列、上移／下移、跳點這些按鈕都只有 data-*）
+function focusKey(el) {
+  if (!el || el === document.body || !el.getAttribute) return null;
+  if (el.id) return '#' + CSS.escape(el.id);
+  for (const a of el.attributes) if (a.name.startsWith('data-')) return `[${a.name}="${CSS.escape(a.value)}"]`;
+  return null;
+}
+const findByKey = (key, scope = document) => { try { return key ? scope.querySelector(key) : null; } catch (e) { return null; } };
 
 function dialogInitial(d, el) {
   const pick = d.initial && d.initial();
@@ -130,34 +140,37 @@ function decorateDialog(d, el) {
   if (!el.hasAttribute('tabindex')) el.tabIndex = -1;   // 沒有可聚焦元素時至少能把焦點放在框上
 }
 
-function restoreFocus(ret) {
-  if (!ret) return;
-  const t = (ret.el && ret.el.isConnected) ? ret.el : (ret.id ? $(ret.id) : null);
-  if (t && t.focus) t.focus();
+function restoreFocus(ret, scope) {
+  if (!ret) return false;
+  const t = (ret.el && ret.el.isConnected && (!scope || scope.contains(ret.el))) ? ret.el : findByKey(ret.key, scope || document);
+  if (t && t.focus) { t.focus(); return true; }
+  return false;
 }
 
 function syncDialogFocus() {
-  // 1. 已經不在畫面上的對話框出棧，焦點還給開它之前的元素
-  while (focusStack.length && !$(focusStack[focusStack.length - 1].root)) {
-    const gone = focusStack.pop();
-    const under = topDialog();
-    if (under && !under.el.contains(gone.ret.el) && !(gone.ret.id && under.el.querySelector('#' + CSS.escape(gone.ret.id)))) {
-      const t = dialogInitial(under.d, under.el); if (t) t.focus();
-    } else restoreFocus(gone.ret);
-  }
+  // 1. 已經不在畫面上的對話框出棧。一次關掉好幾層時，焦點回到最底下那層的開啟者
+  let popped = null;
+  while (focusStack.length && !$(focusStack[focusStack.length - 1].root)) popped = focusStack.pop();
   const top = topDialog();
+  const cur = focusStack[focusStack.length - 1];
+  if (popped && (!top || (cur && cur.root === top.d.root))) {
+    // 回到底下那層（或回到主畫面）：還給開啟者；開啟者不在底下那層裡就聚焦那層的預設元素
+    if (!restoreFocus(popped.ret, top ? top.el : null) && top) { const t = dialogInitial(top.d, top.el); if (t) t.focus(); }
+  }
   if (!top) return;
   decorateDialog(top.d, top.el);
-  const cur = focusStack[focusStack.length - 1];
   if (!cur || cur.root !== top.d.root) {
+    // 新的一層。若是同一批裡取代了剛關掉的那層（例如關掉 A 面板、打開 B 面板），沿用 A 的返回目標，
+    // 不然這時的 activeElement 可能在 B 裡面，關掉 B 之後焦點就掉到 body
     const a = document.activeElement;
-    focusStack.push({ root: top.d.root, el: top.el, ret: { el: a, id: a && a.id } });
+    const ret = popped && (!a || a === document.body || top.el.contains(a)) ? popped.ret : { el: a, key: focusKey(a) };
+    focusStack.push({ root: top.d.root, el: top.el, ret });
     delete lastFocusIn[top.d.root];
   }
   focusStack[focusStack.length - 1].el = top.el;
   // 2. 焦點不在最上層對話框裡（剛打開，或整塊重畫把原本的元素換掉了）→ 接回去
   if (!top.el.contains(document.activeElement)) {
-    const back = lastFocusIn[top.d.root] && top.el.querySelector('#' + CSS.escape(lastFocusIn[top.d.root]));
+    const back = findByKey(lastFocusIn[top.d.root], top.el);
     const t = back || dialogInitial(top.d, top.el);
     if (t) t.focus({ preventScroll: true });
   }
@@ -169,7 +182,8 @@ function initDialogFocus() {
     .forEach(id => { const m = $(id); if (m) mo.observe(m, { childList: true }); });
   document.addEventListener('focusin', e => {
     const top = topDialog();
-    if (top && top.el.contains(e.target) && e.target.id) lastFocusIn[top.d.root] = e.target.id;
+    const key = top && top.el.contains(e.target) ? focusKey(e.target) : null;
+    if (key) lastFocusIn[top.d.root] = key;
   });
   document.addEventListener('keydown', e => {
     const top = topDialog();
@@ -1037,9 +1051,14 @@ function doDeleteServer(id) {
   window.api.deleteServer(id).then(async () => {
     state.servers = await window.api.getServers();
     // 從各路由 hops 移除此伺服器並 persist
+    // 一條存不進去不能讓其他路由停在指向已刪除伺服器的狀態：逐條處理、失敗的列出來
+    const failed = [];
     for (const r of state.routes) {
-      if (r.hops.includes(id)) { r.hops = r.hops.filter(h => h !== id); await window.api.saveRoute(r); }
+      if (!r.hops.includes(id)) continue;
+      try { await window.api.saveRoute({ ...r, hops: r.hops.filter(h => h !== id) }); }
+      catch (e) { failed.push(r.label || r.id); }
     }
+    if (failed.length) flash(`以下路由沒能移除這個跳點：${failed.join('、')}`, 'var(--red)');
     state.routes = await window.api.getRoutes();
     renderSidebar(); showTab(state.tab); flash('已刪除伺服器');
   }).catch(e => flash('刪除伺服器失敗：' + (e && e.message || e), 'var(--red)'));
@@ -2785,6 +2804,7 @@ async function boot() {
   // 主視窗的開關還停在舊狀態，使用者看到的跟實際的不一樣。
   if (window.api.onSystemProxy) window.api.onSystemProxy(s => {
     if (!s) return;
+    if (s.notice) flash(s.notice, 'var(--amber)');   // 主行程自己關掉系統代理時要讓使用者知道
     state.sys = !!s.enabled;
     if (state.tab === 'dashboard') updateDashboard();
   });

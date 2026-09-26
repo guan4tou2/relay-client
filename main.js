@@ -250,25 +250,20 @@ function syncSystemProxyFromOS() {
   } catch (e) { /* 讀不到就維持預設 */ }
 }
 
-// 系統代理指向的那條路由不在跑了：改指另一條還在跑的，一條都沒有就關掉 —— 否則整台機器上不了網。
+// 系統代理指向的那條路由不在跑了就關掉，並告訴使用者 —— 否則整台機器指著一個沒人在聽的埠，上不了網。
 function reconcileSystemProxy() {
   if (!systemProxyEnabled || _quitting) return;
   const running = routeManager ? routeManager.status().filter(r => r.running) : [];
   if (systemProxyTargetPort && running.some(r => r.localPort === systemProxyTargetPort)) return;
+  // 不自動改指到別條路由：那可能是別的上游、別的國家，使用者不會想要流量被默默換出口
+  let notice = '系統代理指向的路由已停止，已關閉系統代理（避免整台機器上不了網）';
   try {
-    const next = systemProxyPort();
-    if (next) {
-      systemProxy.enable(next);
-      systemProxyTargetPort = next;
-      addLog('warn', 'win-proxy', `系統代理原本指向的路由已停止，改指向 127.0.0.1:${next}`);
-    } else {
-      systemProxy.disable();
-      systemProxyEnabled = false;
-      systemProxyTargetPort = null;
-      addLog('warn', 'win-proxy', '系統代理指向的路由已停止，已關閉系統代理（避免整台機器上不了網）');
-    }
-  } catch (e) { addLog('error', 'win-proxy', `調整系統代理失敗：${e.message}`); }
-  sendSystemProxyState();
+    systemProxy.disable();
+    systemProxyEnabled = false;
+    systemProxyTargetPort = null;
+    addLog('warn', 'win-proxy', notice);
+  } catch (e) { notice = `調整系統代理失敗：${e.message}`; addLog('error', 'win-proxy', notice); }
+  sendSystemProxyState(notice);
   updateTrayMenu();
 }
 
@@ -281,9 +276,9 @@ function resolveSystemProxyPort(requested) {
 
 // 系統代理狀態變了就告訴視窗一聲。少了這個，從系統匣切換之後主視窗的開關
 // 還停在舊狀態，使用者看到的跟實際的不一樣。
-function sendSystemProxyState() {
+function sendSystemProxyState(notice) {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('system-proxy', { enabled: systemProxyEnabled });
+    mainWindow.webContents.send('system-proxy', { enabled: systemProxyEnabled, ...(notice ? { notice } : {}) });
   }
 }
 
@@ -938,6 +933,16 @@ function resetKillSwitch() {
   ksRetryTimer = null;
   killSwitchState = ksIdle();
 }
+// 重連失敗後要回到封鎖模式。重連的第一步是 stop（收掉封鎖用的 TUN），
+// 以前失敗就這樣關著等下一次重試 —— 那 4 秒以上受保護的程式完全沒有保護，而介面還寫著「已暫停」。
+async function reenterBlockMode() {
+  if (_quitting || !killSwitchState.tripped) return;
+  let ok = false;
+  try { const b = await engine.startBlock(engineParams()); ok = !!(b && b.ok); } catch (e) {}
+  killSwitchState.blocking = ok;
+  if (!ok) addLog('error', 'killswitch', '無法回到封鎖模式 —— 受保護程式目前沒有保護');
+}
+
 // 自動重連（settings.killSwitchAutoReconnect，預設開）
 function scheduleKillSwitchRetry() {
   clearTimeout(ksRetryTimer);
@@ -954,6 +959,7 @@ function scheduleKillSwitchRetry() {
     addLog('info', 'killswitch', `自動重連第 ${killSwitchState.retries} 次…`);
     try {
       await engine.stop();
+      killSwitchState.blocking = false;
       await ensureSplitRoutesStarted();
       if (_quitting || !killSwitchState.tripped) return;   // 停止期間使用者按了停止／結束
       const r = await engine.start(engineParams());
@@ -963,9 +969,11 @@ function scheduleKillSwitchRetry() {
         sendKillSwitch(); sendEngineStatus();
         return;
       }
+      if (r && r.cancelled) return;                        // 使用者在中途按了停止
     } catch (e) { addLog('warn', 'killswitch', `自動重連失敗：${e.message}`); }
+    await reenterBlockMode();
     killSwitchState.reconnecting = false;
-    sendKillSwitch();
+    sendKillSwitch(); sendEngineStatus();
     scheduleKillSwitchRetry();
   }, KS_RETRY_DELAY);
 }
@@ -992,9 +1000,13 @@ ipcMain.handle('killswitch-reconnect', async () => {
   clearTimeout(ksRetryTimer);
   setupEngine();
   await engine.stop();               // 先收掉 block 模式
+  killSwitchState.blocking = false;
+  const gen = engine._gen;
   await ensureSplitRoutesStarted();  // 跟自動重連一樣：引擎要用的路由先帶起來，否則 TUN 往死掉的埠送
+  if (_quitting || gen !== engine._gen) return { ok: false, cancelled: true, error: '啟動已取消' };
   const r = await engine.start(engineParams());
   if (r && r.ok) resetKillSwitch();
+  else if (!(r && r.cancelled)) await reenterBlockMode();   // 失敗就回封鎖模式，不要關著不管
   sendKillSwitch(); sendEngineStatus();
   return r;
 });
@@ -1063,7 +1075,7 @@ ipcMain.handle('get-split', () => config.getSplit());
 ipcMain.handle('save-split', async (_e, patch) => {
   const s = config.saveSplit(patch);
   const r = await reloadEngineIfRunning();   // 立即套用（先帶起規則要用的路由）
-  return r && !r.ok ? { ...s, engineError: r.error || r.message || '分流引擎無法以新設定啟動' } : s;
+  return r && !r.ok && !r.cancelled ? { ...s, engineError: r.error || r.message || '分流引擎無法以新設定啟動' } : s;
 });
 // 列舉行程要跑 PowerShell（實測 448ms）。同步做的話整個 app 會凍住那麼久。
 ipcMain.handle('list-processes', () => (platform.listProcessesAsync ? platform.listProcessesAsync() : platform.listProcesses()));
@@ -1143,12 +1155,15 @@ async function reloadEngineIfRunning() {
   if (!(engine && engine.state === 'running')) return null;
   const wasBlocking = !!engine._blocking;
   await engine.stop();
+  const gen = engine._gen;
   await ensureSplitRoutesStarted();
+  if (_quitting || gen !== engine._gen) return { ok: false, cancelled: true, error: '啟動已取消' };
   const r = wasBlocking ? await engine.startBlock(engineParams()) : await engine.start(engineParams());
   if (!(r && r.ok) && !(r && r.cancelled)) {
     const why = (r && (r.error || r.message)) || '未知原因';
     addLog('error', 'engine', `套用新設定後分流引擎無法啟動：${why}`);
-    if (config.getSettings().killSwitch && !wasBlocking) await triggerKillSwitch(0, `套用新設定後分流引擎無法啟動：${why}`);
+    if (wasBlocking) { killSwitchState.blocking = false; sendKillSwitch(); }   // 封鎖模式沒回來，不能再寫「已暫停」
+    else if (config.getSettings().killSwitch) await triggerKillSwitch(0, `套用新設定後分流引擎無法啟動：${why}`);
   }
   sendEngineStatus();
   return r;
@@ -1169,7 +1184,10 @@ async function maybeAutoUpdateRuleSets() {
 
 ipcMain.handle('engine-start', async () => {
   setupEngine();
+  // 帶路由要時間；這段期間按了停止或結束程式的話，不能在那之後才把 sing-box 拉起來
+  const gen = engine._gen;
   await ensureSplitRoutesStarted(); // 引擎要用的路由先帶起來，避免 TUN 往死掉的本地埠送流量
+  if (_quitting || gen !== engine._gen) return { ok: false, cancelled: true, error: '啟動已取消' };
   resetHits();
   const r = await engine.start(engineParams());
   sendEngineStatus();
@@ -1252,7 +1270,9 @@ async function ensureSplitRoutesStarted() {
 // 提權重啟後自動啟動引擎（先把規則會用到的路由帶起來）
 async function autoStartEngineElevated() {
   setupEngine();
+  const gen = engine._gen;
   await ensureSplitRoutesStarted();
+  if (_quitting || gen !== engine._gen) return;
   const r = await engine.start(engineParams());
   sendEngineStatus();
   addLog(r.ok ? 'info' : 'error', 'engine', r.ok ? '分流引擎已自動啟動（提權後）' : ('引擎自動啟動失敗：' + (r.error || r.message || '')));
@@ -1354,6 +1374,8 @@ app.whenReady().then(async () => {
   initFileLog();
   mainMark('fileLog');
   initSecretStorage();          // 要在任何路由啟動（會讀伺服器密碼）之前
+  const routeIdsFixed = config.migrateRouteIds();
+  if (routeIdsFixed) addLog('info', 'route', `已修正 ${routeIdsFixed} 條路由的 id／類型（舊版匯入留下的格式）`);
   const tlsMigrated = config.migrateTlsDefaults();
   if (tlsMigrated) addLog('warn', 'system', `${tlsMigrated} 台 HTTPS 伺服器沿用舊版行為：不驗證代理的憑證。可在伺服器設定關閉「略過憑證驗證」`);
   if (config.recoveredFrom()) {

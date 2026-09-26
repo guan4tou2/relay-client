@@ -481,25 +481,35 @@ class SingBoxEngine extends EventEmitter {
   // 同一時間只會有一個啟動在跑。state 要到 spawn 前才變成 starting，
   // 中間隔著 validate 與清殘留兩個 await —— 連點兩下、或存規則與規則庫重載同時發生，
   // 以前會 spawn 兩個 sing-box，第一個的 handle 被蓋掉，之後永遠殺不到。
+  // 進行中的啟動記著自己屬於哪個世代：stop() 之後的新 start 不能拿到被作廢的那一個
+  // （那會回 cancelled，使用者按了啟動卻什麼都沒發生）。要等舊的收完再重新啟動。
   _launchOnce(makeCfg) {
     if (this.state === 'running') return Promise.resolve({ ok: true });
-    if (this._inflight) return this._inflight;
-    const p = (async () => this._launch(makeCfg()))();
-    this._inflight = p;
-    const clear = () => { if (this._inflight === p) this._inflight = null; };
+    const gen = this._gen;
+    if (this._inflight && this._inflight.gen === gen) return this._inflight.p;
+    const prev = this._inflight ? this._inflight.p : null;
+    const p = (async () => {
+      if (prev) { try { await prev; } catch (e) {} }
+      if (gen !== this._gen) return { ok: false, cancelled: true, error: '啟動已取消' };
+      if (this.state === 'running') return { ok: true };
+      return this._launch(makeCfg(), gen);
+    })();
+    const entry = { p, gen };
+    this._inflight = entry;
+    const clear = () => { if (this._inflight === entry) this._inflight = null; };
     p.then(clear, clear);
     return p;
   }
 
-  async _launch(cfg) {
+  async _launch(cfg, gen = this._gen) {
     if (this.state === 'running' || this.state === 'starting') return { ok: true };
     if (!fs.existsSync(this.binPath)) return { ok: false, error: 'sing-box 未安裝（找不到執行檔）' };
 
     // stop() 會遞增 _gen。每個 await 之後都要確認沒有人在中途喊停，
     // 否則「結束程式／按停止」發生在 validate 期間時，sing-box 會在停止之後才被 spawn。
-    const gen = this._gen;
     const cancelled = () => gen !== this._gen;
     const CANCELLED = { ok: false, cancelled: true, error: '啟動已取消' };
+    if (cancelled()) return CANCELLED;
 
     const check = await this.validate(cfg);
     if (cancelled()) return CANCELLED;

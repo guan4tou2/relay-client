@@ -354,3 +354,23 @@ describe('SingBoxEngine 啟動競態', () => {
     expect(calls).toBe(2);
   });
 });
+
+describe('SingBoxEngine 啟動 → 停止 → 再啟動', () => {
+  test('停止後馬上再啟動，不會拿到被作廢的那次結果（會真的重新啟動）', async () => {
+    const e = mk();
+    e.binPath = process.execPath;
+    e.isElevated = () => true;
+    e.platform = { ...e.platform, staleEngineCleanupCommand: () => null, killTree: async () => {} };
+    let calls = 0; let release;
+    e.validate = () => { calls++; return calls === 1 ? new Promise(r => { release = r; }) : Promise.resolve({ ok: false, error: 'second run' }); };
+    const first = e.start({ rules: [], routes: [] });
+    await e.stop();
+    const second = e.start({ rules: [], routes: [] });
+    release({ ok: true });
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(r1.cancelled).toBe(true);
+    expect(r2.cancelled).toBeUndefined();
+    expect(r2.error).toBe('設定無效：second run');   // 第二次真的跑了 validate
+    expect(calls).toBe(2);
+  });
+});
