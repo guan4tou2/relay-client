@@ -260,8 +260,9 @@ function renderDashStatus(runIds, actIds) {
       color: state.sys && runIds.length ? 'var(--good)' : 'var(--text2)', tab: 'dashboard' },
     state.killswitch && state.killswitch.tripped
       ? { label: '斷線保護已觸發', color: 'var(--red)', tab: 'split' }
-      : { label: state.settings.killSwitch ? '斷線保護就緒' : '斷線保護停用',
-          color: state.settings.killSwitch && splitRunning() ? 'var(--good)' : 'var(--text2)', tab: 'settings' },
+      // 斷線保護只在分流引擎執行時才有作用；引擎沒開時寫「就緒」會讓人以為有保護
+      : { label: !state.settings.killSwitch ? '斷線保護停用' : splitRunning() ? '斷線保護就緒' : '斷線保護待命（引擎未執行）',
+          color: state.settings.killSwitch && splitRunning() ? 'var(--good)' : 'var(--text2)', tab: state.settings.killSwitch && !splitRunning() ? 'split' : 'settings' },
   ];
   // 末端的分流引擎開關：設計稿是「迷你開關 + 文字」包在一顆有框的鈕裡，
   // 不是徽章。開關本身 32×18、鈕 26 高，狀態靠顏色與撥桿位置表達。
@@ -335,7 +336,7 @@ function renderSidebar() {
     const delIcon = pend
       ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
       : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>';
-    return `<div class="hvFill2" data-rid="${r.id}" role="button" tabindex="0" aria-pressed="${active}" aria-label="${esc(r.label || '未命名路由')}" style="padding:11px 12px;border-radius:12px;cursor:pointer;background:${active ? 'var(--fill2)' : 'transparent'};border:1px solid ${active ? 'var(--accent)' : conn ? 'var(--good)' : 'var(--sep)'};display:flex;flex-direction:column;gap:7px;transition:background .16s,border-color .16s">
+    return `<div class="hvFill2" data-rid="${esc(r.id)}" role="button" tabindex="0" aria-pressed="${active}" aria-label="${esc(r.label || '未命名路由')}" style="padding:11px 12px;border-radius:12px;cursor:pointer;background:${active ? 'var(--fill2)' : 'transparent'};border:1px solid ${active ? 'var(--accent)' : conn ? 'var(--good)' : 'var(--sep)'};display:flex;flex-direction:column;gap:7px;transition:background .16s,border-color .16s">
       <div style="display:flex;align-items:center;gap:7px">
         <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${dot};box-shadow:${conn ? '0 0 0 3px rgba(47,158,120,.22)' : 'none'};animation:${conn ? 'dotBeat 2.2s ease-in-out infinite' : 'none'}"></span>
         <span style="font-size:13.5px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.label || '未命名路由')}</span>
@@ -361,7 +362,7 @@ function renderSidebar() {
     row.addEventListener('keydown', e => {
       if (e.target !== row || (e.key !== 'Enter' && e.code !== 'Space')) return;
       e.preventDefault(); selectRoute(id);
-      const next = list.querySelector(`[data-rid="${id}"]`); if (next) next.focus();   // 選取會重畫整列，焦點要接回去
+      const next = list.querySelector(`[data-rid="${CSS.escape(id)}"]`); if (next) next.focus();   // 選取會重畫整列，焦點要接回去
     });
     row.querySelector('[data-act="power"]')?.addEventListener('click', e => { e.stopPropagation(); togglePower(id); });
     row.querySelector('[data-act="browser"]')?.addEventListener('click', e => { e.stopPropagation(); openLaunchSheet(id); });
@@ -383,31 +384,39 @@ function deleteRoute(id) {
     setTimeout(() => { if (state.pendingRouteDel === id) { state.pendingRouteDel = null; renderSidebar(); } }, 2500);
     return;
   }
-  clearSTimers(id); dropSes(id);
   state.pendingRouteDel = null;
-  window.api.routeStop(id).catch(() => {});
+  renderSidebar();
 
-  const finish = routes => {
-    state.routes = routes || [];
-    if (state.sel === id) state.sel = state.routes[0] ? state.routes[0].id : null;
-    renderSidebar(); showTab(state.tab); flash('已刪除路由');
+  // 真的刪之前什麼都不動：以前是先停掉路由、丟掉 session 才問 profile 要不要留，
+  // 結果對話框按 Esc 或點遮罩「取消」時，路由已經被停掉卻沒有刪掉。
+  const del = keepProfile => {
+    clearSTimers(id); dropSes(id);
+    return window.api.deleteRoute(id, { keepProfile }).then(routes => {
+      state.routes = routes || [];
+      if (state.sel === id) state.sel = state.routes[0] ? state.routes[0].id : null;
+      renderSidebar(); showTab(state.tab); flash('已刪除路由');
+    }).catch(e => { flash('刪除路由失敗：' + (e && e.message || e), 'var(--red)'); refreshRouteStatus(); });
   };
-  const del = keepProfile => window.api.deleteRoute(id, { keepProfile }).then(finish)
-    .catch(e => flash('刪除路由失敗：' + (e && e.message || e), 'var(--red)'));
 
   // 這條路由開過瀏覽器的話會留下 profile（cookie / 登入狀態）。
   // 默默刪掉等於連帶登出，所以先問一句；沒有 profile 就不多這道問題。
+  // 查不到就當作有，保留資料（刪錯救不回來，留著頂多占空間）。
   window.api.routeProfileInfo(id).then(info => {
     if (!(info && info.exists)) return del(false);
     state.alert = {
       tone: 'info', title: '這條路由的瀏覽器資料要一併刪除嗎？',
       body: '用這條路由開過的瀏覽器視窗有自己的 cookie 與登入狀態。保留的話下次建相同 id 的路由還能用。',
-      primary: '一併刪除', secondary: '保留資料',
+      primary: '一併刪除', secondary: '保留資料', cancel: true, danger: true,
       go: () => { closeAlert(); del(false); },
       onSecondary: () => { closeAlert(); del(true); },
     };
     renderAlert();
-  }).catch(() => del(false));
+  }).catch(() => del(true));
+}
+
+// 刪除失敗時 session 已經丟了，跟主行程對一次帳把真實狀態拿回來
+function refreshRouteStatus() {
+  window.api.getRouteStatus().then(list => reconcileStatus(list)).catch(() => {});
 }
 
 // =====================================================================================
@@ -768,15 +777,25 @@ async function toggleSys() {
   if (!runIds.length) { flash('請先啟動路由', 'var(--amber)'); return; }
   const cur = curRoute();
   const next = !state.sys;
-  try { const r = await window.api.toggleSystemProxy(next, cur ? cur.localPort : state.settings.httpPort); state.sys = r ? !!r.systemProxyEnabled : next; }
-  catch { state.sys = next; }
+  // 失敗時維持原狀並講出原因：以前 catch 裡直接 state.sys = next，開關顯示「開」但系統根本沒設
+  try {
+    const r = await window.api.toggleSystemProxy(next, cur && runIds.includes(cur.id) ? cur.localPort : undefined);
+    state.sys = r ? !!r.systemProxyEnabled : state.sys;
+    if (r && r.error) flash('系統代理：' + r.error, 'var(--red)');
+  } catch (e) { flash('切換系統代理失敗：' + (e && e.message || e), 'var(--red)'); }
   if (state.tab === 'dashboard') updateDashboard();
 }
 
-function copyAddr() {
+// 剪貼簿寫入可能被拒（視窗沒焦點、權限），成功才顯示「已複製」
+async function copyText(text, okMsg) {
+  try { await navigator.clipboard.writeText(text); if (okMsg) flash(okMsg); return true; }
+  catch (e) { flash('無法寫入剪貼簿', 'var(--red)'); return false; }
+}
+
+async function copyAddr() {
   const cur = curRoute();
   if (!cur) return;
-  navigator.clipboard.writeText('127.0.0.1:' + cur.localPort);
+  if (!(await copyText('127.0.0.1:' + cur.localPort))) return;
   state.copied = true; if (state.tab === 'dashboard') updateDashboard();
   setTimeout(() => { state.copied = false; if (state.tab === 'dashboard') updateDashboard(); }, 1200);
 }
@@ -807,9 +826,9 @@ function renderServers() {
       <span style="width:66px;flex-shrink:0;padding-right:8px;box-sizing:border-box;color:var(--text2);display:flex;align-items:center;gap:5px;white-space:nowrap">${authIcon}${sUser(s) ? '已設定' : '無'}</span>
       <span style="flex:1 1 0;min-width:104px;padding-right:12px;box-sizing:border-box;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:${testColor(lat)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis"${lat < 0 && s.lastError ? ` data-tip="${esc(s.lastError)}"` : ''}>${esc(tText)}</span>
       <span style="width:90px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
-        <button class="hvAcc" data-stest="${s.id}" title="測試連線" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z"></path></svg></button>
-        <button class="hvAcc" data-sedit="${s.id}" title="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
-        <button class="hvRed" data-sdel="${s.id}" title="${pend ? '再按一次確認刪除' : '刪除'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
+        <button class="hvAcc" data-stest="${esc(s.id)}" title="${testingServers.has(s.id) ? '測試中…' : '測試連線'}" aria-label="${testingServers.has(s.id) ? '測試中' : '測試連線'}" ${testingServers.has(s.id) ? 'disabled aria-busy="true"' : ''} style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:${testingServers.has(s.id) ? 'progress' : 'pointer'};opacity:${testingServers.has(s.id) ? '.5' : '1'};display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z"></path></svg></button>
+        <button class="hvAcc" data-sedit="${esc(s.id)}" title="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
+        <button class="hvRed" data-sdel="${esc(s.id)}" title="${pend ? '再按一次確認刪除' : '刪除'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${pend ? 'var(--red)' : 'var(--fill2)'};color:${pend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${delIcon}</button>
       </span>
     </div>`;
   }).join('');
@@ -827,17 +846,24 @@ function renderServers() {
       </div>
     </div>`;
 
-  $('view-servers').querySelectorAll('[data-scopy]').forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.scopy); flash('已複製位址：' + b.dataset.scopy); });
+  $('view-servers').querySelectorAll('[data-scopy]').forEach(b => b.onclick = () => copyText(b.dataset.scopy, '已複製位址：' + b.dataset.scopy));
   $('view-servers').querySelectorAll('[data-stest]').forEach(b => b.onclick = () => testServerRow(b.dataset.stest));
   $('view-servers').querySelectorAll('[data-sedit]').forEach(b => b.onclick = () => openSrv(b.dataset.sedit));
   $('view-servers').querySelectorAll('[data-sdel]').forEach(b => b.onclick = () => deleteServerRow(b.dataset.sdel));
 }
 
+const testingServers = new Set();   // 同一台連按不會並行跑好幾個測試
 async function testServerRow(id) {
   const s = state.servers.find(x => x.id === id); if (!s) return;
+  if (testingServers.has(id)) return;
+  testingServers.add(id);
+  if (state.tab === 'servers') renderServers();
   flash((s.name || s.host) + ' 測試中…');
-  const r = await window.api.testServer(id, state.settings.testTarget || undefined);
-  state.servers = await window.api.getServers();
+  let r;
+  try { r = await window.api.testServer(id, state.settings.testTarget || undefined); }
+  catch (e) { r = { success: false, error: e && e.message }; }
+  testingServers.delete(id);
+  try { state.servers = await window.api.getServers(); } catch (e) {}
   if (state.tab === 'servers') renderServers();
   if (state.tab === 'dashboard') updateChain();
   if (r && r.success) flash((s.name || s.host) + ' 測試成功 · ' + r.latency + 'ms');
@@ -859,11 +885,31 @@ function testFailReason(msg) {
 }
 
 function deleteServerRow(id) {
+  // 刪伺服器會默默把它從所有路由的跳點拿掉。有路由在用時要講清楚影響範圍，
+  // 只剩它一個跳點的路由之後就啟動不了。
+  const used = state.routes.filter(r => (r.hops || []).includes(id));
+  if (used.length) {
+    const srv = state.servers.find(x => x.id === id) || {};
+    const orphan = used.filter(r => r.hops.length === 1);
+    state.alert = {
+      tone: 'warn', title: `刪除伺服器「${srv.name || srv.host || ''}」？`,
+      body: `以下路由會失去這個跳點：${used.map(r => r.label || '未命名路由').join('、')}。`
+        + (orphan.length ? `其中 ${orphan.map(r => r.label || '未命名路由').join('、')} 沒有其他跳點，刪除後將無法啟動。` : ''),
+      primary: '刪除', secondary: '取消', danger: true,
+      go: () => { closeAlert(); doDeleteServer(id); },
+    };
+    renderAlert();
+    return;
+  }
   if (state.pendingSrvDel !== id) {
     state.pendingSrvDel = id; renderServers();
     setTimeout(() => { if (state.pendingSrvDel === id) { state.pendingSrvDel = null; if (state.tab === 'servers') renderServers(); } }, 2500);
     return;
   }
+  doDeleteServer(id);
+}
+
+function doDeleteServer(id) {
   state.pendingSrvDel = null;
   window.api.deleteServer(id).then(async () => {
     state.servers = await window.api.getServers();
@@ -1128,8 +1174,7 @@ function appendLogRows() {
 function copyLogs() {
   const shown = logShown();
   const text = shown.map(l => `[${logTime(l)}] [${(l.level || '').toUpperCase()}] [${l.source}] ${l.message}${l.detail ? ' ' + l.detail : ''}`).join('\n');
-  navigator.clipboard.writeText(text);
-  flash('已複製紀錄');
+  copyText(text, '已複製紀錄');
 }
 // =====================================================================================
 // 憑證庫（存在主行程，密碼以 safeStorage 加密）
@@ -1205,11 +1250,11 @@ function renderCreds() {
       <div class="hvFill2" style="display:flex;align-items:center;padding:11px 16px;font-size:12.5px;min-width:${CRED_MINW}px">
         <span title="${esc(c.name || '未命名')}" style="flex:1 1 0;min-width:96px;max-width:200px;padding-right:10px;box-sizing:border-box;font-weight:600;display:flex;align-items:center;gap:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--text3);flex-shrink:0"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg><span style="overflow:hidden;text-overflow:ellipsis">${esc(c.name || '未命名')}</span></span>
         <span title="${esc(c.user)}" style="flex:1 1 0;min-width:100px;max-width:190px;padding-right:10px;box-sizing:border-box;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.user)}</span>
-        <button data-ctoggle="${c.id}" title="點擊顯示 / 隱藏" aria-label="顯示或隱藏密碼" style="flex:1 1 0;min-width:96px;max-width:190px;padding:0 10px 0 0;box-sizing:border-box;text-align:left;border:none;background:transparent;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.shown ? esc(c.pass) : '••••••••'}</button>
+        <button data-ctoggle="${esc(c.id)}" title="點擊顯示 / 隱藏" aria-label="顯示或隱藏密碼" style="flex:1 1 0;min-width:96px;max-width:190px;padding:0 10px 0 0;box-sizing:border-box;text-align:left;border:none;background:transparent;color:var(--text2);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.shown ? esc(c.pass) : '••••••••'}</button>
         <span title="${esc(c.note || '')}" style="flex:1 1 0;min-width:80px;padding-right:10px;box-sizing:border-box;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.note || '—')}</span>
         <span style="width:58px;flex-shrink:0;display:flex;justify-content:flex-end;gap:6px">
-          <button data-cedit="${c.id}" class="hvAcc" title="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
-          <button data-cdel="${c.id}" class="hvRed" title="${cpend ? '再按一次確認刪除' : '刪除'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${cpend ? 'var(--red)' : 'var(--fill2)'};color:${cpend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${cpend
+          <button data-cedit="${esc(c.id)}" class="hvAcc" title="編輯" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L20 8l-4-4L4 16v4z"></path></svg></button>
+          <button data-cdel="${esc(c.id)}" class="hvRed" title="${cpend ? '再按一次確認刪除' : '刪除'}" style="width:26px;height:26px;border:none;border-radius:7px;background:${cpend ? 'var(--red)' : 'var(--fill2)'};color:${cpend ? '#fff' : 'var(--red)'};cursor:pointer;display:flex;align-items:center;justify-content:center">${cpend
             ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>'
             : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>'}</button>
         </span>
@@ -1361,11 +1406,17 @@ function buildSettings() {
   window.api.getAppInfo().then(i => { if ($('setVersion')) $('setVersion').textContent = `v${i.version}`; }).catch(() => {});
 }
 
+let testTargetTimer = null;
 function updateTestTarget() {
   const host = $('setTestHost').value.trim();
-  const port = parseInt($('setTestPort').value) || 443;
-  state.settings.testTarget = host ? { host, port } : null;
-  saveSettings();
+  const raw = $('setTestPort').value.trim();
+  const ok = raw === '' || validPortStr(raw);
+  $('setTestPort').style.borderColor = ok ? 'var(--sep)' : 'var(--red)';
+  $('setTestPort').setAttribute('aria-invalid', ok ? 'false' : 'true');
+  if (!ok) return;   // 不合法的埠不存；框線標紅就好，不要每打一個字跳一次提示
+  state.settings.testTarget = host ? { host, port: raw ? Number(raw) : 443 } : null;
+  clearTimeout(testTargetTimer);
+  testTargetTimer = setTimeout(saveSettings, 400);   // 以前每按一個鍵就寫一次設定檔
 }
 
 function renderThemeSeg() {
@@ -1429,8 +1480,19 @@ function refreshSettings() {
   renderRuleSets();
 }
 
-function saveSettings() {
-  window.api.updateSettings({
+// 存失敗要講，並把畫面拉回主行程那邊的真實值：斷線保護這類開關，
+// 畫面顯示「開」但其實沒存進去，比沒有開關還危險。
+async function saveSettings() {
+  try {
+    await window.api.updateSettings(settingsPayload());
+  } catch (e) {
+    flash('儲存設定失敗：' + (e && e.message || e), 'var(--red)');
+    try { const s = await window.api.getSettings(); if (s) state.settings = { ...state.settings, ...s }; } catch (err) {}
+    refreshSettings();
+  }
+}
+function settingsPayload() {
+  return {
     minimizeToTray: state.settings.minimizeToTray, autoStartRoutes: state.settings.autoStartRoutes,
     killSwitch: state.settings.killSwitch, testTarget: state.settings.testTarget,
     rulesetAutoUpdate: state.settings.rulesetAutoUpdate, rulesetUpdateDays: state.settings.rulesetUpdateDays,
@@ -1438,7 +1500,7 @@ function saveSettings() {
     killSwitchAutoReconnect: state.settings.killSwitchAutoReconnect,
     killSwitchScope: state.settings.killSwitchScope, killSwitchApps: state.settings.killSwitchApps,
     logConnections: state.settings.logConnections,
-  });
+  };
 }
 
 // =====================================================================================
@@ -1458,9 +1520,32 @@ function openRoute(id) {
 function closeRouteSheet() { state.routeSheet = false; closeMenu(); $('sheetMount').innerHTML = ''; }
 function syncDraft() { const d = state.draft; if ($('rdLabel')) d.label = $('rdLabel').value; if ($('rdPort')) d.localPort = $('rdPort').value.replace(/[^0-9]/g, '').slice(0, 5); }
 
+// 回傳純文字；放進 innerHTML 時由呼叫端 esc()，放進 textContent 時原樣
 function draftJson() {
   const d = state.draft;
-  return '{ "id": "' + (state.routeEditing || 'r-new') + '", "label": "' + esc(d.label || '未命名') + '", "localPort": ' + (d.localPort || 0) + ', "kind": "' + d.kind + '", "hops": [' + d.hops.map(x => '"' + x + '"').join(', ') + '], "enabled": ' + d.enabled + ' }';
+  return JSON.stringify({ id: state.routeEditing || 'r-new', label: d.label || '未命名', localPort: Number(d.localPort) || 0, kind: d.kind, hops: d.hops, enabled: d.enabled }, null, 1).replace(/\n\s*/g, ' ');
+}
+const validPortStr = v => { const n = Number(v); return /^\d{1,5}$/.test(String(v)) && n >= 1 && n <= 65535; };
+// 「443, 80, 3000-3999」：每一段是 1–65535 的埠或由小到大的區間（以前 \d{1,5} 連 99999 都收）
+function validPortSpec(spec) {
+  return String(spec).split(',').map(x => x.trim()).every(part => {
+    const m = /^(\d{1,5})(?:\s*-\s*(\d{1,5}))?$/.exec(part);
+    if (!m) return false;
+    const lo = Number(m[1]), hi = m[2] ? Number(m[2]) : lo;
+    return lo >= 1 && hi <= 65535 && lo <= hi;
+  });
+}
+// IPv4 每段 0–255、前綴 ≤32；IPv6 交給 URL 解析器判斷、前綴 ≤128（以前 999.999.999.999 也算合法）
+function validIpOrCidr(v) {
+  const [addr, prefix, extra] = String(v).split('/');
+  if (extra !== undefined) return false;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(addr)) {
+    if (!addr.split('.').every(o => Number(o) <= 255)) return false;
+    return prefix === undefined || (/^\d{1,2}$/.test(prefix) && Number(prefix) <= 32);
+  }
+  if (!addr.includes(':')) return false;
+  try { new URL(`http://[${addr}]/`); } catch (e) { return false; }
+  return prefix === undefined || (/^\d{1,3}$/.test(prefix) && Number(prefix) <= 128);
 }
 function fillPortWarn() {
   const d = state.draft, c = $('rdPortWarn'); if (!c) return;
@@ -1538,7 +1623,7 @@ function renderRouteSheet() {
           <!-- config.json 對照給進階使用者，預設收合 -->
           <details id="rdJson" ${S.showJson ? 'open' : ''} style="background:var(--fill2);border-radius:12px;padding:11px 15px">
             <summary style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;cursor:pointer;white-space:nowrap">對應 config.json</summary>
-            <div style="margin-top:7px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text">${draftJson()}</div>
+            <div style="margin-top:7px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text">${esc(draftJson())}</div>
           </details>
         </div>
         <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
@@ -1560,8 +1645,10 @@ function renderRouteSheet() {
     if ($('rdPort').value !== v) $('rdPort').value = v;
     state.draft.localPort = v;
     const dup = state.routes.some(r => r.id !== state.routeEditing && String(r.localPort) === String(v));
-    $('rdPort').style.borderColor = dup ? 'var(--red)' : 'var(--sep)';
-    $('rdPort').classList.toggle('inErr', dup);   // 聚焦時保留紅框，不被 accent 蓋掉
+    const bad = dup || (v !== '' && !validPortStr(v));
+    $('rdPort').style.borderColor = bad ? 'var(--red)' : 'var(--sep)';
+    $('rdPort').classList.toggle('inErr', bad);   // 聚焦時保留紅框，不被 accent 蓋掉
+    $('rdPort').setAttribute('aria-invalid', bad ? 'true' : 'false');
     fillPortWarn(); updateDraftJson();
   });
   $('sheetMount').querySelectorAll('[data-kind]').forEach(b => b.onclick = () => { syncDraft(); state.draft.kind = b.dataset.kind; renderRouteSheet(); });
@@ -1585,10 +1672,12 @@ async function saveRouteSheet() {
   if (state.routeBusy) return;
   syncDraft();
   const d = state.draft;
+  if (!validPortStr(d.localPort)) { flash('本地端口要介於 1 到 65535', 'var(--amber)'); if ($('rdPort')) $('rdPort').focus(); return; }
+  if (!d.hops.length) { flash('至少要加入一個跳點', 'var(--amber)'); if ($('rdHopMenu')) $('rdHopMenu').focus(); return; }
   const dupPort = state.routes.some(r => r.id !== state.routeEditing && String(r.localPort) === String(d.localPort));
   if (dupPort) { state.alert = { kind: 'conflict', title: '本地端口衝突', body: '端口 ' + d.localPort + ' 已被其他路由使用。同一個端口無法同時服務兩條路由，請改用其他端口。' }; renderAlert(); return; }
   const id = state.routeEditing || 'r-' + Date.now();
-  const rec = { id, label: d.label.trim() || '未命名路由', localPort: +d.localPort || 0, kind: d.kind, hops: [...d.hops], enabled: d.enabled };
+  const rec = { id, label: d.label.trim() || '未命名路由', localPort: Number(d.localPort), kind: d.kind, hops: [...d.hops], enabled: d.enabled };
   state.routeBusy = true; setSheetBusy('rdSave', '儲存中…');
   let routes;
   try { routes = await window.api.saveRoute(rec); }
@@ -1607,9 +1696,10 @@ async function saveRouteSheet() {
     togglePower(id); // 停用 → 停止
   } else if (rec.enabled && wasRunning) {
     // 已在執行且仍啟用：重新套用新設定（main 會 stop→start relay）
-    const r = await window.api.routeStart(id).catch(() => null);
+    const r = await window.api.routeStart(id).catch(e => ({ ok: false, error: e && e.message }));
     if (r && r.ok === false && r.conflict) { state.alert = r.conflict; renderAlert(); }
-    afterStatusChange();
+    else if (!r || r.ok === false) flash('重新套用路由失敗：' + ((r && r.error) || '未知錯誤'), 'var(--red)');
+    refreshRouteStatus();
   }
 }
 // =====================================================================================
@@ -1901,13 +1991,15 @@ function renderAlert() {
         <span style="font-size:15.5px;font-weight:700;letter-spacing:-.2px">${esc(a.title)}</span>
         <span style="font-size:12.5px;color:var(--text2);line-height:1.7;text-wrap:pretty">${esc(a.body)}</span>
         <div style="display:flex;gap:9px;width:100%;padding-top:4px">
+          ${a.cancel ? '<button id="alertDismiss" class="hvFill2" style="flex:1;height:34px;border:1px solid var(--sep);border-radius:9px;background:transparent;color:var(--text2);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">取消</button>' : ''}
           <button id="alertCancel" class="hvFill2" style="flex:1;height:34px;border:1px solid var(--sep);border-radius:9px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">${esc(secondary)}</button>
-          <button id="alertPrimary" class="hvBright" style="flex:1;height:34px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">${primary}</button>
+          <button id="alertPrimary" class="hvBright" style="flex:1;height:34px;border:none;border-radius:9px;background:${a.danger ? 'var(--red)' : 'var(--accent)'};color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">${esc(primary)}</button>
         </div>
       </div>
     </div>`;
   $('alertOverlay').onclick = e => { if (e.target === $('alertOverlay')) closeAlert(); };
   $('alertCancel').onclick = () => (a.onSecondary ? a.onSecondary() : closeAlert());
+  if ($('alertDismiss')) $('alertDismiss').onclick = () => closeAlert();
   $('alertPrimary').onclick = () => alertAction();
 }
 function closeAlert() { state.alert = null; $('alertMount').innerHTML = ''; }
@@ -1946,9 +2038,15 @@ async function loadBrowsersThen() {
 }
 
 // 「將執行」那段由主行程產生，和實際啟動用同一份參數，不會對不上
+// 每打一個字送一次；慢的那個晚回來時不能蓋掉新的
+let launchPreviewSeq = 0;
 async function refreshLaunchPreview() {
   const d = state.launchDraft; if (!d) return;
-  try { state.launchPreview = (await window.api.launchPreview(d)) || ''; } catch { state.launchPreview = ''; }
+  const seq = ++launchPreviewSeq;
+  let text = '';
+  try { text = (await window.api.launchPreview(d)) || ''; } catch { text = ''; }
+  if (seq !== launchPreviewSeq) return;
+  state.launchPreview = text;
   const el = $('lsPreview'); if (el) el.textContent = state.launchPreview;
 }
 
@@ -2009,7 +2107,7 @@ function renderLaunchSheet() {
           <button id="lsRoute" class="hvFill2" style="display:flex;align-items:center;gap:9px;height:36px;padding:0 11px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:12.5px;cursor:pointer;text-align:left">
             <span style="width:7px;height:7px;border-radius:50%;background:${running ? 'var(--good)' : 'var(--text3)'};flex-shrink:0"></span>
             <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(route.label || '未命名路由')}</span>
-            <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap">${route.kind === 'http' ? 'HTTP' : 'SOCKS5'} · ${route.localPort || ''}</span>
+            <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap">${route.kind === 'http' ? 'HTTP' : 'SOCKS5'} · ${esc(route.localPort || '')}</span>
             <span style="color:var(--text3);font-size:9px">▾</span>
           </button>
           ${running ? '' : '<span style="font-size:11px;color:var(--text3);line-height:1.5">此路由尚未啟動，啟動程式時會先自動啟動路由。</span>'}
@@ -2100,7 +2198,7 @@ function renderInstances() {
         <span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${on ? 'var(--good)' : 'var(--amber)'};animation:${on ? 'dotBeat 2.2s ease-in-out infinite' : 'none'}"></span>
         <span style="display:flex;flex-direction:column;min-width:0;gap:1px">
           <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:${on ? 'var(--text)' : 'var(--amber)'}">${esc(route ? (route.label || i.routeId) : '（路由已刪除）')}</span>
-          <span style="font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap">${route ? '127.0.0.1:' + route.localPort : ''}</span>
+          <span style="font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;white-space:nowrap">${route ? '127.0.0.1:' + esc(route.localPort) : ''}</span>
         </span>
       </span>
       <span style="width:64px;flex-shrink:0;display:flex;justify-content:flex-end">
@@ -2201,7 +2299,8 @@ function renderKillswitch() {
     catch (e) { flash('重新連線失敗：' + e.message, 'var(--red)'); done(); }
   };
   $('ksClear').onclick = async () => {
-    try { await window.api.killswitchClear(); flash('已停用分流，網路恢復直連', 'var(--amber)'); } catch (e) {}
+    try { await window.api.killswitchClear(); flash('已停用分流，網路恢復直連', 'var(--amber)'); }
+    catch (e) { flash('停用分流失敗：' + (e && e.message || e) + '（受保護的程式仍被封鎖）', 'var(--red)'); }
   };
 }
 
@@ -2209,8 +2308,9 @@ function renderKillswitch() {
 // 匯入 / 匯出（伺服器 + 路由，不含密碼）
 // =====================================================================================
 async function exportData() {
-  const servers = await window.api.getServers();
-  const routes = await window.api.getRoutes();
+  let servers, routes;
+  try { [servers, routes] = await Promise.all([window.api.getServers(), window.api.getRoutes()]); }
+  catch (e) { flash('讀取設定失敗：' + (e && e.message || e), 'var(--red)'); return; }
   if (!servers.length && !routes.length) { flash('沒有可匯出的設定', 'var(--amber)'); return; }
   // 密碼預設不匯出——匯出檔常常會被丟進聊天室或雲端硬碟。要帶的話必須明確選擇。
   state.alert = {
@@ -2234,7 +2334,8 @@ function doExport(servers, routes, withPass) {
   const a = document.createElement('a');
   a.href = url; a.download = withPass ? 'relayclient-config-with-passwords.json' : 'relayclient-config.json';
   a.click();
-  URL.revokeObjectURL(url);
+  // 立刻 revoke 在部分 Chromium 版本會把還沒開始的下載取消掉
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
   flash(withPass
     ? `已匯出 ${servers.length} 台伺服器（含密碼，請妥善保管）`
     : `已匯出 ${servers.length} 台伺服器 · ${routes.length} 條路由`, withPass ? 'var(--amber)' : undefined);
@@ -2380,8 +2481,12 @@ function showBanner() {
   if (state.banner) { $('bannerText').textContent = state.banner; b.style.display = 'flex'; }
   else b.style.display = 'none';
 }
+// 「系統」模式要跟著 OS 即時切換，不是只在開機讀一次
+const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
+const onOsTheme = () => { if (state.themeMode === '系統') setTheme('系統'); };
+if (darkMq.addEventListener) darkMq.addEventListener('change', onOsTheme); else if (darkMq.addListener) darkMq.addListener(onOsTheme);
 function setTheme(mode) {
-  const theme = mode === '深色' ? 'dark' : mode === '淺色' ? 'light' : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const theme = mode === '深色' ? 'dark' : mode === '淺色' ? 'light' : (darkMq.matches ? 'dark' : 'light');
   document.body.dataset.theme = theme;
   state.theme = theme; state.themeMode = mode;
   localStorage.setItem('proxy_theme', mode);
@@ -2677,20 +2782,16 @@ function syncAddButton() {
 // ---- 進入分頁 ----
 function enterSplit() { updateSplit(); refreshSplit(); }
 async function refreshSplit() {
-  try {
-    const sp = await window.api.getSplit();
-    if (sp) {
-      if (Array.isArray(sp.rules)) state.splitRules = sp.rules;
-      if (sp.defaultTarget != null) state.splitDefaultTarget = sp.defaultTarget;
-      if (typeof sp.udp === 'boolean') state.splitUdp = sp.udp;
-      if (sp.mode) state.splitMode = sp.mode;
-      if ('globalTarget' in sp) state.splitGlobalTarget = sp.globalTarget;
-      if (typeof sp.lanDirect === 'boolean') state.splitLanDirect = sp.lanDirect;
-    }
-  } catch {}
-  try { const cat = await window.api.rulesetCatalog(); if (Array.isArray(cat)) state.splitCatalog = cat; } catch {}
-  try { const list = await window.api.rulesetList(); if (Array.isArray(list)) state.splitInstalled = list; } catch {}
-  try { const est = await window.api.getEngineStatus(); if (est) applyEngineStatus(est); } catch {}
+  // 四個互不相干的 IPC，一起送
+  const settle = p => p.then(v => v, () => null);
+  const [sp, cat, list, est] = await Promise.all([
+    settle(window.api.getSplit()), settle(window.api.rulesetCatalog()),
+    settle(window.api.rulesetList()), settle(window.api.getEngineStatus()),
+  ]);
+  applySplit(sp);
+  if (Array.isArray(cat)) state.splitCatalog = cat;
+  if (Array.isArray(list)) state.splitInstalled = list;
+  if (est) applyEngineStatus(est);
   if (state.tab === 'split') { updateSplit(); syncTitlebar(); }
 }
 
@@ -3180,23 +3281,36 @@ async function installRuleSets(tags) {
 }
 
 // ---- 引擎啟停 ----
+// 每次按啟動／停止都遞增。啟動中按了停止，晚回來的啟動結果就不該再把狀態改成「執行中」。
+let engineOp = 0, engineStopping = false;
 async function toggleSplitEngine() {
+  if (engineStopping) return;
   if (splitRunning() || state.splitEngine === 'starting') {
-    await window.api.engineStop();
-    state.splitEngine = 'off'; state.splitTun = null;
+    engineOp++;
+    engineStopping = true;
+    try {
+      await window.api.engineStop();
+      state.splitEngine = 'off'; state.splitTun = null;
+      flash('引擎已停止，系統路由表已還原');
+    } catch (e) {
+      flash('停止引擎失敗：' + (e && e.message || e), 'var(--red)');
+      await refreshEngineStatus();
+    } finally { engineStopping = false; }
     updateSplit(); syncTitlebar();
-    flash('引擎已停止，系統路由表已還原');
     return;
   }
   await attemptSplitEngineStart();
 }
 
 async function attemptSplitEngineStart() {
+  const op = ++engineOp;
   state.splitEngine = 'starting'; updateSplit(); syncTitlebar();
   let r;
   try { r = await window.api.engineStart(); } catch (e) { r = { ok: false, error: e.message }; }
+  if (op !== engineOp) return;   // 途中被停止了
   if (r && r.ok) { state.splitEngine = 'running'; await refreshEngineStatus(); updateSplit(); syncTitlebar(); flash('分流引擎已啟動'); return; }
   state.splitEngine = 'off'; updateSplit(); syncTitlebar();
+  if (r && r.cancelled) return;
   if (r && r.needElevation) { state.splitUac = true; renderSplitUac(); return; }
   flash('引擎啟動失敗：' + ((r && (r.error || r.message)) || '未知錯誤'), 'var(--red)');
 }
@@ -3213,19 +3327,32 @@ async function grantSplitUac() {
 }
 
 // ---- 持久化（saveSplit）----
+function applySplit(sp) {
+  if (!sp) return;
+  if (Array.isArray(sp.rules)) state.splitRules = sp.rules;
+  if (sp.defaultTarget != null) state.splitDefaultTarget = sp.defaultTarget;
+  if (typeof sp.udp === 'boolean') state.splitUdp = sp.udp;
+  if (sp.mode) state.splitMode = sp.mode;
+  if ('globalTarget' in sp) state.splitGlobalTarget = sp.globalTarget;
+  if (typeof sp.lanDirect === 'boolean') state.splitLanDirect = sp.lanDirect;
+}
+
+// 畫面是先改、後存的。存失敗時要講，並把畫面拉回實際存著的規則 ——
+// 否則畫面上的規則跟引擎實際執行的不一樣，使用者完全不會知道。
 async function persistSplit(patch) {
   try {
     const merged = await window.api.saveSplit(patch);
-    if (merged) {
-      if (Array.isArray(merged.rules)) state.splitRules = merged.rules;
-      if (merged.defaultTarget != null) state.splitDefaultTarget = merged.defaultTarget;
-      if (typeof merged.udp === 'boolean') state.splitUdp = merged.udp;
-      if (merged.mode) state.splitMode = merged.mode;
-      if ('globalTarget' in merged) state.splitGlobalTarget = merged.globalTarget;
-      if (typeof merged.lanDirect === 'boolean') state.splitLanDirect = merged.lanDirect;
-      if (state.tab === 'split') updateSplit();
-    }
-  } catch {}
+    applySplit(merged);
+    if (merged && merged.engineError) flash('規則已儲存，但分流引擎無法套用：' + merged.engineError, 'var(--red)');
+    if (state.tab === 'split') updateSplit();
+    return true;
+  } catch (e) {
+    flash('儲存分流設定失敗：' + (e && e.message || e), 'var(--red)');
+    try { applySplit(await window.api.getSplit()); } catch (err) {}
+    if (state.tab === 'split') updateSplit();
+    if (state.tab === 'settings') refreshSettings();
+    return false;
+  }
 }
 
 // ---- 下拉選單（接 openMenu）----
@@ -3408,7 +3535,7 @@ function renderSplitSheet() {
           </div>
           <details id="spJson" ${state.showJson ? 'open' : ''} style="background:var(--fill2);border-radius:12px;padding:11px 15px;flex-shrink:0">
             <summary style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px;cursor:pointer;white-space:nowrap">對應 config.json</summary>
-            <div style="margin-top:7px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text">${esc(splitDraftJson())}</div>
+            <div style="margin-top:7px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7;word-break:break-all;user-select:text" id="spDraftJson">${esc(splitDraftJson())}</div>
           </details>
         </div>
         <div style="padding:14px 20px;border-top:1px solid var(--sep);display:flex;align-items:center;gap:10px">
@@ -3439,10 +3566,12 @@ function renderSplitSheet() {
     setDraftWhen({ dest: { match: 'ruleset', value: dTags.filter(x => x !== t).join('\n') } });
     renderSplitSheet();
   });
-  if ($('spAppValue')) $('spAppValue').addEventListener('input', e => { state.splitDraft.when.app = { match: appMatch, value: e.target.value }; });
-  if ($('spDestValue')) $('spDestValue').addEventListener('input', e => { state.splitDraft.when.dest = { match: dest.match, value: e.target.value }; });
-  if ($('spPortValue')) $('spPortValue').addEventListener('input', e => { state.splitDraft.when.port = e.target.value; });
-  if ($('spDraftName')) $('spDraftName').addEventListener('input', e => { state.splitDraft.name = e.target.value; });
+  // 打字時不重畫整張面板（會丟掉游標），只更新 JSON 預覽
+  const syncJson = () => { const el = $('spDraftJson'); if (el) el.textContent = splitDraftJson(); };
+  if ($('spAppValue')) $('spAppValue').addEventListener('input', e => { state.splitDraft.when.app = { match: appMatch, value: e.target.value }; syncJson(); });
+  if ($('spDestValue')) $('spDestValue').addEventListener('input', e => { state.splitDraft.when.dest = { match: dest.match, value: e.target.value }; syncJson(); });
+  if ($('spPortValue')) $('spPortValue').addEventListener('input', e => { state.splitDraft.when.port = e.target.value; syncJson(); });
+  if ($('spDraftName')) $('spDraftName').addEventListener('input', e => { state.splitDraft.name = e.target.value; syncJson(); });
   if ($('spPickProc')) $('spPickProc').onclick = e => { e.stopPropagation(); openMenu('split-proc', $('spPickProc')); };
   if ($('spBrowseExe')) $('spBrowseExe').onclick = () => splitBrowseExe();
   if ($('spRsPick')) $('spRsPick').onclick = e => { e.stopPropagation(); openMenu('split-rs', $('spRsPick')); };
@@ -3471,9 +3600,9 @@ async function saveSplitRule() {
 
   let error = '';
   if (!Object.keys(clean).length) error = '至少要填一項條件';
-  else if (clean.port && !/^\d{1,5}(-\d{1,5})?(\s*,\s*\d{1,5}(-\d{1,5})?)*$/.test(clean.port)) error = '埠格式不正確，例如 443, 80, 3000-3999';
+  else if (clean.port && !validPortSpec(clean.port)) error = '埠格式不正確（1–65535），例如 443, 80, 3000-3999';
   else if (clean.dest && clean.dest.match === 'ip') {
-    const bad = splitVals(clean.dest.value).findIndex(v => !/^(\d{1,3}(\.\d{1,3}){3}|[0-9a-fA-F:]+)(\/\d{1,3})?$/.test(v));
+    const bad = splitVals(clean.dest.value).findIndex(v => !validIpOrCidr(v));
     if (bad >= 0) error = `目的地第 ${bad + 1} 行不是合法的 IP 或網段`;
   }
   if (error) { state.splitDraft = { ...d, error }; renderSplitSheet(); return; }
@@ -3661,7 +3790,8 @@ function removeRuleSet(tag) {
     return;
   }
   state.setsPendingDel = null;
-  window.api.rulesetRemove(tag).then(() => { flash(`已移除 ${catLabel(tag)}`); refreshRuleSets(); }).catch(() => {});
+  window.api.rulesetRemove(tag).then(() => { flash(`已移除 ${catLabel(tag)}`); refreshRuleSets(); })
+    .catch(e => { flash(`移除 ${catLabel(tag)} 失敗：` + (e && e.message || e), 'var(--red)'); refreshRuleSets(); });
 }
 
 // ---- 空狀態的常用範本（v8）----
@@ -3693,9 +3823,9 @@ async function applyTemplate(i) {
   const need = (t.tags || []).filter(x => !isInstalled(x));
   if (need.length) {
     state.alert = {
-      title: '需要下載規則庫',
+      tone: 'info', title: '需要下載規則庫',
       body: `此範本需要下載 ${need.length} 個規則庫（${need.map(catLabel).join('、')}），要現在下載嗎？`,
-      action: '下載並套用',
+      primary: '下載並套用', secondary: '取消',
       go: async () => { closeAlert(); await doApplyTemplate(t); },
     };
     renderAlert();
@@ -3735,7 +3865,6 @@ function renderSplitUac() {
         <div style="background:var(--bg);border:1px solid var(--sep);border-radius:12px;padding:13px 15px;display:flex;flex-direction:column;gap:9px">
           ${items.map(u => `<div style="display:flex;align-items:flex-start;gap:9px;font-size:12px;line-height:1.6"><span style="width:17px;height:17px;flex-shrink:0;border-radius:50%;background:var(--accent-dim);color:var(--accent);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px">${u.n}</span><span style="flex:1;color:var(--text2);text-wrap:pretty">${esc(u.text)}</span></div>`).join('')}
         </div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text2);cursor:pointer"><input type="checkbox"> 記住這個選擇，之後自動以管理員身分啟動</label>
         <div style="display:flex;gap:9px">
           <button id="spUacCancel" class="hvFill2" style="flex:1;height:36px;border:1px solid var(--sep);border-radius:10px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap">稍後再說</button>
           <button id="spUacGrant" class="hvBright" style="flex:1;height:36px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">繼續並提權</button>
