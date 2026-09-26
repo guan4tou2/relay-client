@@ -25,13 +25,32 @@ const DEFAULT_SETTINGS = {
   logConnections: false
 };
 
-const store = new Store({
+const STORE_OPTS = {
   defaults: {
     servers: [],
     activeServerId: null,
     settings: { ...DEFAULT_SETTINGS }
   }
-});
+};
+
+// config.json 壞掉（斷電寫到一半、手動改壞）時 electron-store 8 預設直接丟 SyntaxError，
+// 而這裡是在 main.js 最頂端被 require 的 —— 連錯誤攔截都還沒掛上，app 就起不來了。
+// 壞檔改名留著（使用者或我們還救得回伺服器清單），用預設值重建。
+let recoveredFrom = null;
+function openStore() {
+  try { return new Store(STORE_OPTS); }
+  catch (e) {
+    if (!e || e.name !== 'SyntaxError') throw e;
+    const fs = require('fs');
+    const path = require('path');
+    const { app } = require('electron');
+    const file = path.join(app.getPath('userData'), 'config.json');
+    const backup = path.join(app.getPath('userData'), `config.corrupt-${Date.now()}.json`);
+    try { fs.renameSync(file, backup); recoveredFrom = backup; } catch (err) { throw e; }
+    return new Store(STORE_OPTS);
+  }
+}
+const store = openStore();
 
 function getServers() {
   return store.get('servers');
@@ -194,5 +213,6 @@ module.exports = {
   getActiveServerId, setActiveServerId,
   getSettings, updateSettings, reorderServers,
   getRoutes, setRoutes,
-  getSplit, saveSplit
+  getSplit, saveSplit,
+  recoveredFrom: () => recoveredFrom,
 };

@@ -1330,6 +1330,9 @@ app.whenReady().then(async () => {
   mainMark('ready');
   initFileLog();
   mainMark('fileLog');
+  if (config.recoveredFrom()) {
+    addLog('error', 'system', '設定檔損毀，已改用預設值重建', `損毀的檔案保留在：${config.recoveredFrom()}`);
+  }
   createWindow();
   mainMark('window');
   createTray();
