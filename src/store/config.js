@@ -29,6 +29,7 @@ const STORE_OPTS = {
   defaults: {
     servers: [],
     activeServerId: null,
+    creds: [],
     settings: { ...DEFAULT_SETTINGS }
   }
 };
@@ -52,8 +53,38 @@ function openStore() {
 }
 const store = openStore();
 
+// ===== 密碼加密（safeStorage）=====
+// config.js 不直接 require electron（單元測試不跑 electron）；main.js 在 app ready 後
+// 用 setCipher 注入 safeStorage。沒注入、或這台機器不支援加密時照舊存明文。
+// 存檔格式：'enc:v1:<base64>'。讀取時兩種都認，舊檔的明文會在 migrateSecrets() 補加密。
+const ENC_PREFIX = 'enc:v1:';
+let cipher = null;   // { encrypt: (string) => Buffer, decrypt: (Buffer) => string }
+let decryptFailures = 0;
+
+function setCipher(c) {
+  cipher = c && typeof c.encrypt === 'function' && typeof c.decrypt === 'function' ? c : null;
+  decryptFailures = 0;
+}
+
+function seal(v) {
+  if (typeof v !== 'string' || !v || v.startsWith(ENC_PREFIX) || !cipher) return v;
+  try { return ENC_PREFIX + cipher.encrypt(v).toString('base64'); } catch (e) { return v; }
+}
+
+// 解不開（例如設定檔被搬到另一台電腦、或 OS 金鑰被重設）就回空字串，讓使用者重新輸入。
+function unseal(v) {
+  if (typeof v !== 'string' || !v.startsWith(ENC_PREFIX)) return v;
+  if (!cipher) { decryptFailures++; return ''; }
+  try { return cipher.decrypt(Buffer.from(v.slice(ENC_PREFIX.length), 'base64')); }
+  catch (e) { decryptFailures++; return ''; }
+}
+
+const rawServers = () => store.get('servers') || [];
+const openServer = s => (s && s.password ? { ...s, password: unseal(s.password) } : s);
+const sealServer = s => (s && s.password ? { ...s, password: seal(s.password) } : s);
+
 function getServers() {
-  return store.get('servers');
+  return rawServers().map(openServer);
 }
 
 function getServer(id) {
@@ -70,11 +101,11 @@ function validPort(v) {
 
 function addServer(server) {
   if (!validPort(server && server.port)) throw new Error(`連接埠不合法：${server && server.port}（要介於 1 到 65535）`);
-  const servers = getServers();
+  const servers = rawServers();
   server.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   server.createdAt = Date.now();
   if (!server.type) server.type = 'socks5';
-  servers.push(server);
+  servers.push(sealServer(server));
   store.set('servers', servers);
   return server;
 }
@@ -83,16 +114,18 @@ function updateServer(id, updates) {
   if (updates && 'port' in updates && !validPort(updates.port)) {
     throw new Error(`連接埠不合法：${updates.port}（要介於 1 到 65535）`);
   }
-  const servers = getServers();
+  const servers = rawServers();
   const idx = servers.findIndex(s => s.id === id);
   if (idx === -1) return null;
-  servers[idx] = { ...servers[idx], ...updates, id };
+  const patch = { ...updates };
+  if ('password' in patch) patch.password = seal(patch.password);
+  servers[idx] = { ...servers[idx], ...patch, id };
   store.set('servers', servers);
-  return servers[idx];
+  return openServer(servers[idx]);
 }
 
 function deleteServer(id) {
-  const servers = getServers().filter(s => s.id !== id);
+  const servers = rawServers().filter(s => s.id !== id);
   store.set('servers', servers);
   if (store.get('activeServerId') === id) {
     store.set('activeServerId', null);
@@ -199,8 +232,40 @@ function saveSplit(patch) {
   return next;
 }
 
+// ===== 憑證庫 =====
+// 以前放在 renderer 的 localStorage（Chromium 的 leveldb，明文）。搬進 electron-store，密碼跟伺服器一樣加密。
+const str = (v, max = 500) => String(v == null ? '' : v).slice(0, max);
+
+function getCreds() {
+  const list = store.get('creds');
+  return (Array.isArray(list) ? list : []).map(c => ({ ...c, pass: unseal(c.pass) }));
+}
+
+function saveCreds(list) {
+  if (!Array.isArray(list)) throw new Error('憑證資料不合法');
+  const clean = list.filter(c => c && typeof c === 'object').map(c => ({
+    id: str(c.id, 64) || 'c' + Date.now() + Math.random().toString(36).slice(2, 6),
+    name: str(c.name, 200), user: str(c.user), pass: seal(str(c.pass)), note: str(c.note),
+  }));
+  store.set('creds', clean);
+  return getCreds();
+}
+
+// 舊資料補加密：伺服器密碼與憑證庫裡還是明文的，在 cipher 注入之後重寫一次。回傳重寫了幾筆。
+function migrateSecrets() {
+  if (!cipher) return 0;
+  const plain = v => typeof v === 'string' && v && !v.startsWith(ENC_PREFIX);
+  const servers = rawServers();
+  const s = servers.filter(x => x && plain(x.password)).length;
+  if (s) store.set('servers', servers.map(x => (x && plain(x.password) ? sealServer(x) : x)));
+  const creds = Array.isArray(store.get('creds')) ? store.get('creds') : [];
+  const c = creds.filter(x => x && plain(x.pass)).length;
+  if (c) store.set('creds', creds.map(x => (x && plain(x.pass) ? { ...x, pass: seal(x.pass) } : x)));
+  return s + c;
+}
+
 function reorderServers(orderedIds) {
-  const servers = getServers();
+  const servers = rawServers();
   const map = new Map(servers.map(s => [s.id, s]));
   const reordered = orderedIds.map(id => map.get(id)).filter(Boolean);
   for (const s of servers) if (!orderedIds.includes(s.id)) reordered.push(s); // 不在排序清單的補回，避免遺失
@@ -214,5 +279,8 @@ module.exports = {
   getSettings, updateSettings, reorderServers,
   getRoutes, setRoutes,
   getSplit, saveSplit,
+  getCreds, saveCreds,
+  setCipher, migrateSecrets,
+  decryptFailures: () => decryptFailures,
   recoveredFrom: () => recoveredFrom,
 };

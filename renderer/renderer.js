@@ -39,7 +39,7 @@ const state = {
   routeSheet: false, routeEditing: null, draft: { label: '', localPort: '10808', kind: 'socks5', hops: [], enabled: true },
   srvSheet: false, srvEditing: null, proto: 'socks5', authOpen: false, showPass: false, credPick: '', _form: { name: '', host: '', port: '', note: '', user: '', pass: '' },
   menu: null, level: 'all', search: '', expanded: {}, logs: [],
-  creds: JSON.parse(localStorage.getItem('proxy_creds') || '[]'),
+  creds: [],   // 開機後由 loadCreds() 從主行程載入（密碼在主行程加密存放）
   credEdit: null, cdraft: { name: '', user: '', pass: '', note: '' },
   pendingRouteDel: null, pendingSrvDel: null, pendingCredDel: null, pendingLogClear: false,
   srvBusy: false, routeBusy: false, bootLaunch: false, alert: null,
@@ -1131,9 +1131,31 @@ function copyLogs() {
   flash('已複製紀錄');
 }
 // =====================================================================================
-// 憑證庫（localStorage 'proxy_creds'）
+// 憑證庫（存在主行程，密碼以 safeStorage 加密）
 // =====================================================================================
-function saveCreds() { localStorage.setItem('proxy_creds', JSON.stringify(state.creds.map(({ id, name, user, pass, note }) => ({ id, name, user, pass, note, shown: false })))); }
+async function saveCreds() {
+  try {
+    const saved = await window.api.saveCreds(state.creds.map(({ id, name, user, pass, note }) => ({ id, name, user, pass, note })));
+    const shown = new Set(state.creds.filter(c => c.shown).map(c => c.id));
+    state.creds = (saved || []).map(c => ({ ...c, shown: shown.has(c.id) }));
+    return true;
+  } catch (e) { flash('儲存憑證失敗：' + e.message, 'var(--red)'); return false; }
+}
+
+// 舊版把憑證整包（含密碼）以明文放在 localStorage。第一次載入時搬進主行程，成功才刪掉舊的。
+async function loadCreds() {
+  let list = [];
+  try { list = (await window.api.getCreds()) || []; } catch (e) {}
+  let legacy = [];
+  try { legacy = JSON.parse(localStorage.getItem('proxy_creds') || '[]'); } catch (e) {}
+  if (Array.isArray(legacy) && legacy.length) {
+    const have = new Set(list.map(c => c.id));
+    const merged = [...list, ...legacy.filter(c => c && c.id && !have.has(c.id))];
+    try { list = (await window.api.saveCreds(merged)) || merged; localStorage.removeItem('proxy_creds'); }
+    catch (e) { list = merged; flash('搬移舊憑證失敗：' + e.message, 'var(--red)'); }
+  }
+  state.creds = list.map(c => ({ ...c, shown: false }));
+}
 
 // 各欄 min-width 加左右 padding 的總和，算法同 SRV_MINW
 const CRED_MINW = 96 + 100 + 96 + 80 + 58 + 32;
@@ -1168,7 +1190,7 @@ function renderCreds() {
         <div style="padding:13px 16px;display:flex;align-items:center;flex-wrap:wrap;row-gap:9px;box-sizing:border-box;animation:fadeUp .18s ease-out">
           <span style="width:150px;padding-right:10px;box-sizing:border-box"><input id="cdName" value="${esc(S.cdraft.name)}" placeholder="名稱" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--accent);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:600;outline:none"></span>
           <span style="width:130px;padding-right:10px;box-sizing:border-box"><input id="cdUser" value="${esc(S.cdraft.user)}" placeholder="帳號" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none"></span>
-          <span style="width:120px;padding-right:10px;box-sizing:border-box"><input id="cdPass" value="${esc(S.cdraft.pass)}" placeholder="密碼" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none"></span>
+          <span style="width:120px;padding-right:10px;box-sizing:border-box"><input id="cdPass" type="password" autocomplete="new-password" aria-label="密碼" value="${esc(S.cdraft.pass)}" placeholder="密碼" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--text);font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace;font-size:12.5px;outline:none"></span>
           <div style="order:2;margin-left:auto;display:flex;justify-content:flex-end;gap:6px">
             <button id="cdCancel" class="hvFill" title="取消" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--fill2);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"></line><line x1="19" y1="5" x2="5" y2="19"></line></svg></button>
             <button id="cdSave" class="hvBright" title="完成" style="width:26px;height:26px;border:none;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12.5 9.5 18 20 6.5"></polyline></svg></button>
@@ -2455,6 +2477,7 @@ async function boot() {
     settle(window.api.getEngineStatus(), null),
     settle(window.api.browserInfo(), null),
     settle(window.api.listInstances(), []),
+    settle(loadCreds(), null),
   ]).then(([logs, sp, est, browser, instances]) => {
     state.logs = (logs || []).map(l => ({ ...l, id: ++logSeq }));
     if (sp) {

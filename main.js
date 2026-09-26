@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, shell, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -417,8 +417,30 @@ function testRawHandshake(server, useTls, sendFn, validateFn) {
   });
 }
 
+// 伺服器密碼與憑證庫用 OS 的加密儲存（Windows DPAPI / macOS Keychain / Linux libsecret）。
+// 只能在 app ready 之後呼叫。
+function initSecretStorage() {
+  try {
+    if (!safeStorage || !safeStorage.isEncryptionAvailable()) {
+      addLog('warn', 'system', '這台機器不支援系統加密，伺服器密碼與憑證仍以明文存放');
+      return;
+    }
+    // Linux 沒有 keyring 時 Electron 退回 basic_text（寫死的金鑰），等於沒有加密 —— 照實記一筆
+    let backend = '';
+    try { backend = safeStorage.getSelectedStorageBackend ? safeStorage.getSelectedStorageBackend() : ''; } catch (e) {}
+    if (backend === 'basic_text') addLog('warn', 'system', '找不到系統金鑰圈（keyring），密碼加密的保護力有限');
+    config.setCipher({ encrypt: v => safeStorage.encryptString(v), decrypt: b => safeStorage.decryptString(b) });
+    const n = config.migrateSecrets();
+    if (n) addLog('info', 'system', `已把 ${n} 筆儲存的密碼改為加密存放`);
+    config.getServers(); config.getCreds();   // 試解一次，看有沒有解不開的
+    if (config.decryptFailures()) addLog('warn', 'system', '有儲存的密碼無法解密（設定檔可能來自另一台電腦），請重新輸入');
+  } catch (e) { addLog('warn', 'system', `無法啟用密碼加密：${e.message}`); }
+}
+
 // IPC Handlers
 ipcMain.handle('get-servers', () => config.getServers());
+ipcMain.handle('get-creds', () => config.getCreds());
+ipcMain.handle('save-creds', (_e, list) => config.saveCreds(list));
 ipcMain.handle('add-server', (_e, server) => config.addServer(server));
 ipcMain.handle('update-server', (_e, id, updates) => config.updateServer(id, updates));
 ipcMain.handle('delete-server', (_e, id) => {
@@ -1330,6 +1352,7 @@ app.whenReady().then(async () => {
   mainMark('ready');
   initFileLog();
   mainMark('fileLog');
+  initSecretStorage();          // 要在任何路由啟動（會讀伺服器密碼）之前
   if (config.recoveredFrom()) {
     addLog('error', 'system', '設定檔損毀，已改用預設值重建', `損毀的檔案保留在：${config.recoveredFrom()}`);
   }

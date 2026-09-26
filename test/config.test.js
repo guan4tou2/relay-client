@@ -303,3 +303,64 @@ describe('伺服器連接埠的驗證', () => {
     expect(() => config.updateServer(s.id, { label: '改名字' })).not.toThrow();
   });
 });
+
+// 伺服器密碼與憑證庫以 safeStorage 加密存放。這裡用一個看得出來的假 cipher 代替 safeStorage。
+describe('config — 密碼加密存放', () => {
+  const fakeCipher = {
+    encrypt: s => Buffer.from('X' + s.split('').reverse().join('')),
+    decrypt: b => { const t = b.toString(); if (!t.startsWith('X')) throw new Error('bad'); return t.slice(1).split('').reverse().join(''); },
+  };
+  beforeEach(() => { mockStore.set('creds', []); config.setCipher(fakeCipher); });
+  afterEach(() => config.setCipher(null));
+
+  test('addServer：存進去的是密文，讀出來是明文', () => {
+    const s = config.addServer({ host: 'h', port: 1080, username: 'u', password: 'p@ss' });
+    expect(s.password).toBe('p@ss');
+    const raw = mockStore.get('servers')[0];
+    expect(raw.password).toMatch(/^enc:v1:/);
+    expect(raw.password).not.toContain('p@ss');
+    expect(config.getServer(s.id).password).toBe('p@ss');
+  });
+
+  test('updateServer：改密碼會重新加密，不改密碼時原本的密文保留', () => {
+    const s = config.addServer({ host: 'h', port: 1080, password: 'one' });
+    config.updateServer(s.id, { name: 'renamed' });
+    expect(config.getServer(s.id).password).toBe('one');
+    const r = config.updateServer(s.id, { password: 'two' });
+    expect(r.password).toBe('two');
+    expect(mockStore.get('servers')[0].password).toMatch(/^enc:v1:/);
+    expect(config.getServer(s.id).password).toBe('two');
+  });
+
+  test('migrateSecrets：舊檔的明文密碼（伺服器與憑證）補加密，已加密的不動', () => {
+    mockStore.set('servers', [{ id: 'a', host: 'h', port: 1, password: 'plain' }, { id: 'b', host: 'h', port: 2 }]);
+    mockStore.set('creds', [{ id: 'c1', name: 'n', user: 'u', pass: 'cpass', note: '' }]);
+    expect(config.migrateSecrets()).toBe(2);
+    expect(mockStore.get('servers')[0].password).toMatch(/^enc:v1:/);
+    expect(mockStore.get('servers')[1].password).toBeUndefined();
+    expect(mockStore.get('creds')[0].pass).toMatch(/^enc:v1:/);
+    expect(config.getServer('a').password).toBe('plain');
+    expect(config.getCreds()[0].pass).toBe('cpass');
+    expect(config.migrateSecrets()).toBe(0);
+  });
+
+  test('解不開的密文回空字串並計數（不拋例外、不把密文當密碼送出去）', () => {
+    mockStore.set('servers', [{ id: 'a', host: 'h', port: 1, password: 'enc:v1:' + Buffer.from('garbage').toString('base64') }]);
+    config.setCipher(fakeCipher);
+    expect(config.getServer('a').password).toBe('');
+    expect(config.decryptFailures()).toBe(1);
+  });
+
+  test('沒有 cipher（不支援加密的機器）時照舊存明文', () => {
+    config.setCipher(null);
+    config.addServer({ host: 'h', port: 1080, password: 'p' });
+    expect(mockStore.get('servers')[0].password).toBe('p');
+  });
+
+  test('saveCreds 只留已知欄位、密碼加密；getCreds 解回明文', () => {
+    const out = config.saveCreds([{ id: 'c1', name: 'A', user: 'u', pass: 'secret', note: 'n', shown: true, evil: '<x>' }, null, 'bad']);
+    expect(out).toEqual([{ id: 'c1', name: 'A', user: 'u', pass: 'secret', note: 'n' }]);
+    expect(mockStore.get('creds')[0].pass).toMatch(/^enc:v1:/);
+    expect(() => config.saveCreds('nope')).toThrow();
+  });
+});
