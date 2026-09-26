@@ -251,3 +251,36 @@ describe('main.js — toggle-system-proxy 不信任 renderer 傳來的埠', () =
     expect(r.error).toBeTruthy();
   });
 });
+
+// 斷線保護觸發後使用者按「停止」：以前 engine-stop 不清重試計時器，
+// 4 秒內計時器看到 tripped 還是 true，就違背使用者的意思把引擎重新拉起來。
+describe('main.js — engine-stop 會解除斷線保護與重試計時器', () => {
+  test('觸發 → 停止 → tripped 歸零，而且計時器到期也不會再 start', async () => {
+    jest.useFakeTimers();
+    const SingBoxEngine = require('../src/engine/singbox');
+    const handlers = {};
+    const onSpy = jest.spyOn(SingBoxEngine.prototype, 'on').mockImplementation(function (ev, fn) { handlers[ev] = fn; return this; });
+    const startBlock = jest.spyOn(SingBoxEngine.prototype, 'startBlock').mockResolvedValue({ ok: true });
+    const start = jest.spyOn(SingBoxEngine.prototype, 'start').mockResolvedValue({ ok: true });
+    const stop = jest.spyOn(SingBoxEngine.prototype, 'stop').mockResolvedValue({ ok: true });
+    try {
+      await ipcHandlers['update-settings'](null, { killSwitch: true, killSwitchAutoReconnect: true });
+      ipcHandlers['get-engine-status']();          // setupEngine() → 掛上 exit handler
+      expect(typeof handlers.exit).toBe('function');
+      handlers.exit(1);
+      await Promise.resolve(); await Promise.resolve();
+      expect((await ipcHandlers['get-killswitch']()).tripped).toBe(true);
+
+      await ipcHandlers['engine-stop']();
+      expect((await ipcHandlers['get-killswitch']()).tripped).toBe(false);
+
+      start.mockClear();
+      await jest.advanceTimersByTimeAsync(10000);
+      expect(start).not.toHaveBeenCalled();
+    } finally {
+      onSpy.mockRestore(); startBlock.mockRestore(); start.mockRestore(); stop.mockRestore();
+      await ipcHandlers['update-settings'](null, { killSwitch: false });
+      jest.useRealTimers();
+    }
+  });
+});

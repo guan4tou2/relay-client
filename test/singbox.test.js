@@ -305,3 +305,52 @@ describe('SingBoxEngine start/startBlock 分派（不實際 spawn）', () => {
     expect(e._userStopping).toBe(true);
   });
 });
+
+// 啟動中間隔著 validate 與清殘留兩個 await。以前 state 要到 spawn 前才變 starting，
+// 連點兩下就會 spawn 兩個 sing-box；停止或結束程式發生在 validate 期間也擋不住 spawn。
+describe('SingBoxEngine 啟動競態', () => {
+  const deferred = () => { let resolve; const p = new Promise(r => { resolve = r; }); return { p, resolve }; };
+  const mkReady = () => {
+    const e = mk();
+    e.binPath = process.execPath;              // 存在的檔案，過得了 existsSync
+    e.isElevated = () => true;
+    e.platform = { ...e.platform, staleEngineCleanupCommand: () => null, killTree: async () => {} };
+    return e;
+  };
+
+  test('同時呼叫兩次 start，只驗證（也只會 spawn）一次', async () => {
+    const e = mkReady();
+    const d = deferred(); let calls = 0;
+    e.validate = () => { calls++; return d.p; };
+    const a = e.start({ rules: [], routes: [] });
+    const b = e.start({ rules: [], routes: [] });
+    d.resolve({ ok: false, error: 'stop here' });   // 不讓它真的 spawn
+    const [ra, rb] = await Promise.all([a, b]);
+    expect(calls).toBe(1);
+    expect(ra).toBe(rb);
+    expect(e._inflight).toBe(null);
+  });
+
+  test('validate 期間被 stop()，之後不會 spawn', async () => {
+    const e = mkReady();
+    const d = deferred();
+    e.validate = () => d.p;
+    const p = e.start({ rules: [], routes: [] });
+    await e.stop();
+    d.resolve({ ok: true });
+    const r = await p;
+    expect(r.ok).toBe(false);
+    expect(r.cancelled).toBe(true);
+    expect(e.proc).toBe(null);
+    expect(e.state).toBe('off');
+  });
+
+  test('上一次啟動結束後可以再啟動（in-flight 會清掉）', async () => {
+    const e = mkReady();
+    let calls = 0;
+    e.validate = async () => { calls++; return { ok: false, error: 'x' }; };
+    await e.start({ rules: [], routes: [] });
+    await e.start({ rules: [], routes: [] });
+    expect(calls).toBe(2);
+  });
+});
