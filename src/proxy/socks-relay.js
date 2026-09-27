@@ -1,6 +1,7 @@
 const net = require('net');
 const { EventEmitter } = require('events');
 const { connectViaProxy, connectViaChain } = require('./connect');
+const { noDelay } = require('./socket-util');
 
 // 統計事件的最小間隔。
 //
@@ -114,6 +115,7 @@ class SocksRelay extends EventEmitter {
       this.activeSockets.add(clientSocket);
       this.activeSockets.add(remoteSocket);
 
+      noDelay(clientSocket, remoteSocket);
       clientSocket.pipe(remoteSocket);
       remoteSocket.pipe(clientSocket);
 

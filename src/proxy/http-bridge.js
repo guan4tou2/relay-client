@@ -2,6 +2,7 @@ const http = require('http');
 const { EventEmitter } = require('events');
 const { URL } = require('url');
 const { connectViaProxy, connectViaChain, openSocketToProxy } = require('./connect');
+const { noDelay } = require('./socket-util');
 
 // 跟 SocksRelay 同一個理由：原本每個資料 chunk 都 emit 一次，
 // 那個事件在 app 裡會變成每個網路封包一次跨行程 IPC。
@@ -99,6 +100,7 @@ class HttpBridge extends EventEmitter {
       this.activeSockets.add(clientSocket);
       this.activeSockets.add(remoteSocket);
 
+      noDelay(clientSocket, remoteSocket);
       clientSocket.pipe(remoteSocket);
       remoteSocket.pipe(clientSocket);
 
@@ -201,6 +203,7 @@ class HttpBridge extends EventEmitter {
       this.activeSockets.add(remoteSocket);
       if (res.socket) this.activeSockets.add(res.socket);
 
+      noDelay(remoteSocket, res.socket);
       remoteSocket.pipe(res.socket);
 
       let cleaned = false;

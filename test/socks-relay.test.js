@@ -561,3 +561,35 @@ describe('SocksRelay — 握手期間與握手後的邊界', () => {
     expect(relay.activeSockets.size).toBe(0);
   });
 });
+
+describe('SocksRelay — 轉送的 socket 關掉 Nagle', () => {
+  test('建立轉送時，客戶端與上游兩端都 setNoDelay(true)', async () => {
+    connectViaProxy.mockReset();
+    const relay = new SocksRelay();
+    const port = await getFreePort();
+    await relay.start(port, { host: '127.0.0.1', port: 1 });
+    const upstream = net.createServer(s => s.on('data', () => {}));
+    await new Promise(r => upstream.listen(0, '127.0.0.1', r));
+    const remote = net.connect(upstream.address().port, '127.0.0.1');
+    const remoteSpy = jest.spyOn(remote, 'setNoDelay');
+    connectViaProxy.mockResolvedValue(remote);
+    const protoSpy = jest.spyOn(net.Socket.prototype, 'setNoDelay');
+    try {
+      const c = net.connect(port, '127.0.0.1');
+      c.on('error', () => {});
+      await new Promise(r => c.once('connect', r));
+      c.write(Buffer.from([0x05, 0x01, 0x00]));
+      await new Promise(r => c.once('data', r));
+      c.write(Buffer.from([0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x01, 0xbb]));
+      await new Promise(r => c.once('data', r));   // CONNECT 成功回覆
+      expect(remoteSpy).toHaveBeenCalledWith(true);
+      // 客戶端那一端（relay 伺服器接受的 socket）也要關；上游那次被實例上的 spy 攔下，不會算在原型這裡
+      expect(protoSpy.mock.calls.filter(a => a[0] === true).length).toBeGreaterThanOrEqual(1);
+      c.destroy();
+    } finally {
+      protoSpy.mockRestore();
+      await relay.stop();
+      await new Promise(r => upstream.close(r));
+    }
+  });
+});
