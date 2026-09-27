@@ -20,7 +20,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "electron-store": "^8.1.0",
+    "electron-store": "^11.0.2",
     "electron-updater": "^6.8.9",
     "socks": "^2.8.3"
   },
