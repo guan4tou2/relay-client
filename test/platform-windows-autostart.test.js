@@ -110,6 +110,7 @@ describe('舊名字留下的登入項目', () => {
     fakeRegistry({ 'electron.app.代理客戶端': 'C:\\a.exe' });
     autostart.clearLegacy();
     for (const [, args] of execFileSync.mock.calls) {
+      // eslint-disable-next-line no-control-regex -- 刻意比對「非 ASCII」
       for (const a of args) expect(/[^\x00-\x7F]/.test(String(a))).toBe(false);
     }
   });

@@ -29,7 +29,7 @@ const { Launcher } = require('./src/launcher');
 const updateCache = require('./src/update-cache');
 const platform = require('./src/platform').current;  // 平台差異一律走 adapter，main.js 不做 process.platform 判斷
 const systemProxy = platform.systemProxy;            // 系統代理開關（Windows 登錄檔 / macOS networksetup / Linux gsettings）
-const { execSync, spawn } = require('child_process');
+const { spawn } = require('child_process');
 
 let mainWindow = null;
 let tray = null;
@@ -38,7 +38,6 @@ let engine = null;
 let ruleSets = null;
 let systemProxyEnabled = false;
 let systemProxyTargetPort = null;   // 系統代理目前指向哪個本地埠（停掉那條路由時要跟著處理）
-let startTime = null;
 let _quitting = false;             // before-quit 清理中：計時器、exit 事件都不該再拉起任何東西
 
 // Debug log buffer（記憶體，供「紀錄」分頁即時顯示）
@@ -903,6 +902,7 @@ function setupEngine() {
   engine.on('log', (chunk) => {
     // sing-box 一個 data 事件常含多行；逐行處理並濾掉已知的良性噪音（見 ENGINE_LOG_NOISE）。
     for (const raw of String(chunk).split(/\r?\n/)) {
+      // eslint-disable-next-line no-control-regex -- 去掉 sing-box 輸出的 ANSI 色碼（ESC[..m）
       const line = raw.replace(/\x1b\[[0-9;]*m/g, '').trim();
       if (!line || ENGINE_LOG_NOISE.test(line)) continue;
       if (consumeEngineLine(line)) continue;   // 命中 / 連線相關 → 只統計，不進紀錄

@@ -31,7 +31,7 @@ function makeUpstream(sinkPort) {
   return net.createServer(s => {
     let stage = 0;
     s.on('error', () => {});
-    const onData = (buf) => {
+    const onData = () => {
       if (stage === 0) { s.write(Buffer.from([0x05, 0x00])); stage = 1; return; }
       if (stage === 1) {
         const reply = Buffer.alloc(10);

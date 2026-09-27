@@ -16,7 +16,8 @@
     "make-icon": "node scripts/make-icon.js",
     "pack": "npm run make-icon && electron-builder --win --dir",
     "dist": "npm run make-icon && electron-builder --win",
-    "release": "npm run make-icon && electron-builder --win --publish always"
+    "release": "npm run make-icon && electron-builder --win --publish always",
+    "lint": "eslint ."
   },
   "dependencies": {
     "electron-store": "^8.1.0",
@@ -24,8 +25,11 @@
     "socks": "^2.8.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "electron": "^44.4.1",
     "electron-builder": "^26.15.3",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
     "jest": "^30.5.1",
     "png-to-ico": "^2.1.8",
     "sharp": "^0.35.4"
@@ -79,6 +83,7 @@
       "!**/*.min.js.map",
       "!**/tsconfig.json",
       "!**/.eslintrc*",
+      "!eslint.config.js",
       "!.gitignore",
       "!package-lock.json"
     ],

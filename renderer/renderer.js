@@ -2185,7 +2185,7 @@ let launchPreviewSeq = 0;
 async function refreshLaunchPreview() {
   const d = state.launchDraft; if (!d) return;
   const seq = ++launchPreviewSeq;
-  let text = '';
+  let text;
   try { text = (await window.api.launchPreview(d)) || ''; } catch { text = ''; }
   if (seq !== launchPreviewSeq) return;
   state.launchPreview = text;
@@ -2882,12 +2882,6 @@ const missingTags = r => {
   return (d && d.match === 'ruleset') ? splitVals(d.value).filter(t => !isInstalled(t)) : [];
 };
 
-function splitDotColor(d) {
-  if (!d) return 'var(--text3)';
-  if (/^(var\(|#|rgb)/.test(d)) return d;
-  const map = { good: 'var(--good)', ok: 'var(--good)', green: 'var(--good)', up: 'var(--good)', amber: 'var(--amber)', warn: 'var(--amber)', yellow: 'var(--amber)', red: 'var(--red)', error: 'var(--red)', bad: 'var(--red)', down: 'var(--red)', off: 'var(--text3)', idle: 'var(--text3)', neutral: 'var(--text3)', gray: 'var(--text3)', grey: 'var(--text3)' };
-  return map[String(d).toLowerCase()] || 'var(--text3)';
-}
 
 // ---- 引擎狀態同步（getEngineStatus / onEngineStatus）----
 function applyEngineStatus(st) {
@@ -3632,7 +3626,7 @@ function renderSplitSheet() {
 
   const condHtml = condDefs.map(c => {
     const open = !!state.splitOpenConds[c.k];
-    let body = '';
+    let body;   // 每個分支都會指定
     if (c.k === 'app') {
       body = `<div style="display:flex;gap:2px;padding:2px;background:var(--fill2);border-radius:8px">${seg([['name', '程式名稱'], ['path', '完整路徑']], appMatch, 'sappmode')}</div>
         <div style="display:flex;gap:8px">

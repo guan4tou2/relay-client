@@ -43,7 +43,7 @@ async function connectViaChain(chain, destination) {
     } catch (err) {
       if (socket) socket.destroy();
       const p = chain[i];
-      throw new Error(`chain hop ${i + 1}/${chain.length} (${p.type || 'socks5'} ${p.host}:${p.port}) failed: ${err.message}`);
+      throw new Error(`chain hop ${i + 1}/${chain.length} (${p.type || 'socks5'} ${p.host}:${p.port}) failed: ${err.message}`, { cause: err });
     }
   }
   return socket;

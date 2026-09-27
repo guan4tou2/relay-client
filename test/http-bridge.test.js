@@ -522,7 +522,7 @@ describe('HttpBridge — stop cleans up', () => {
         path: 'y.com:443'
       });
 
-      req.on('connect', (res, socket) => {
+      req.on('connect', () => {
         expect(bridge.activeSockets.size).toBeGreaterThan(0);
         resolve();
       });

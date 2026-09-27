@@ -224,7 +224,7 @@ describe('config — schema 1 → 2 遷移', () => {
   const legacy = (extra = {}) => ({
     rules: [
       { id: 'a1', name: 'Chrome', exe: 'chrome.exe', match: 'name', target: 'r1', on: true },
-      { id: 'a2', name: 'Steam', path: 'C:\S\steam.exe', match: 'path', target: 'direct', on: false },
+      { id: 'a2', name: 'Steam', path: 'C:\\S\\steam.exe', match: 'path', target: 'direct', on: false },
     ],
     netRules: [{ id: 'n1', name: '台灣', match: 'ruleset', value: 'geoip-tw', target: 'direct', on: true }],
     defaultTarget: 'r1', udp: true, ...extra,
@@ -236,7 +236,7 @@ describe('config — schema 1 → 2 遷移', () => {
     expect(s.schema).toBe(2);
     expect(s.rules.map(r => r.id)).toEqual(['a1', 'a2', 'n1']);
     expect(s.rules[0].when).toEqual({ app: { match: 'name', value: 'chrome.exe' } });
-    expect(s.rules[1].when).toEqual({ app: { match: 'path', value: 'C:\S\steam.exe' } });
+    expect(s.rules[1].when).toEqual({ app: { match: 'path', value: 'C:\\S\\steam.exe' } });
     expect(s.rules[2].when).toEqual({ dest: { match: 'ruleset', value: 'geoip-tw' } });
     // 其餘欄位照搬
     expect(s.defaultTarget).toBe('r1');

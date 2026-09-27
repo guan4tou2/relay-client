@@ -1,5 +1,5 @@
 const { EventEmitter } = require('events');
-const { spawn, execSync, execFile } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileP = promisify(execFile);
 const fs = require('fs');

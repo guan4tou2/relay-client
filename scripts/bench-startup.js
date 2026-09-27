@@ -69,7 +69,6 @@ async function oneRound(port) {
   const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'bench-'));
   fs.writeFileSync(path.join(ud, 'config.json'), '{}');
 
-  const t0 = Date.now();
   spawn(EXE, [`--remote-debugging-port=${port}`, `--user-data-dir=${ud}`], { detached: true, stdio: 'ignore' }).unref();
 
   const tHttp = await until(() => getJSON(port, '/json/version').then(() => true).catch(() => false));

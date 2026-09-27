@@ -5,8 +5,6 @@
 //
 // We extract testable functions by partially loading main.js with mocked Electron.
 
-const { EventEmitter } = require('events');
-
 // 系統代理換成假的。理由有兩個，都不只是「讓測試好寫」：
 //   - 真的打下去會有副作用：Windows 上寫使用者的 HKCU、Linux 上呼叫 gsettings。
 //     單元測試不該改執行它的那台機器的設定。
