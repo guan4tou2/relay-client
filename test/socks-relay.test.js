@@ -494,6 +494,7 @@ describe('SocksRelay — stop cleans up sockets', () => {
     });
 
     await relay.stop();
+    expect(destroySpy).toHaveBeenCalled();   // 標題講的就是這件事，以前沒驗
     expect(relay.activeSockets.size).toBe(0);
     expect(relay.server).toBeNull();
   });
@@ -591,5 +592,61 @@ describe('SocksRelay — 轉送的 socket 關掉 Nagle', () => {
       await relay.stop();
       await new Promise(r => upstream.close(r));
     }
+  });
+});
+
+// RFC 1928 要求只能選客戶端提出的方法。以前一律回 0x00，只提出帳密（0x02）的客戶端照協定應該斷線。
+describe('SocksRelay — 認證方法協商', () => {
+  let relay, port;
+  beforeEach(async () => {
+    connectViaProxy.mockReset();
+    relay = new SocksRelay();
+    port = await getFreePort();
+    await relay.start(port, { host: '127.0.0.1', port: 1 });
+  });
+  afterEach(async () => { if (relay.running) await relay.stop(); });
+
+  const open = async () => {
+    const c = net.connect(port, '127.0.0.1');
+    c.on('error', () => {});
+    await new Promise(r => c.once('connect', r));
+    return c;
+  };
+  const read = c => new Promise(r => c.once('data', r));
+
+  test('只提出帳密（0x02）：選 0x02、收下任何帳密、回成功，之後照常 CONNECT', async () => {
+    const upstream = net.createServer(s => s.on('data', () => {}));
+    await new Promise(r => upstream.listen(0, '127.0.0.1', r));
+    connectViaProxy.mockResolvedValue(net.connect(upstream.address().port, '127.0.0.1'));
+    const c = await open();
+    try {
+      c.write(Buffer.from([0x05, 0x01, 0x02]));
+      expect([...(await read(c))]).toEqual([0x05, 0x02]);
+      const u = Buffer.from('user'), p = Buffer.from('x');
+      c.write(Buffer.concat([Buffer.from([0x01, u.length]), u, Buffer.from([p.length]), p]));
+      expect([...(await read(c))]).toEqual([0x01, 0x00]);
+      c.write(Buffer.from([0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x01, 0xbb]));
+      const rep = await read(c);
+      expect(rep[0]).toBe(0x05);
+      expect(rep[1]).toBe(0x00);
+    } finally { c.destroy(); await new Promise(r => upstream.close(r)); }
+  });
+
+  test('同時提出 0x00 與 0x02：選 0x00（不多一道子協商）', async () => {
+    const c = await open();
+    c.write(Buffer.from([0x05, 0x02, 0x02, 0x00]));
+    expect([...(await read(c))]).toEqual([0x05, 0x00]);
+    c.destroy();
+  });
+
+  test('兩種都沒有（例如只提出 GSSAPI 0x01）：回 0xFF 並關閉，不會送出 CONNECT 失敗的回覆', async () => {
+    const c = await open();
+    const closed = new Promise(r => c.once('close', r));
+    const chunks = [];
+    c.on('data', d => chunks.push(d));
+    c.write(Buffer.from([0x05, 0x01, 0x01]));
+    await closed;
+    expect([...Buffer.concat(chunks)]).toEqual([0x05, 0xff]);
+    expect(connectViaProxy).not.toHaveBeenCalled();
   });
 });
