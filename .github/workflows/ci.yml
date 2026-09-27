@@ -16,9 +16,9 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # electron 套件本身要求 node >= 22.12 才能安裝，ESLint 10 也要 20.19 以上 —— 用目前的 LTS
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
