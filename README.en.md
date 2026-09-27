@@ -180,7 +180,9 @@ git tag v1.1.1 && git push origin v1.1.1
 - Strict **Content-Security-Policy** (`default-src 'self'`) — no remote resources; fully offline
 - Navigation guards deny external window opens / navigation
 - Loop-safe engine config: the app and `sing-box` always bypass themselves
-- Proxy passwords stored via `electron-store` (OS user profile)
+- Server passwords and the credential vault are encrypted with the OS keystore (Electron `safeStorage`: DPAPI / Keychain / libsecret) before being written to disk; the log says so when encryption is unavailable
+- HTTPS proxy certificates are verified by default; a per-server "skip certificate verification" switch exists for self-signed proxies (HTTPS servers created before this version keep the old unverified behaviour and are flagged in the list)
+- Imported route ids/ports, the port written into the system proxy settings, and launched program paths are validated
 
 ## License
 

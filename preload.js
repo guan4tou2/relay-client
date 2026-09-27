@@ -7,6 +7,10 @@ contextBridge.exposeInMainWorld('api', {
   updateServer: (id, updates) => ipcRenderer.invoke('update-server', id, updates),
   deleteServer: (id) => ipcRenderer.invoke('delete-server', id),
 
+  // 憑證庫（存在主行程，密碼加密）
+  getCreds: () => ipcRenderer.invoke('get-creds'),
+  saveCreds: (list) => ipcRenderer.invoke('save-creds', list),
+
   // System proxy
   toggleSystemProxy: (enable, port) => ipcRenderer.invoke('toggle-system-proxy', enable, port),
   // 系統代理也可能從系統匣被切換，視窗要跟著更新，否則畫面上的開關會跟實際不一致

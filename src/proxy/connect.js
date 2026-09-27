@@ -2,6 +2,26 @@ const net = require('net');
 const tls = require('tls');
 const { SocksClient } = require('socks');
 
+// 憑證驗證預設開啟；只有使用者對那台伺服器明確勾了「略過憑證驗證」（proxy.tlsInsecure）才關。
+// 關掉驗證的話，路上任何人都能冒充代理，收走 Proxy-Authorization 裡的帳密。
+const CERT_ERRORS = new Set([
+  'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'ERR_TLS_CERT_ALTNAME_INVALID',
+]);
+function explainTlsError(err) {
+  if (!err || !CERT_ERRORS.has(err.code)) return err;
+  const e = new Error(`${err.message}（代理伺服器的憑證無法驗證；如果它使用自簽憑證，可在伺服器設定開啟「略過憑證驗證」）`);
+  e.code = err.code;
+  return e;
+}
+
+// TLS 選項：IP 不能當 SNI（Node 會警告），但驗證時仍要比對 IP，所以 IP 放 host、網域放 servername
+function tlsOptions(proxy) {
+  const opts = { rejectUnauthorized: !proxy.tlsInsecure };
+  if (net.isIP(proxy.host)) opts.host = proxy.host; else opts.servername = proxy.host;
+  return opts;
+}
+
 // 單跳：等同 connectViaChain([proxy], destination)，行為與舊版一致。
 async function connectViaProxy(proxy, destination) {
   return chainHop(proxy, destination, null);
@@ -50,7 +70,7 @@ async function chainHop(proxy, target, upstream) {
   if (type === 'http' || type === 'https') {
     let sock = upstream || await openSocketToProxy(proxy, false);
     try {
-      if (type === 'https') sock = await tlsHandshake(sock, proxy.host); // 與 proxy 先建 TLS（可跑在通道上）
+      if (type === 'https') sock = await tlsHandshake(sock, proxy); // 與 proxy 先建 TLS（可跑在通道上）
       await httpConnectOverSocket(sock, target, proxy);
       return sock;
     } catch (err) {
@@ -65,7 +85,7 @@ async function chainHop(proxy, target, upstream) {
 function openSocketToProxy(proxy, useTls) {
   return new Promise((resolve, reject) => {
     let socket;
-    const onError = (err) => { socket.destroy(); reject(err); };
+    const onError = (err) => { socket.destroy(); reject(explainTlsError(err)); };
     const onTimeout = () => { socket.destroy(); reject(new Error('Proxy connection timeout')); };
 
     const onConnect = () => {
@@ -75,7 +95,7 @@ function openSocketToProxy(proxy, useTls) {
       resolve(socket);
     };
     if (useTls) {
-      socket = tls.connect(proxy.port, proxy.host, { rejectUnauthorized: false }, onConnect);
+      socket = tls.connect({ ...tlsOptions(proxy), port: proxy.port, host: proxy.host }, onConnect);
     } else {
       socket = net.connect(proxy.port, proxy.host, onConnect);
     }
@@ -86,15 +106,16 @@ function openSocketToProxy(proxy, useTls) {
 }
 
 // 在既有 socket 上跟對端做 TLS（用於 https proxy，含通道上的 TLS-in-tunnel）。
-function tlsHandshake(socket, servername) {
+function tlsHandshake(socket, proxy) {
   return new Promise((resolve, reject) => {
-    const t = tls.connect({ socket, servername, rejectUnauthorized: false }, () => {
+    const onErr = (err) => reject(explainTlsError(err));
+    const t = tls.connect({ ...tlsOptions(proxy), socket }, () => {
       t.setTimeout(0);                          // 握手完成 → 清掉逾時，避免砍掉活的 TLS 通道
-      t.removeListener('error', reject);
+      t.removeListener('error', onErr);
       resolve(t);
     });
     t.setTimeout(15000, () => { t.destroy(); reject(new Error('TLS handshake timeout')); });
-    t.once('error', reject);
+    t.once('error', onErr);
   });
 }
 
@@ -140,4 +161,4 @@ function readHttpStatus(socket) {
   });
 }
 
-module.exports = { connectViaProxy, connectViaChain, chainHop, openSocketToProxy };
+module.exports = { connectViaProxy, connectViaChain, chainHop, openSocketToProxy, tlsOptions, explainTlsError };

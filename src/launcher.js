@@ -43,8 +43,22 @@ class Launcher {
 
   _exists(p) { try { return require('fs').existsSync(p); } catch (e) { return false; } }
 
+  _splitArgs(s) {
+    const args = []; let cur = ''; let inQ = false;
+    for (const ch of s) {
+      if (ch === '"') { inQ = !inQ; continue; }
+      if (ch === ' ' && !inQ) { if (cur) args.push(cur); cur = ''; continue; }
+      cur += ch;
+    }
+    if (cur) args.push(cur);
+    return args;
+  }
+
+  // 不放行 `.`：`..` 會讓目錄跳出 browser-profiles，刪路由時等於刪掉整個 userData。
   profileDir(routeId) {
-    return this.path.join(this.userDataDir, 'browser-profiles', String(routeId).replace(/[^\w.-]/g, '_'));
+    const name = String(routeId == null ? '' : routeId).replace(/[^\w-]/g, '_');
+    if (!name) throw new Error('路由 id 不合法');
+    return this.path.join(this.userDataDir, 'browser-profiles', name);
   }
 
   // 瀏覽器的啟動參數。抽出來是為了讓「將執行」預覽與實際啟動用同一份，不會對不上。
@@ -96,7 +110,7 @@ class Launcher {
     const argv = String(exeArgs || '').trim();
     let child;
     try {
-      child = spawn(exePath, argv ? argv.split(/\s+/) : [], { detached: true, stdio: 'ignore', windowsHide: false });
+      child = spawn(exePath, argv ? this._splitArgs(argv) : [], { detached: true, stdio: 'ignore', windowsHide: false });
     } catch (e) { return { ok: false, error: e.message }; }
     child.on('error', () => {});
     child.unref();
@@ -133,17 +147,17 @@ class Launcher {
 
   list() { return Array.from(this.instances.values()); }
 
-  kill(id) {
+  async kill(id) {
     const inst = this.instances.get(id);
     if (!inst) return { ok: false, error: '找不到這個實例' };
-    try { this.platform.killTree(inst.pid); } catch (e) { /* 已經自己結束了 */ }
+    try { await this.platform.killTree(inst.pid); } catch (e) { /* 已經自己結束了 */ }
     this.instances.delete(id);
     this.onChange(this.list());
     this.log('info', 'launch', `已結束 ${inst.name}`, `PID ${inst.pid}`);
     return { ok: true };
   }
 
-  killAll() { for (const id of Array.from(this.instances.keys())) this.kill(id); }
+  async killAll() { for (const id of Array.from(this.instances.keys())) await this.kill(id); }
 }
 
 module.exports = { Launcher };

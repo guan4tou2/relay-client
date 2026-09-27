@@ -255,6 +255,7 @@ class HttpBridge extends EventEmitter {
       };
       this.server.close(done);
       const timer = setTimeout(done, 2000);
+      if (timer.unref) timer.unref();
     });
   }
 

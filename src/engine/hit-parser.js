@@ -14,6 +14,8 @@
 // `inbound connection from` 也要吃掉：它每條連線一行，留著會把 app.log 灌滿
 const PARSED = /router: (match\[|sniffed protocol)|inbound connection (to|from)|outbound connection to|connection closed/;
 
+const PENDING_MAX = 2048;
+
 class HitParser {
   // getRuleIndex()：回傳目前這份設定的 route.rules 索引對照表（singbox.js 的 engine.ruleIndex）
   // onHit(hit)：一條連線定案時呼叫，hit = { host, info }
@@ -32,7 +34,14 @@ class HitParser {
     if (!id) return true;
 
     let m = line.match(/inbound connection to (\S+)/);
-    if (m) { this.pending.set(id, { host: m[1], info: null }); return true; }
+    if (m) {
+      if (this.pending.size >= PENDING_MAX) {
+        const oldest = this.pending.keys().next().value;
+        this.pending.delete(oldest);
+      }
+      this.pending.set(id, { host: m[1], info: null });
+      return true;
+    }
 
     m = line.match(/sniffed protocol: [^,]+, domain: (\S+)/);
     if (m) {

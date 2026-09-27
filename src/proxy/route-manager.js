@@ -99,5 +99,32 @@ function detectPortConflicts(routes, primaryPorts = []) {
   return { clear, conflicts };
 }
 
+// 路由 id 會被拿去組瀏覽器 profile 的目錄名，刪路由時整個目錄 rmSync。
+// 匯入檔的 id 是外部資料：放 `..` 進來就會變成刪掉整個 userData。
+const ROUTE_ID_RE = /^[\w-]{1,64}$/;
+const isValidRouteId = id => typeof id === 'string' && ROUTE_ID_RE.test(id);
+
+// 存檔前的形狀檢查（save-route 用）。hops 可以是空的：匯入時對不回伺服器的跳點會被拿掉，
+// 路由照樣存下來讓使用者補；真的要啟動時 route-start 會擋。
+function normalizeRouteDef(route) {
+  if (!route || typeof route !== 'object') throw new Error('路由資料不合法');
+  if (!isValidRouteId(route.id)) throw new Error(`路由 id 不合法：${String(route.id).slice(0, 80)}`);
+  const port = Number(route.localPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`本地端口不合法：${route.localPort}（要介於 1 到 65535）`);
+  if (route.kind !== 'socks5' && route.kind !== 'http') throw new Error(`本地端口類型不合法：${route.kind}`);
+  const hops = Array.isArray(route.hops) ? route.hops.filter(h => typeof h === 'string' && h) : [];
+  return {
+    ...route,
+    id: route.id,
+    label: String(route.label == null ? '' : route.label).slice(0, 200),
+    localPort: port,
+    kind: route.kind,
+    hops,
+    enabled: route.enabled !== false,
+  };
+}
+
 module.exports = RouteManager;
 module.exports.detectPortConflicts = detectPortConflicts;
+module.exports.isValidRouteId = isValidRouteId;
+module.exports.normalizeRouteDef = normalizeRouteDef;
