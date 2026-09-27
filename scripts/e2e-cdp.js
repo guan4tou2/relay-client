@@ -41,7 +41,7 @@ class CDP {
   constructor(ws) { this.ws = ws; this.id = 0; this.pending = new Map(); }
   static async connect(url) {
     const ws = new WebSocket(url);
-    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = e => rej(new Error('ws error')); });
+    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('ws error')); });
     const c = new CDP(ws);
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);

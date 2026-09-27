@@ -1,6 +1,7 @@
 const net = require('net');
 const { EventEmitter } = require('events');
 const { connectViaProxy, connectViaChain } = require('./connect');
+const { noDelay } = require('./socket-util');
 
 // 統計事件的最小間隔。
 //
@@ -81,8 +82,20 @@ class SocksRelay extends EventEmitter {
     clientSocket.on('error', () => {});
 
     try {
+      // RFC 1928：只能選客戶端有提出的方法。以前一律回 0x00（無需認證），
+      // 只提出帳密（0x02）的客戶端照協定應該斷線。本地 relay 只聽 127.0.0.1，
+      // 所以帳密照收不驗 —— 使用者在 app 裡順手填了帳密也能用。兩種都沒有才拒絕。
       const authMethods = await this._readGreeting(clientSocket);
-      clientSocket.write(Buffer.from([0x05, 0x00]));
+      if (authMethods.includes(0x00)) {
+        clientSocket.write(Buffer.from([0x05, 0x00]));
+      } else if (authMethods.includes(0x02)) {
+        clientSocket.write(Buffer.from([0x05, 0x02]));
+        await this._readUserPass(clientSocket);
+        clientSocket.write(Buffer.from([0x01, 0x00]));
+      } else {
+        clientSocket.end(Buffer.from([0x05, 0xff]));
+        throw Object.assign(new Error('No acceptable SOCKS5 auth method'), { noReply: true });
+      }
 
       const request = await this._readRequest(clientSocket);
       const { host, port } = request;
@@ -114,6 +127,7 @@ class SocksRelay extends EventEmitter {
       this.activeSockets.add(clientSocket);
       this.activeSockets.add(remoteSocket);
 
+      noDelay(clientSocket, remoteSocket);
       clientSocket.pipe(remoteSocket);
       remoteSocket.pipe(clientSocket);
 
@@ -141,6 +155,7 @@ class SocksRelay extends EventEmitter {
       this._flushStats();
       if (gen !== this._gen) { clientSocket.destroy(); return; }
       this.emit('log', 'error', `FAILED ${err.message}`);
+      if (err.noReply) return;   // 已經回過協定層的拒絕（例如 0xFF），socket 正在關
       const errReply = Buffer.from([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
       clientSocket.write(errReply);
       clientSocket.destroy();
@@ -168,6 +183,35 @@ class SocksRelay extends EventEmitter {
       const onErr = (err) => { cleanup(); reject(err); };
       const onClose = () => { cleanup(); reject(new Error('client closed before greeting')); };
       socket.on('data', onData);   // on（非 once）→ 跨多個封包累積，避免分段時讀短
+      socket.once('error', onErr);
+      socket.once('close', onClose);
+    });
+  }
+
+  // RFC 1929 帳密子協商：VER(0x01) ULEN UNAME PLEN PASSWD。內容不檢查，只要格式正確。
+  _readUserPass(socket) {
+    return new Promise((resolve, reject) => {
+      let buf = Buffer.alloc(0);
+      const cleanup = () => { clearTimeout(timer); socket.removeListener('data', onData); socket.removeListener('error', onErr); socket.removeListener('close', onClose); };
+      const timer = setTimeout(() => { cleanup(); socket.destroy(); reject(new Error('Auth timeout')); }, 30000);
+      if (timer.unref) timer.unref();
+      const onData = (chunk) => {
+        buf = Buffer.concat([buf, chunk]);
+        if (buf.length < 2) return;
+        if (buf[0] !== 0x01) { cleanup(); return reject(new Error('Bad SOCKS5 auth version')); }
+        const ulen = buf[1];
+        if (buf.length < 2 + ulen + 1) return;
+        const plen = buf[2 + ulen];
+        const end = 3 + ulen + plen;
+        if (buf.length < end) return;
+        const leftover = buf.slice(end);
+        cleanup();
+        if (leftover.length && socket.unshift) socket.unshift(leftover);
+        resolve();
+      };
+      const onErr = (err) => { cleanup(); reject(err); };
+      const onClose = () => { cleanup(); reject(new Error('client closed during auth')); };
+      socket.on('data', onData);
       socket.once('error', onErr);
       socket.once('close', onClose);
     });

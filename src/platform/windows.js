@@ -352,8 +352,46 @@ function browserCandidates() {
   ].filter(Boolean);
 }
 
+// ---- 斷線保護的防火牆層（見 src/engine/ks-firewall.js 的說明）----
+// 所有規則共用同一個名稱：netsh 的 delete rule name=… 會一次刪掉同名的全部，
+// 崩潰後殘留的也一樣收得乾淨，不必記住加過哪些。
+const KS_RULE_NAME = 'RelayClient-KillSwitch';
+
+function ksAddRuleArgs(program) {
+  // 延遲載入：ks-firewall 是純邏輯模組，但避免 adapter 載入時就計算位址範圍
+  const { LOCAL_NOT_TUN, REMOTE_PUBLIC } = require('../engine/ks-firewall');
+  return ['advfirewall', 'firewall', 'add', 'rule', `name=${KS_RULE_NAME}`, 'dir=out', 'action=block',
+    `program=${program}`, 'enable=yes', 'profile=any', `localip=${LOCAL_NOT_TUN}`, `remoteip=${REMOTE_PUBLIC}`];
+}
+const ksDeleteArgs = () => ['advfirewall', 'firewall', 'delete', 'rule', `name=${KS_RULE_NAME}`];
+
+const killSwitchFirewall = {
+  ruleName: KS_RULE_NAME,
+  addRuleArgs: ksAddRuleArgs,
+  deleteArgs: ksDeleteArgs,
+  sameName: appNameEquals,
+  async addRule(program) {
+    if (!path.isAbsolute(String(program || ''))) throw new Error('需要完整路徑');
+    await execFileP('netsh', ksAddRuleArgs(program), { windowsHide: true, timeout: 8000 });
+  },
+  // 查詢不需要系統管理員權限：用來確認殘留規則有沒有真的刪掉
+  async hasRules() {
+    try { await execFileP('netsh', ['advfirewall', 'firewall', 'show', 'rule', `name=${KS_RULE_NAME}`], { windowsHide: true, timeout: 8000 }); return true; }
+    catch (e) { return false; }
+  },
+  async removeAll() {
+    try { await execFileP('netsh', ksDeleteArgs(), { windowsHide: true, timeout: 8000 }); }
+    catch (e) {
+      // 沒有同名規則時 netsh 回 exit code 1（訊息會依系統語言而不同，只能看代碼）
+      if (e && e.code === 1) return;
+      throw e;
+    }
+  },
+};
+
 module.exports = {
   id: 'win32', label: 'Windows',
+  killSwitchFirewall,
   engineBinName, tunInterfaceName, selfProcessNames, isElevated, engineElevation,
   staleEngineCleanupCommand, killTree,
   path,   // 讓共用模組跟這個 adapter 用同一種路徑語意（不看執行主機）

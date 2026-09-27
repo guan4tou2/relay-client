@@ -59,7 +59,7 @@ const listProcessesCommand = () => null; // 不用外部指令
 
 function listProcesses(procRoot = '/proc') {
   const seen = new Set(); const res = [];
-  let entries = [];
+  let entries;
   try { entries = fs.readdirSync(procRoot); } catch (e) { return []; }
   for (const e of entries) {
     if (!/^\d+$/.test(e)) continue;

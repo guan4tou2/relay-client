@@ -14,7 +14,7 @@
 | 用路由開瀏覽器（實例分流） | 真的開 Chrome、看流量走路由、按兩次「結束實例」 | ✅ |
 | 自動更新 | `scripts/e2e-update.js` 對安裝版 | ➖ 只驗到「已是最新版本」（見下） |
 | 分流引擎（TUN） | `scripts/e2e-engine.js`，管理員實例 + 裁判 | ✅ 14/14 |
-| 斷線保護 | `scripts/e2e-killswitch.js` + 自寫的連續探測 | ⚠️ 有約 5 秒外洩空窗，[#3](https://github.com/guan4tou2/relay-client/issues/3) |
+| 斷線保護 | `scripts/e2e-killswitch.js` + 自寫的連續探測 | ⚠️ 有約 5 秒外洩空窗，[#3](https://github.com/guan4tou2/relay-client/issues/3)（其後已加防火牆層，見下方「尚未涵蓋」） |
 | 排版 | 900×700 與最小 800×550、深淺色，每頁截圖 | ✅ |
 | 單元測試／e2e-cdp | `npm test`、`scripts/e2e-cdp.js` | ✅ 359/359、22/22 |
 
@@ -33,7 +33,7 @@
 
 ## 已知問題
 
-- **斷線保護不是完全 fail-closed**（[#3](https://github.com/guan4tou2/relay-client/issues/3)）：sing-box 死掉時 Windows 會連 TUN 一起移除，流量退回實體網卡；封鎖模式要重建一張 TUN 才生效，實測空窗約 5 秒。README 與 RULES.md 已照實寫。
+- **斷線保護：純網域／IP 規則仍有空窗**（[#3](https://github.com/guan4tou2/relay-client/issues/3)）：sing-box 死掉時 Windows 會連 TUN 一起移除，流量退回實體網卡；封鎖模式要重建一張 TUN 才生效，實測空窗約 5 秒。依程式的保護已加上 Windows 防火牆層（`src/engine/ks-firewall.js`：本機位址不是 TUN 且對方是公網 → 封鎖），網域／IP 規則與全域模式沒有程式可比對，不在涵蓋範圍。
 
 ## 尚未涵蓋
 
@@ -43,7 +43,7 @@
 | 開機自動啟動 | 會寫 `HKCU\...\Run`（腳本會快照並還原） | `scripts/e2e-autostart.js`，見檔頭 |
 | 「用到才提權」的重開流程 | 會跳 UAC，要使用者按 | `scripts/e2e-elevate.js`，見檔頭 |
 | 自動更新的「有新版 → 下載」 | 安裝版 = GitHub 最新版時只驗得到「已是最新版本」 | 先裝一個比 GitHub 舊的版本，再跑 `scripts/e2e-update.js` |
-| 斷線保護的外洩空窗 | 現有腳本量不到（要邊砍邊連續探測） | 修 #3 時補一個連續探測的斷言 |
+| 斷線保護的外洩空窗 | 現有腳本量不到（要邊砍邊連續探測）；防火牆層只有單元測試，**尚未在實機量測** | 管理員實例 + 依程式的規則，邊砍 sing-box 邊每 0.3 秒 `curl`，預期第一次探測就失敗；另確認 `netsh advfirewall firewall show rule name=RelayClient-KillSwitch` 在停止引擎與結束 app 後都查不到 |
 
 ## 跑引擎／斷線保護測試的前置
 
