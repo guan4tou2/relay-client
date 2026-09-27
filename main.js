@@ -25,6 +25,7 @@ const RouteManager = require('./src/proxy/route-manager');   // SocksRelay / Htt
 const SingBoxEngine = require('./src/engine/singbox');
 const { RuleSetStore } = require('./src/engine/ruleset');
 const { HitParser } = require('./src/engine/hit-parser');
+const { KillSwitchFirewall, protectedPrograms } = require('./src/engine/ks-firewall');
 const { Launcher } = require('./src/launcher');
 const updateCache = require('./src/update-cache');
 const platform = require('./src/platform').current;  // 平台差異一律走 adapter，main.js 不做 process.platform 判斷
@@ -510,8 +511,12 @@ ipcMain.handle('open-logs-folder', async () => {
 
 ipcMain.handle('get-settings', () => config.getSettings());
 ipcMain.handle('update-settings', (_e, updates) => {
+  const before = config.getSettings();
   const saved = config.updateSettings(updates);
   if (updates && 'logConnections' in updates) setLogPersistDebug(updates.logConnections);
+  // 斷線保護的開關與範圍變了 → 防火牆層跟著布防／解除
+  const ksKey = st => JSON.stringify([!!st.killSwitch, st.killSwitchScope, st.killSwitchApps || []]);
+  if (ksKey(before) !== ksKey(saved)) syncKsFirewall();
   return saved;
 });
 
@@ -933,6 +938,56 @@ function resetKillSwitch() {
   ksRetryTimer = null;
   killSwitchState = ksIdle();
 }
+// ---- 防火牆層（issue #3）----
+// 引擎在跑、斷線保護開著的期間，對受保護程式預先加上防火牆規則（見 src/engine/ks-firewall.js）。
+// sing-box 一死、流量退回實體網卡的當下就會被擋，不必等封鎖模式重建 TUN。
+let ksFirewall = null;
+function setupKsFirewall() {
+  if (ksFirewall) return ksFirewall;
+  ksFirewall = new KillSwitchFirewall({
+    adapter: platform.killSwitchFirewall || null,
+    listProcesses: () => (platform.listProcessesAsync ? platform.listProcessesAsync() : platform.listProcesses()),
+    basename: p => platform.path.basename(p),
+    log: (lvl, msg) => addLog(lvl, 'killswitch', msg),
+  });
+  return ksFirewall;
+}
+// 同一時間只跑一個：布防與解除都是一串 netsh，交錯執行會把剛加的規則刪掉
+let ksFwChain = Promise.resolve();
+const serialFw = fn => (ksFwChain = ksFwChain.then(fn, fn));
+async function doSyncKsFirewall() {
+  const fw = setupKsFirewall();
+  if (!fw.supported || _quitting) return;
+  if (killSwitchState.tripped) return;   // 觸發中：規則正在擋，不能先拆再裝
+  const st = config.getSettings();
+  const engineUp = !!(engine && engine.state === 'running' && !engine._blocking);
+  if (!st.killSwitch || !engineUp) {
+    if (fw.active) { await fw.disarm(); addLog('info', 'killswitch', '已解除防火牆層'); }
+    return;
+  }
+  const r = await fw.arm(protectedPrograms({ settings: st, split: config.getSplit() }));
+  if (r.ok) {
+    addLog('info', 'killswitch', r.count
+      ? `防火牆層已布防：${r.count} 支受保護程式在引擎中止的當下就會被擋`
+      : '防火牆層沒有可比對的程式（純網域／IP 規則或全域模式），這部分仍只靠封鎖模式');
+  }
+}
+const syncKsFirewall = () => serialFw(doSyncKsFirewall).catch(e => addLog('warn', 'killswitch', `防火牆層同步失敗：${e.message}`));
+
+// 開機時清掉上一輪殘留的規則：app 崩潰時規則會留著（那正是它的用意），
+// 但重開之後引擎還沒跑，留著就是受保護的程式永遠連不出去。
+async function cleanupStaleKsFirewall() {
+  const fw = setupKsFirewall();
+  const ad = platform.killSwitchFirewall;
+  if (!fw.supported || !ad.hasRules) return;
+  if (!(await ad.hasRules())) return;
+  await fw.disarm();
+  if (await ad.hasRules()) {
+    addLog('error', 'killswitch', '上次留下的斷線保護防火牆規則移除不了（需要系統管理員權限），受保護的程式可能連不出去',
+      `以系統管理員身分啟動 RelayClient 一次即可自動清除；或手動執行：netsh advfirewall firewall delete rule name=${ad.ruleName}`);
+  } else addLog('info', 'killswitch', '已清除上次留下的斷線保護防火牆規則');
+}
+
 // 重連失敗後要回到封鎖模式。重連的第一步是 stop（收掉封鎖用的 TUN），
 // 以前失敗就這樣關著等下一次重試 —— 那 4 秒以上受保護的程式完全沒有保護，而介面還寫著「已暫停」。
 async function reenterBlockMode() {
@@ -967,6 +1022,7 @@ function scheduleKillSwitchRetry() {
         resetKillSwitch();
         addLog('info', 'killswitch', '自動重連成功，受保護程式已恢復連線');
         sendKillSwitch(); sendEngineStatus();
+        syncKsFirewall();
         return;
       }
       if (r && r.cancelled) return;                        // 使用者在中途按了停止
@@ -1005,7 +1061,7 @@ ipcMain.handle('killswitch-reconnect', async () => {
   await ensureSplitRoutesStarted();  // 跟自動重連一樣：引擎要用的路由先帶起來，否則 TUN 往死掉的埠送
   if (_quitting || gen !== engine._gen) return { ok: false, cancelled: true, error: '啟動已取消' };
   const r = await engine.start(engineParams());
-  if (r && r.ok) resetKillSwitch();
+  if (r && r.ok) { resetKillSwitch(); syncKsFirewall(); }
   else if (!(r && r.cancelled)) await reenterBlockMode();   // 失敗就回封鎖模式，不要關著不管
   sendKillSwitch(); sendEngineStatus();
   return r;
@@ -1014,6 +1070,7 @@ ipcMain.handle('killswitch-clear', async () => {
   resetKillSwitch();
   setupEngine();
   await engine.stop();               // 移除 TUN，恢復正常網路（使用者明確接受直連）
+  await syncKsFirewall();            // 防火牆層也要拆，不然受保護的程式還是被擋
   sendKillSwitch(); sendEngineStatus();
   return { ok: true };
 });
@@ -1164,7 +1221,7 @@ async function reloadEngineIfRunning() {
     addLog('error', 'engine', `套用新設定後分流引擎無法啟動：${why}`);
     if (wasBlocking) { killSwitchState.blocking = false; sendKillSwitch(); }   // 封鎖模式沒回來，不能再寫「已暫停」
     else if (config.getSettings().killSwitch) await triggerKillSwitch(0, `套用新設定後分流引擎無法啟動：${why}`);
-  }
+  } else if (r && r.ok && !wasBlocking) syncKsFirewall();   // 規則可能改了 → 受保護的程式清單跟著換
   sendEngineStatus();
   return r;
 }
@@ -1191,6 +1248,7 @@ ipcMain.handle('engine-start', async () => {
   resetHits();
   const r = await engine.start(engineParams());
   sendEngineStatus();
+  if (r && r.ok) syncKsFirewall();
   return r;
 });
 ipcMain.handle('engine-stop', async () => {
@@ -1198,6 +1256,7 @@ ipcMain.handle('engine-stop', async () => {
   const wasTripped = killSwitchState.tripped;
   resetKillSwitch();
   if (engine) await engine.stop();
+  await syncKsFirewall();
   if (wasTripped) sendKillSwitch();
   sendEngineStatus();
   return { ok: true };
@@ -1276,6 +1335,7 @@ async function autoStartEngineElevated() {
   const r = await engine.start(engineParams());
   sendEngineStatus();
   addLog(r.ok ? 'info' : 'error', 'engine', r.ok ? '分流引擎已自動啟動（提權後）' : ('引擎自動啟動失敗：' + (r.error || r.message || '')));
+  if (r.ok) syncKsFirewall();
 }
 
 // Window controls
@@ -1374,6 +1434,7 @@ app.whenReady().then(async () => {
   initFileLog();
   mainMark('fileLog');
   initSecretStorage();          // 要在任何路由啟動（會讀伺服器密碼）之前
+  serialFw(cleanupStaleKsFirewall).catch(() => {});   // 排在任何布防之前（同一條序列）
   const routeIdsFixed = config.migrateRouteIds();
   if (routeIdsFixed) addLog('info', 'route', `已修正 ${routeIdsFixed} 條路由的 id／類型（舊版匯入留下的格式）`);
   const tlsMigrated = config.migrateTlsDefaults();
@@ -1442,6 +1503,8 @@ app.on('before-quit', (e) => {
     // 放在最後的話，Windows 上引擎收尾最壞要 7 秒多，加上中繼的 2 秒就會撞到 8 秒的強制結束。
     if (systemProxyEnabled) restoreSystemProxy();
     try { if (engine) await engine.stop(); } catch (err) {}          // 再關引擎 → 讓 sing-box 移除 TUN
+    // 防火牆層：引擎關了就要拆，否則結束 app 之後受保護的程式永遠連不出去
+    try { if (ksFirewall && ksFirewall.supported) await serialFw(() => ksFirewall.disarm()); } catch (err) {}
     try { if (routeManager) await routeManager.stopAll(); } catch (err) {}
   })().finally(() => { clearTimeout(force); app.exit(0); });
 });

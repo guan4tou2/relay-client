@@ -4,7 +4,7 @@
 
 [繁體中文](README.md) · **English**
 
-Turn any SOCKS / HTTP upstream into **multiple local ports · multi-hop chains · per-app tunnels**, with a real fail-closed kill-switch.
+Turn any SOCKS / HTTP upstream into **multiple local ports · multi-hop chains · per-app tunnels**, with a per-app kill-switch.
 
 [![CI](https://github.com/guan4tou2/relay-client/actions/workflows/ci.yml/badge.svg)](https://github.com/guan4tou2/relay-client/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D6)
@@ -33,7 +33,7 @@ Most tools pick **one** model: either they **intercept per-app traffic** (Proxif
 - **Per-app split routing (TUN)**: force programs by name or full path through a chosen route while everything else stays direct — like Proxifier, but on a modern TUN engine ([sing-box](https://github.com/SagerNet/sing-box), gVisor stack) rather than legacy LSP hooks. Works even for apps that have no proxy setting of their own.
 - **Composable rules**: a single rule can match on **app × destination × port × protocol** at once (all conditions must hold), e.g. "`chrome.exe` reaching `*.netflix.com:443` goes through the JP node". Destinations can be a domain, suffix, keyword, regex, IP/CIDR, or a **region (GeoIP)** / **site category (GeoSite)** rule-set; each rule resolves to direct, a route, or **block**. Nothing is downloaded until you ask; you can also import your own `.srs` / `.json` offline.
   The rule engine and simulator are done; the GUI currently only edits the *app* condition — write the rest into `config.json` per **[RULES.md](RULES.md)** (the app preserves conditions it can't yet edit).
-- **Kill-switch (fail-closed)**: if the split engine dies unexpectedly, protected apps are blocked rather than quietly falling back to your real IP. Domain and region rules are protected the same way.
+- **Kill-switch**: if the split engine dies unexpectedly, protected apps are blocked rather than quietly falling back to your real IP. Apps protected by **program** also get a Windows Firewall rule that blocks them the moment the engine stops. Domain / IP-only rules and global mode rely on the rebuilt block-mode adapter, which leaves a gap of about 5 seconds ([#3](https://github.com/guan4tou2/relay-client/issues/3)).
 - **Also included**: one-click system proxy, latency test, per-route traffic stats, live multi-hop view, dark / light / system theme, tray, boot auto-start, import/export, auto-update.
 - **Hardened**: `contextIsolation` + `sandbox`, strict CSP, fully offline (no remote fonts/CDN), navigation locked to local pages.
 
@@ -112,7 +112,7 @@ If the engine crashes (vs. you stopping it), RelayClient immediately re-establis
 | Per-app routing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Many local ports, each → own upstream/chain** | ✅ **core** | ❌ | ➖ one active ruleset | ➖ | ➖ one mixed port | ➖ |
 | Multi-hop chaining | ✅ per route | ❌ | ✅ | ➖ | ✅ relay groups | ✅ |
-| Per-app **kill-switch** (fail-closed) | ✅ | ➖ block rules, not fail-closed | ➖ | ❌ | ➖ global TUN only | ➖ |
+| Per-app **kill-switch** | ✅ per program (firewall, immediate); ➖ domain-only rules (~5s gap) | ➖ block rules, not fail-closed | ➖ | ❌ | ➖ global TUN only | ➖ |
 | Domain rules | ✅ | ✅ hostname + wildcards | ✅ | ❌ app only | ✅ **powerful** | ✅ |
 | Region (GeoIP) rules | ✅ | ❌ | ✅ | ❌ | ✅ **powerful** | ✅ |
 | One rule combining app × destination × port × protocol | ✅ | ✅ | ✅ | ❌ | ➖ via YAML | ✅ |
@@ -120,7 +120,7 @@ If the engine crashes (vs. you stopping it), RelayClient immediately re-establis
 | Config style | GUI | GUI + CLI | GUI | GUI | YAML (+ GUIs) | GUI |
 | Platform | Windows 10/11 | Win · macOS · Linux | Win · macOS | Windows | cross-platform | Win · macOS |
 
-- **vs [ProxyBridge](https://github.com/InterceptSuite/ProxyBridge)** — both MIT, both do per-app proxying, but by different means. ProxyBridge intercepts at packet level with the **WinDivert driver**, runs on Windows / macOS / Linux, has the **most complete UDP support**, ships a CLI for scripting, and matches on process, IP, port, protocol and hostname (with wildcards). RelayClient uses a **TUN adapter**, Windows only, and adds three things ProxyBridge doesn't have: **many local ports each bound to its own upstream or chain**, **multi-hop chaining**, and a genuinely **fail-closed kill-switch** — plus region (GeoIP) matching. If you need cross-platform, full UDP, or would rather not have a virtual adapter, ProxyBridge is the better fit.
+- **vs [ProxyBridge](https://github.com/InterceptSuite/ProxyBridge)** — both MIT, both do per-app proxying, but by different means. ProxyBridge intercepts at packet level with the **WinDivert driver**, runs on Windows / macOS / Linux, has the **most complete UDP support**, ships a CLI for scripting, and matches on process, IP, port, protocol and hostname (with wildcards). RelayClient uses a **TUN adapter**, Windows only, and adds three things ProxyBridge doesn't have: **many local ports each bound to its own upstream or chain**, **multi-hop chaining**, and a **per-app kill-switch** (immediate for program rules via the firewall; domain-only rules still have a ~5s gap) — plus region (GeoIP) matching. If you need cross-platform, full UDP, or would rather not have a virtual adapter, ProxyBridge is the better fit.
 - **vs Proxifier / ProxyCap** — mature *commercial* per-app proxifiers with rich, polished host/port/app rule engines. RelayClient is free & open and adds the multiple-local-ports-each-with-its-own-chain model plus a per-app kill-switch; its domain/region engine and GUI are both complete.
 - **vs Clash / Mihomo** — a powerful rule-based tunnel for the SS/VMess/Trojan world with domain & GeoIP rules, configured in YAML. RelayClient stays simple: plain SOCKS/HTTP upstreams, routing by app or by port, zero YAML.
 - **Which one should you pick?** Many ports + chaining + kill-switch on Windows → **RelayClient**. Cross-platform, full UDP or CLI automation → **ProxyBridge**. A mature domain/GeoIP GUI or SS/VMess/Trojan → **Clash / Mihomo**. Polished commercial host/port rules → **Proxifier / ProxyCap**.

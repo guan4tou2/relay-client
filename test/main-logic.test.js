@@ -22,6 +22,15 @@ jest.mock('../src/platform', () => {
         enable: jest.fn((port) => ({ enabled: true, server: `127.0.0.1:${port}` })),
         disable: jest.fn(() => ({ enabled: false, server: '' })),
       },
+      // 斷線保護的防火牆層：換成假的（真的會在 Windows runner 上呼叫 netsh 改防火牆）
+      killSwitchFirewall: {
+        ruleName: 'RelayClient-KillSwitch',
+        sameName: (a, b) => String(a).toLowerCase() === String(b).toLowerCase(),
+        addRule: jest.fn(async () => {}),
+        removeAll: jest.fn(async () => {}),
+        hasRules: jest.fn(async () => false),
+      },
+      listProcessesAsync: jest.fn(async () => []),
     },
   };
 });
@@ -331,5 +340,63 @@ describe('main.js — 啟動途中按停止', () => {
       expect(r.cancelled).toBe(true);
       expect(start).not.toHaveBeenCalled();
     } finally { start.mockRestore(); }
+  });
+});
+
+
+// issue #3：引擎在跑、斷線保護開著時預先布防；使用者停止時解除；觸發中不能拆（那時規則正在擋）
+describe('main.js — 斷線保護的防火牆層', () => {
+  const SingBoxEngine = require('../src/engine/singbox');
+  const { current } = require('../src/platform');
+  const fw = current.killSwitchFirewall;
+  const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); await new Promise(r => setImmediate(r)); };
+  let start, stop, startBlock;
+  beforeEach(async () => {
+    fw.addRule.mockClear(); fw.removeAll.mockClear();
+    start = jest.spyOn(SingBoxEngine.prototype, 'start').mockImplementation(async function () { this.state = 'running'; this._blocking = false; return { ok: true }; });
+    stop = jest.spyOn(SingBoxEngine.prototype, 'stop').mockImplementation(async function () { this._gen = (this._gen || 0) + 1; this.state = 'off'; return { ok: true }; });
+    startBlock = jest.spyOn(SingBoxEngine.prototype, 'startBlock').mockImplementation(async function () { this.state = 'running'; this._blocking = true; return { ok: true }; });
+    await ipcHandlers['save-split'](null, { mode: 'rule', rules: [{ id: 'k1', on: true, target: 'r-x', when: { app: { match: 'path', value: 'C:\\Apps\\tg.exe' } } }] });
+    await ipcHandlers['update-settings'](null, { killSwitch: true, killSwitchScope: 'all', killSwitchAutoReconnect: false });
+    await flush();
+  });
+  afterEach(async () => {
+    await ipcHandlers['engine-stop']();
+    await ipcHandlers['update-settings'](null, { killSwitch: false });
+    await flush();
+    start.mockRestore(); stop.mockRestore(); startBlock.mockRestore();
+  });
+
+  test('引擎啟動成功 → 對受保護程式加防火牆規則；使用者停止 → 全部移除', async () => {
+    const r = await ipcHandlers['engine-start']();
+    expect(r.ok).toBe(true);
+    await flush();
+    expect(fw.addRule).toHaveBeenCalledWith('C:\\Apps\\tg.exe');
+    fw.removeAll.mockClear();
+    await ipcHandlers['engine-stop']();
+    await flush();
+    expect(fw.removeAll).toHaveBeenCalled();
+  });
+
+  test('引擎異常中止（觸發斷線保護）時不會拆掉規則', async () => {
+    await ipcHandlers['engine-start']();
+    await flush();
+    fw.removeAll.mockClear();
+    engineHandlers.exit(1);            // sing-box 當掉
+    await flush();
+    expect((await ipcHandlers['get-killswitch']()).tripped).toBe(true);
+    // 觸發期間改設定也不能動到規則
+    await ipcHandlers['update-settings'](null, { killSwitchScope: 'apps', killSwitchApps: ['x.exe'] });
+    await flush();
+    expect(fw.removeAll).not.toHaveBeenCalled();
+  });
+
+  test('斷線保護關掉 → 解除', async () => {
+    await ipcHandlers['engine-start']();
+    await flush();
+    fw.removeAll.mockClear();
+    await ipcHandlers['update-settings'](null, { killSwitch: false });
+    await flush();
+    expect(fw.removeAll).toHaveBeenCalled();
   });
 });
