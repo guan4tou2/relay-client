@@ -1,9 +1,12 @@
 // 多端口路由：每個本地埠 → 各自的上游代理或多跳串鏈。
 const fs = require('fs');
 const net = require('net');
-const { dialog } = require('electron');
+const path = require('path');
+const electron = require('electron');
+const { dialog } = electron;
 const config = require('../store/config');
 const RouteManager = require('../proxy/route-manager');   // SocksRelay / HttpBridge 由它持有，這裡不直接碰
+const RemoteRouteManager = require('../proxy/remote-route-manager');
 const { state, send } = require('./state');
 const { addLog } = require('./log');
 const systemProxy = require('./system-proxy');
@@ -58,14 +61,34 @@ function resolveRoute(route) {
   };
 }
 
+// 轉送跑在獨立的 utilityProcess（src/proxy/relay-host.js），不跟介面搶主行程的事件迴圈。
+// 沒有 utilityProcess 的環境（單元測試）或設了 RELAY_IN_PROCESS=1（除錯用）就留在主行程。
+function createRouteManager() {
+  const { utilityProcess } = electron;
+  if (!utilityProcess || process.env.RELAY_IN_PROCESS === '1') return new RouteManager();
+  const rm = new RemoteRouteManager({
+    spawn: () => utilityProcess.fork(path.join(__dirname, '..', 'proxy', 'relay-host.js'), [], { serviceName: 'RelayClient relays' }),
+    fallback: () => new RouteManager(),   // 行程起不來就留在主行程轉送，不要讓所有路由都不能用
+  });
+  // 中繼行程當掉又重開（或放棄重開）之後，系統代理可能指著已經不在的埠
+  rm.on('settled', () => { systemProxy.reconcileSystemProxy(); sendRouteStatus(); });
+  return rm;
+}
+
 function setupRouteManager() {
   if (routeManager) return;
-  routeManager = new RouteManager();
+  routeManager = createRouteManager();
   routeManager.on('log', (routeId, level, msg, detail) => addLog(level, `route:${routeId}`, msg, detail));
   routeManager.on('error', (routeId, err) => addLog('error', `route:${routeId}`, err.message));
   routeManager.on('stats', (routeId, stats) => send('route-stats', { routeId, ...stats }));
   routeManager.on('started', () => sendRouteStatus());
   routeManager.on('stopped', () => sendRouteStatus());
+}
+
+// 結束 app 時：先把路由都停掉（socket 收乾淨），再收掉中繼行程
+async function disposeRouteManager() {
+  if (!routeManager) return;
+  try { await routeManager.stopAll(); } finally { if (routeManager.dispose) routeManager.dispose(); }
 }
 
 async function applyRoutes() {
@@ -208,4 +231,4 @@ function registerIpc(ipcMain) {
 
 // 用 Object.assign 而不是重設 module.exports：模組之間互相 require（例如 engine ↔ killswitch），
 // 重設的話先載入的那一方會拿到空物件。
-Object.assign(module.exports, { serverToProxy, resolveRoute, setupRouteManager, getRouteManager, runningRoutes, applyRoutes, sendRouteStatus, checkPortFree, ensureSplitRoutesStarted, registerIpc });
+Object.assign(module.exports, { serverToProxy, resolveRoute, setupRouteManager, getRouteManager, disposeRouteManager, runningRoutes, applyRoutes, sendRouteStatus, checkPortFree, ensureSplitRoutesStarted, registerIpc });

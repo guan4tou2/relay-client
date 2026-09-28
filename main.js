@@ -214,7 +214,7 @@ app.on('before-quit', (e) => {
     try { const engine = engineMod.getEngine(); if (engine) await engine.stop(); } catch (err) {}          // 再關引擎 → 讓 sing-box 移除 TUN
     // 防火牆層：引擎關了就要拆，否則結束 app 之後受保護的程式永遠連不出去
     try { await ks.disarmFirewall(); } catch (err) {}
-    try { const rm = routes.getRouteManager(); if (rm) await rm.stopAll(); } catch (err) {}
+    try { await routes.disposeRouteManager(); } catch (err) {}
   })().finally(() => { clearTimeout(force); app.exit(0); });
 });
 
