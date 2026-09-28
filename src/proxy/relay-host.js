@@ -60,4 +60,6 @@ if (process.parentPort) {
   process.on('disconnect', () => process.exit(0));   // 父行程不在了就跟著結束，不要留孤兒
 }
 
-module.exports = { attach };
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.attach = attach;

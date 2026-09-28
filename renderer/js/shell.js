@@ -133,7 +133,8 @@ function renderTabs() {
   const tabs = [['dashboard', '路由'], ['split', '分流'], ['servers', '伺服器'], ['logs', '紀錄'], ['creds', '憑證'], ['settings', '設定']];
   $('tabseg').setAttribute('role', 'tablist');
   // 每次狀態變化都會整排重畫；焦點在分頁鈕上的話要接回同一顆，不然鍵盤使用者會被丟回 body
-  const focusedTab = $('tabseg').contains(document.activeElement) ? document.activeElement.dataset.tab : null;
+  const active = /** @type {HTMLElement} */ (document.activeElement);
+  const focusedTab = $('tabseg').contains(active) ? active.dataset.tab : null;
   // 快捷鍵提示原本常駐在狀態列右端，改成各分頁鈕的 title
   $('tabseg').innerHTML = tabs.map(([k, label], i) =>
     `<button data-tab="${k}" role="tab" aria-selected="${state.tab === k}" aria-label="${label}" title="${label}（Ctrl+${i + 1}）" style="border:none;cursor:pointer;padding:6px 13px;border-radius:7px;font-size:12.5px;${segCss(state.tab === k)};transition:background .18s,color .18s;white-space:nowrap;flex-shrink:0">${label}</button>`
@@ -234,8 +235,9 @@ function renderSidebar() {
   $('sideRunning').textContent = runIds.length ? runIds.length + ' 執行中' : '';
   const list = $('routeList');
   // 同上：路由狀態一變就整個側欄重畫，焦點要接回原本那一列（或那一列上的同一顆按鈕）
-  const fa = list.contains(document.activeElement) ? document.activeElement : null;
-  const focusRid = fa && fa.closest('[data-rid]') ? fa.closest('[data-rid]').dataset.rid : null;
+  const fa = list.contains(document.activeElement) ? /** @type {HTMLElement} */ (document.activeElement) : null;
+  const ridEl = fa && /** @type {HTMLElement} */ (fa.closest('[data-rid]'));
+  const focusRid = ridEl ? ridEl.dataset.rid : null;
   const focusAct = fa && fa.dataset ? fa.dataset.act : null;
   if (state.routes.length === 0) {
     list.innerHTML = `<div style="padding:20px 10px;text-align:center;color:var(--text3);font-size:12.5px;line-height:1.7">還沒有路由<br>從右側開始新增</div>`;

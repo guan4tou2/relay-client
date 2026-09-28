@@ -105,4 +105,9 @@ function clearStaleUpdateCache(cacheDir, currentVersion) {
   return removed;
 }
 
-module.exports = { cacheDirFrom, versionFromFileName, notNewerThan, clearStaleUpdateCache };
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.cacheDirFrom = cacheDirFrom;
+module.exports.versionFromFileName = versionFromFileName;
+module.exports.notNewerThan = notNewerThan;
+module.exports.clearStaleUpdateCache = clearStaleUpdateCache;

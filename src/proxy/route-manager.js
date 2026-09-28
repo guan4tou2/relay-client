@@ -124,7 +124,4 @@ function normalizeRouteDef(route) {
   };
 }
 
-module.exports = RouteManager;
-module.exports.detectPortConflicts = detectPortConflicts;
-module.exports.isValidRouteId = isValidRouteId;
-module.exports.normalizeRouteDef = normalizeRouteDef;
+module.exports = Object.assign(RouteManager, { detectPortConflicts, isValidRouteId, normalizeRouteDef });

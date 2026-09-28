@@ -29,8 +29,7 @@ describe('renderer scripts', () => {
     const src = scripts.map(s => fs.readFileSync(path.join(DIR, s), 'utf8').replace(/^'use strict';\n/, '')).join('\n');
     const linter = new Linter();
     const messages = linter.verify("'use strict';\n" + src, [{
-      // module：lib.js 最後那段 typeof module 判斷（讓 Node 測試 require 得到），瀏覽器裡不會進去
-      languageOptions: { ecmaVersion: 2024, sourceType: 'script', globals: { ...globals.browser, module: 'readonly' } },
+      languageOptions: { ecmaVersion: 2024, sourceType: 'script', globals: { ...globals.browser } },
       rules: { ...shared, 'no-unused-vars': ['error', { vars: 'all', args: 'after-used', argsIgnorePattern: '^_', caughtErrors: 'none', varsIgnorePattern: '^_' }] },
     }]);
     expect(messages.map(m => `${m.line}: ${m.ruleId || 'parse'} ${m.message}`)).toEqual([]);

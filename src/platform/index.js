@@ -20,11 +20,18 @@ const ADAPTERS = {
   linux: () => require('./linux'),
 };
 
+/**
+ * adapter 的型別：三個平台都有的是必備，只有部分平台才有的（例如 Windows 的 killSwitchFirewall、
+ * listProcessesAsync）是可選 —— 呼叫端本來就要先檢查有沒有。
+ * @typedef {typeof import('./linux') & Partial<typeof import('./windows')> & Partial<typeof import('./darwin')>} PlatformAdapter
+ */
+
 // 取得指定平台的 adapter；測試可以用它在任一 OS 上載入任一平台實作。
+/** @param {string} name @returns {PlatformAdapter} */
 function forPlatform(name) {
   const make = ADAPTERS[name];
   if (!make) throw new Error(`不支援的平台：${name}`);
-  return make();
+  return /** @type {PlatformAdapter} */ (make());
 }
 
 function isSupported(name = process.platform) {
@@ -35,4 +42,9 @@ function isSupported(name = process.platform) {
 // 讓 app 至少能跑「方式 A」（本地端口 + 串接），那部分本來就與 OS 無關。
 const current = forPlatform(isSupported() ? process.platform : 'linux');
 
-module.exports = { current, forPlatform, isSupported, PLATFORMS: Object.keys(ADAPTERS) };
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.current = current;
+module.exports.forPlatform = forPlatform;
+module.exports.isSupported = isSupported;
+module.exports.PLATFORMS = Object.keys(ADAPTERS);

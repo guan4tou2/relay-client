@@ -174,6 +174,15 @@ function registerIpc(ipcMain) {
   });
 }
 
-// 用 Object.assign 而不是重設 module.exports：模組之間互相 require（例如 engine ↔ killswitch），
-// 重設的話先載入的那一方會拿到空物件。
-Object.assign(module.exports, { resetKillSwitch, triggerKillSwitch, sendKillSwitch, getState, markBlockingLost, syncKsFirewall, serialFw, cleanupStaleKsFirewall, disarmFirewall, registerIpc });
+// 逐一掛在 module.exports 上、不重設它：模組之間互相 require（例如 engine ↔ killswitch），
+// 重設的話先載入的那一方會拿到空物件。這種寫法 TypeScript（npm run typecheck）也推得出型別。
+module.exports.resetKillSwitch = resetKillSwitch;
+module.exports.triggerKillSwitch = triggerKillSwitch;
+module.exports.sendKillSwitch = sendKillSwitch;
+module.exports.getState = getState;
+module.exports.markBlockingLost = markBlockingLost;
+module.exports.syncKsFirewall = syncKsFirewall;
+module.exports.serialFw = serialFw;
+module.exports.cleanupStaleKsFirewall = cleanupStaleKsFirewall;
+module.exports.disarmFirewall = disarmFirewall;
+module.exports.registerIpc = registerIpc;

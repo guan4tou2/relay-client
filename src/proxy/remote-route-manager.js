@@ -40,7 +40,7 @@ class RemoteRouteManager extends EventEmitter {
     if (this._child) return this._ready;
     const child = this._spawn();
     this._child = child;
-    this._ready = new Promise((resolve, reject) => { this._onReady = resolve; this._onNeverReady = reject; });
+    this._ready = /** @type {Promise<void>} */ (new Promise((resolve, reject) => { this._onReady = resolve; this._onNeverReady = reject; }));
     this._ready.catch(() => {});   // 由 _call 處理；這裡只避免 unhandled rejection
     child.on('message', (msg) => this._onMessage(child, msg));
     child.on('exit', (code) => this._onExit(child, code));

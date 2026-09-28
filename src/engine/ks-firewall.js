@@ -74,6 +74,7 @@ const REMOTE_PUBLIC = [...complementRanges(LOCAL_CIDRS_V4, 4), ...complementRang
 
 // ---- 要保護哪些程式（純函式）----
 // 回傳 { paths: [完整路徑], names: [執行檔名] }；global 模式與純網域規則沒有程式可比對 → 空
+/** @param {{ settings?: Record<string, any>, split?: Record<string, any> }} [opts] */
 function protectedPrograms({ settings = {}, split = {} } = {}) {
   const names = new Set(); const paths = new Set();
   const add = (match, value) => {
@@ -93,8 +94,12 @@ function protectedPrograms({ settings = {}, split = {} } = {}) {
 }
 
 // ---- 布防狀態機（平台無關；真正下指令的是 adapter）----
-// adapter: { addRule(program) → Promise, removeAll() → Promise, sameName(a, b) }
+/**
+ * @typedef {{ addRule(program: string): Promise<void>, removeAll(): Promise<void>, sameName(a: string, b: string): boolean, hasRules?(): Promise<boolean>, ruleName?: string }} FirewallAdapter
+ * @typedef {{ adapter?: FirewallAdapter | null, listProcesses?: () => Array<{ path?: string }> | Promise<Array<{ path?: string }>>, log?: (level: string, msg: string) => void, basename?: (p: string) => string, rescanMs?: number }} FirewallOptions
+ */
 class KillSwitchFirewall {
+  /** @param {FirewallOptions} [opts] */
   constructor({ adapter, listProcesses, log, basename, rescanMs = 60000 } = {}) {
     this.adapter = adapter || null;
     this.listProcesses = listProcesses || (async () => []);
@@ -162,7 +167,11 @@ class KillSwitchFirewall {
   }
 }
 
-module.exports = {
-  KillSwitchFirewall, protectedPrograms, complementRanges,
-  TUN_CIDR, LOCAL_NOT_TUN, REMOTE_PUBLIC,
-};
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.KillSwitchFirewall = KillSwitchFirewall;
+module.exports.protectedPrograms = protectedPrograms;
+module.exports.complementRanges = complementRanges;
+module.exports.TUN_CIDR = TUN_CIDR;
+module.exports.LOCAL_NOT_TUN = LOCAL_NOT_TUN;
+module.exports.REMOTE_PUBLIC = REMOTE_PUBLIC;

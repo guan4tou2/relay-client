@@ -8,6 +8,8 @@
    骨架 mount() 建一次，電源 SVG 常駐、以 targeted update 套用（保留元素才能觸發 CSS 過場）。 */
 
 const app = document.getElementById('app');
+// 回傳 any：畫面都是 innerHTML 組出來的，元素實際是 input / button / select 只有呼叫端知道
+/** @type {(id: string) => any} */
 const $ = id => document.getElementById(id);
 const setDisp = (id, on) => { const e = $(id); if (e) e.style.display = on ? 'block' : 'none'; };
 

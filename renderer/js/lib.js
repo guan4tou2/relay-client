@@ -1,6 +1,6 @@
 'use strict';
 // 純邏輯：不碰 DOM、不碰 state，瀏覽器與 Node 都能跑。放在這裡的函式有單元測試（test/renderer-lib.test.js）。
-// 在畫面裡它跟其他檔一樣是一般 <script>、最先載入；在 Node 裡最後那段 module.exports 讓測試 require 得到。
+// 在畫面裡它跟其他檔一樣是一般 <script>、最先載入；測試用 Node 的 vm 執行這個檔再取出函式（見測試檔開頭）。
 
 // 放進 innerHTML 前一律跳脫
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -93,8 +93,4 @@ function normalizeImportedRoute(r, { idMap, known, fallbackId }) {
     route: { id, label: String(r.label || ''), localPort: port, kind: r.kind || 'socks5', hops: hops.filter(Boolean), enabled: r.enabled !== false },
     lostHops: hops.filter(h => !h).length,
   };
-}
-
-if (typeof module === 'object' && module.exports) {
-  module.exports = { esc, fmtBytes, validPortStr, validPortSpec, validIpOrCidr, testFailReason, fmtAge, thinSeries, splitVals, parseImportFile, normalizeImportedRoute };
 }

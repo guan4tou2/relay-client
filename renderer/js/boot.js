@@ -7,6 +7,7 @@
 // =====================================================================================
 // 開機各段的時間點。留著不是為了好玩：啟動慢起來的時候，沒有這個就只能猜
 // 「是 renderer 慢還是主行程慢」。只寫幾個數字，成本可以忽略。
+/** @type {Record<string, number>} */
 const bootMarks = (window.__boot = {});
 const mark = (k) => { bootMarks[k] = Math.round(performance.now()); };
 

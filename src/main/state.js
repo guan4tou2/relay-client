@@ -14,4 +14,8 @@ function send(channel, payload) {
 
 const sleepSync = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) {} };
 
-module.exports = { state, send, sleepSync };
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.state = state;
+module.exports.send = send;
+module.exports.sleepSync = sleepSync;

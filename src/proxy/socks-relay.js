@@ -50,7 +50,7 @@ class SocksRelay extends EventEmitter {
   }
 
   start(localPort, upstream) {
-    return new Promise((resolve, reject) => {
+    return /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
       // upstream 可為單一 proxy 物件，或一串 proxy 陣列（多跳串鏈）
       this.chain = Array.isArray(upstream) ? upstream : [upstream];
       this.remoteProxy = this.chain[0];
@@ -65,7 +65,7 @@ class SocksRelay extends EventEmitter {
         this.emit('listening', localPort);
         resolve();
       });
-    });
+    }));
   }
 
   async _handleClient(clientSocket) {
@@ -190,7 +190,7 @@ class SocksRelay extends EventEmitter {
 
   // RFC 1929 帳密子協商：VER(0x01) ULEN UNAME PLEN PASSWD。內容不檢查，只要格式正確。
   _readUserPass(socket) {
-    return new Promise((resolve, reject) => {
+    return /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
       let buf = Buffer.alloc(0);
       const cleanup = () => { clearTimeout(timer); socket.removeListener('data', onData); socket.removeListener('error', onErr); socket.removeListener('close', onClose); };
       const timer = setTimeout(() => { cleanup(); socket.destroy(); reject(new Error('Auth timeout')); }, 30000);
@@ -214,7 +214,7 @@ class SocksRelay extends EventEmitter {
       socket.on('data', onData);
       socket.once('error', onErr);
       socket.once('close', onClose);
-    });
+    }));
   }
 
   _readRequest(socket) {
@@ -284,7 +284,7 @@ class SocksRelay extends EventEmitter {
     this.activeSockets.clear();
     for (const socket of this.pendingSockets) socket.destroy();
     this.pendingSockets.clear();
-    return new Promise(resolve => {
+    return /** @type {Promise<void>} */ (new Promise(resolve => {
       if (!this.server) return resolve();
       let resolved = false;
       const done = () => {
@@ -298,7 +298,7 @@ class SocksRelay extends EventEmitter {
       this.server.close(done);
       const timer = setTimeout(done, 2000);
       if (timer.unref) timer.unref(); // 後備計時器不應獨自卡住事件迴圈
-    });
+    }));
   }
 
   get running() {

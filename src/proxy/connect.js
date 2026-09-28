@@ -8,9 +8,10 @@ const CERT_ERRORS = new Set([
   'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
   'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'ERR_TLS_CERT_ALTNAME_INVALID',
 ]);
+/** @param {any} err */
 function explainTlsError(err) {
   if (!err || !CERT_ERRORS.has(err.code)) return err;
-  const e = new Error(`${err.message}（代理伺服器的憑證無法驗證；如果它使用自簽憑證，可在伺服器設定開啟「略過憑證驗證」）`);
+  const e = /** @type {NodeJS.ErrnoException} */ (new Error(`${err.message}（代理伺服器的憑證無法驗證；如果它使用自簽憑證，可在伺服器設定開啟「略過憑證驗證」）`));
   e.code = err.code;
   return e;
 }
@@ -55,6 +56,7 @@ async function chainHop(proxy, target, upstream) {
   const type = proxy.type || 'socks5';
 
   if (type === 'socks5' || type === 'socks4') {
+    /** @type {import('socks').SocksClientOptions} */
     const opts = {
       proxy: { host: proxy.host, port: proxy.port, type: type === 'socks5' ? 5 : 4 },
       command: 'connect',
@@ -161,4 +163,11 @@ function readHttpStatus(socket) {
   });
 }
 
-module.exports = { connectViaProxy, connectViaChain, chainHop, openSocketToProxy, tlsOptions, explainTlsError };
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.connectViaProxy = connectViaProxy;
+module.exports.connectViaChain = connectViaChain;
+module.exports.chainHop = chainHop;
+module.exports.openSocketToProxy = openSocketToProxy;
+module.exports.tlsOptions = tlsOptions;
+module.exports.explainTlsError = explainTlsError;

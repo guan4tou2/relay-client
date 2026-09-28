@@ -149,6 +149,7 @@ function setActiveServerId(id) {
   store.set('activeServerId', id);
 }
 
+/** @returns {Record<string, any>} 設定是可擴充的鍵值（舊版欄位、路由、分流都放在這裡） */
 function getSettings() {
   // 合併預設：升級後新增的 settings 子鍵（舊 config 沒有）會被補上，避免讀到 undefined
   return { ...DEFAULT_SETTINGS, ...(store.get('settings') || {}) };
@@ -335,14 +336,28 @@ function reorderServers(orderedIds) {
   return reordered;
 }
 
-module.exports = {
-  getServers, getServer, addServer, updateServer, deleteServer, validPort,
-  getActiveServerId, setActiveServerId,
-  getSettings, updateSettings, reorderServers,
-  getRoutes, setRoutes,
-  getSplit, saveSplit,
-  getCreds, saveCreds,
-  setCipher, migrateSecrets, migrateTlsDefaults, migrateRouteIds,
-  decryptFailures: () => decryptFailures,
-  recoveredFrom: () => recoveredFrom,
-};
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.getServers = getServers;
+module.exports.getServer = getServer;
+module.exports.addServer = addServer;
+module.exports.updateServer = updateServer;
+module.exports.deleteServer = deleteServer;
+module.exports.validPort = validPort;
+module.exports.getActiveServerId = getActiveServerId;
+module.exports.setActiveServerId = setActiveServerId;
+module.exports.getSettings = getSettings;
+module.exports.updateSettings = updateSettings;
+module.exports.reorderServers = reorderServers;
+module.exports.getRoutes = getRoutes;
+module.exports.setRoutes = setRoutes;
+module.exports.getSplit = getSplit;
+module.exports.saveSplit = saveSplit;
+module.exports.getCreds = getCreds;
+module.exports.saveCreds = saveCreds;
+module.exports.setCipher = setCipher;
+module.exports.migrateSecrets = migrateSecrets;
+module.exports.migrateTlsDefaults = migrateTlsDefaults;
+module.exports.migrateRouteIds = migrateRouteIds;
+module.exports.decryptFailures = () => decryptFailures;
+module.exports.recoveredFrom = () => recoveredFrom;

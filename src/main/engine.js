@@ -179,7 +179,8 @@ function registerIpc(ipcMain) {
   });
 
   // 規則模擬器：「這個網址／IP（可選：這支程式）會走哪一條？」——不需啟動引擎
-  ipcMain.handle('rule-match', async (_e, { host, exe, port, network } = {}) => {
+  ipcMain.handle('rule-match', async (_e, query) => {
+    const { host, exe, port, network } = query || {};
     setupEngine();
     const split = config.getSplit();
     const res = await engine.matchTarget({
@@ -220,6 +221,13 @@ function registerIpc(ipcMain) {
   ipcMain.handle('is-elevated', () => { setupEngine(); return engine.isElevated(); });
 }
 
-// 用 Object.assign 而不是重設 module.exports：模組之間互相 require（例如 engine ↔ killswitch），
-// 重設的話先載入的那一方會拿到空物件。
-Object.assign(module.exports, { setupEngine, getEngine, resetHits, engineParams, sendEngineStatus, reloadEngineIfRunning, autoStartEngineElevated, registerIpc });
+// 逐一掛在 module.exports 上、不重設它：模組之間互相 require（例如 engine ↔ killswitch），
+// 重設的話先載入的那一方會拿到空物件。這種寫法 TypeScript（npm run typecheck）也推得出型別。
+module.exports.setupEngine = setupEngine;
+module.exports.getEngine = getEngine;
+module.exports.resetHits = resetHits;
+module.exports.engineParams = engineParams;
+module.exports.sendEngineStatus = sendEngineStatus;
+module.exports.reloadEngineIfRunning = reloadEngineIfRunning;
+module.exports.autoStartEngineElevated = autoStartEngineElevated;
+module.exports.registerIpc = registerIpc;

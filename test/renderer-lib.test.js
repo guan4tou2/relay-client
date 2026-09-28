@@ -1,7 +1,16 @@
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+// lib.js 在畫面裡是一般 <script>（最外層宣告是全域的），沒有 module.exports。
+// 這裡用 vm 照樣執行一次，最後一個運算式把要測的名字收成物件回傳。
+const NAMES = ['esc', 'fmtBytes', 'validPortStr', 'validPortSpec', 'validIpOrCidr', 'testFailReason',
+  'fmtAge', 'thinSeries', 'splitVals', 'parseImportFile', 'normalizeImportedRoute'];
+const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'js', 'lib.js'), 'utf8');
 const {
   esc, fmtBytes, validPortStr, validPortSpec, validIpOrCidr, testFailReason,
   fmtAge, thinSeries, splitVals, parseImportFile, normalizeImportedRoute,
-} = require('../renderer/js/lib');
+} = vm.runInNewContext(`${src}\n;({ ${NAMES.join(', ')} })`, { URL, Map, Set });
 
 // renderer/js/lib.js：畫面端不碰 DOM 的純邏輯。以前埋在 4000 行的 renderer.js 裡，完全沒有測試。
 

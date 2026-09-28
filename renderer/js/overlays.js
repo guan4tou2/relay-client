@@ -169,15 +169,17 @@ function showTipFor(el) {
   b.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8)) + 'px';
 }
 document.addEventListener('mouseover', e => {
-  const el = e.target.closest && e.target.closest('[data-tip]');
+  const t = /** @type {any} */ (e.target);
+  const el = t.closest && t.closest('[data-tip]');
   if (el === tipFor) return;
   hideTip();
   if (el && el.dataset.tip) { tipFor = el; tipTimer = setTimeout(() => { if (tipFor === el && el.isConnected) showTipFor(el); }, 250); }
 });
 // 鍵盤也要看得到說明：Tab 到 ⓘ（或任何帶 data-tip 的元素）時直接顯示，離開就收
 document.addEventListener('focusin', e => {
-  const el = e.target.closest && e.target.closest('[data-tip]');
-  if (el && el.dataset.tip && e.target.matches(':focus-visible')) showTipFor(el);
+  const t = /** @type {any} */ (e.target);
+  const el = t.closest && t.closest('[data-tip]');
+  if (el && el.dataset.tip && t.matches(':focus-visible')) showTipFor(el);
 });
 document.addEventListener('focusout', e => { if (tipFor && tipFor.contains(e.target)) hideTip(); });
 document.addEventListener('mousedown', hideTip, true);

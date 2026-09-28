@@ -237,4 +237,10 @@ class RuleSetStore {
   }
 }
 
-module.exports = { RuleSetStore, CATALOG, GEOIP_BASE, GEOSITE_BASE, ALLOWED_HOSTS };
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.RuleSetStore = RuleSetStore;
+module.exports.CATALOG = CATALOG;
+module.exports.GEOIP_BASE = GEOIP_BASE;
+module.exports.GEOSITE_BASE = GEOSITE_BASE;
+module.exports.ALLOWED_HOSTS = ALLOWED_HOSTS;
