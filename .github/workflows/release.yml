@@ -76,7 +76,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
+          # pwsh 不會因為外部指令失敗而中止，要自己看結束代碼（以前 make-icon 壞了也照樣用舊圖示打包）
           npm run make-icon
+          if ($LASTEXITCODE -ne 0) { throw "make-icon failed" }
           if ("${{ github.ref }}".StartsWith("refs/tags/v")) { npx electron-builder --win --publish always }
           else { npx electron-builder --win --publish never }
 

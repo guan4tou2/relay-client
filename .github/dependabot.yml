@@ -17,6 +17,9 @@ updates:
       # Electron 的主版本升級要跟著驗 TUN / 系統代理 / 打包，不自動開
       - dependency-name: electron
         update-types: [version-update:semver-major]
+      # electron-store 9 起只有 ESM（src/store/config.js 用 require 載入）；要升級另開 PR，手動驗設定讀寫與舊設定檔相容
+      - dependency-name: electron-store
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
     directory: /

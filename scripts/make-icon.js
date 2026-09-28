@@ -3,7 +3,9 @@
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
-const pngToIco = require('png-to-ico');
+// png-to-ico 3 起是 ESM：require() 拿到的是 module namespace，函式在 default 上（2.x 則直接是函式）
+const pngToIcoMod = require('png-to-ico');
+const pngToIco = pngToIcoMod.default || pngToIcoMod;
 
 const ASSETS = path.join(__dirname, '..', 'assets');
 
