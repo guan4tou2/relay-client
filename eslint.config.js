@@ -12,7 +12,7 @@ const shared = {
   'no-constant-condition': ['error', { checkLoops: false }],
 };
 
-module.exports = [
+const config = [
   { ignores: ['node_modules/**', 'dist/**', 'engine/**', 'build/**'] },
   {
     files: ['**/*.js'],
@@ -20,12 +20,22 @@ module.exports = [
     rules: shared,
   },
   {
-    // 畫面端：沒有 Node，只有瀏覽器 API 與 preload 橋接出來的 window.api
+    // 畫面端：沒有 Node，只有瀏覽器 API 與 preload 橋接出來的 window.api。
+    // renderer/js/ 的各檔是依序載入的一般 script，最外層宣告跨檔共用 —— 單檔看的話
+    // 「未定義」「沒用到」都會誤報，所以這兩條在這裡關掉，改由 test/renderer-scripts.test.js
+    // 把各檔照 index.html 的順序接起來、用完整規則檢查一次。
     files: ['renderer/**/*.js'],
     languageOptions: { sourceType: 'script', globals: { ...globals.browser } },
+    rules: {
+      'no-undef': 'off',
+      'no-unused-vars': ['error', { vars: 'local', args: 'after-used', argsIgnorePattern: '^_', caughtErrors: 'none', varsIgnorePattern: '^_' }],
+    },
   },
   {
     files: ['test/**/*.js'],
     languageOptions: { globals: { ...globals.jest } },
   },
 ];
+
+module.exports = config;
+module.exports.shared = shared;
