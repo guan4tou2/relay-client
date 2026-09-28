@@ -71,16 +71,63 @@ jobs:
           & "engine/sing-box.exe" check -c $chk
           if ($LASTEXITCODE -ne 0) { throw "sing-box gVisor TUN config check failed — engine incompatible" }
 
+      # 程式碼簽章（可選，設定方式見 docs/SIGNING.md）。沒設定就照舊產出未簽章的安裝檔。
+      #   憑證檔：secrets.WIN_CSC_LINK（.pfx 的 base64 或網址）+ secrets.WIN_CSC_KEY_PASSWORD
+      #           electron-builder 自己會讀這兩個環境變數；secret 不存在時是空字串 = 不簽。
+      #   Azure Trusted Signing：vars.AZURE_SIGN_ENDPOINT / AZURE_SIGN_ACCOUNT / AZURE_SIGN_PROFILE /
+      #           AZURE_SIGN_PUBLISHER + secrets.AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET。
+      #           兩種都設定時用 Azure（electron-builder 的規則）。
       - name: Build (tag 才發佈；其餘只打包成 artifact)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGN_ENDPOINT: ${{ vars.AZURE_SIGN_ENDPOINT }}
+          AZURE_SIGN_ACCOUNT: ${{ vars.AZURE_SIGN_ACCOUNT }}
+          AZURE_SIGN_PROFILE: ${{ vars.AZURE_SIGN_PROFILE }}
+          AZURE_SIGN_PUBLISHER: ${{ vars.AZURE_SIGN_PUBLISHER }}
         shell: pwsh
         run: |
           # pwsh 不會因為外部指令失敗而中止，要自己看結束代碼（以前 make-icon 壞了也照樣用舊圖示打包）
           npm run make-icon
           if ($LASTEXITCODE -ne 0) { throw "make-icon failed" }
-          if ("${{ github.ref }}".StartsWith("refs/tags/v")) { npx electron-builder --win --publish always }
-          else { npx electron-builder --win --publish never }
+          $sign = @()
+          $azure = @($env:AZURE_SIGN_ENDPOINT, $env:AZURE_SIGN_ACCOUNT, $env:AZURE_SIGN_PROFILE, $env:AZURE_SIGN_PUBLISHER, $env:AZURE_TENANT_ID, $env:AZURE_CLIENT_ID, $env:AZURE_CLIENT_SECRET)
+          if (-not ($azure -contains '') -and -not ($azure -contains $null)) {
+            Write-Host "Signing with Azure Trusted Signing"
+            $sign = @(
+              "-c.win.azureSignOptions.endpoint=$env:AZURE_SIGN_ENDPOINT",
+              "-c.win.azureSignOptions.codeSigningAccountName=$env:AZURE_SIGN_ACCOUNT",
+              "-c.win.azureSignOptions.certificateProfileName=$env:AZURE_SIGN_PROFILE",
+              "-c.win.azureSignOptions.publisherName=$env:AZURE_SIGN_PUBLISHER"
+            )
+          } elseif ($env:WIN_CSC_LINK) { Write-Host "Signing with certificate (WIN_CSC_LINK)" }
+          else { Write-Host "No signing configured — building unsigned" }
+          $publish = if ("${{ github.ref }}".StartsWith("refs/tags/v")) { "always" } else { "never" }
+          npx electron-builder --win --publish $publish @sign
+          if ($LASTEXITCODE -ne 0) { throw "electron-builder failed" }
+
+      # 有設定簽章就一定要簽到（簽章壞掉時不能默默發出未簽章的版本）；沒設定就留一則警告。
+      - name: Verify code signature
+        env:
+          SIGNING_CONFIGURED: ${{ secrets.WIN_CSC_LINK != '' || (secrets.AZURE_CLIENT_SECRET != '' && vars.AZURE_SIGN_ENDPOINT != '') }}
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem dist -Filter 'RelayClient-*.exe') + @(Get-Item 'dist/win-unpacked/RelayClient.exe')
+          $bad = @()
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature $f.FullName
+            Write-Host ("{0}: {1} {2}" -f $f.Name, $sig.Status, $sig.SignerCertificate.Subject)
+            if ($sig.Status -ne 'Valid') { $bad += $f.Name }
+          }
+          if ($env:SIGNING_CONFIGURED -eq 'true') {
+            if ($bad.Count) { throw "Signing is configured but these files are not validly signed: $($bad -join ', ')" }
+          } elseif ($bad.Count) {
+            Write-Host "::warning::Unsigned build — Windows SmartScreen will warn users. See docs/SIGNING.md"
+          }
 
       # 只收安裝檔。dist/win-unpacked/ 是解開的整棵樹（上百 MB），千萬別整包上傳。
       - name: Upload installers (非 tag 才需要，tag 的已經在 Release 裡)
