@@ -227,7 +227,7 @@ function killInstance(id) {
   window.api.killInstance(id).then(() => flash('已結束實例')).catch(e => flash('結束失敗：' + e.message, 'var(--red)'));
 }
 
-// 跟 main.js 的 KS_MAX_RETRY 保持一致（那邊是真正控制重試次數的地方）
+// 跟 src/main/killswitch.js 的 KS_MAX_RETRY 保持一致（那邊是真正控制重試次數的地方）
 const KS_MAX_RETRY = 3;
 
 function renderKillswitch() {

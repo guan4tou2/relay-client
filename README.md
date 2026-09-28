@@ -204,15 +204,19 @@ git tag v1.1.1 && git push origin v1.1.1
 ## 架構
 
 ```
-main.js            Electron 主程式 — 視窗、系統匣、程序間通訊(IPC)、引擎與路由管理、自動更新
+main.js            Electron 主程式進入點 — 只管啟動順序、單一實例、結束清理
+src/main/          主程式各功能：視窗/系統匣 · 系統代理 · 伺服器 · 路由 · 實例分流 · 分流引擎 ·
+                   斷線保護 · 規則庫 · 開機自啟 · 自動更新 · 紀錄（共用狀態在 state.js）
 preload.js         安全橋接層（網頁端拿不到 Node）
-renderer/          使用者介面（原生 JS、無障礙標籤）
+renderer/          使用者介面（原生 JS、無障礙標籤）；js/ 依功能分檔、依序載入，純邏輯在 js/lib.js
 src/proxy/         connect（串接）· socks-relay · http-bridge · route-manager（路由管理）── 與 OS 無關
+                   relay-host — 中繼跑在獨立的 utilityProcess，不跟介面搶主行程
 src/engine/        singbox — 產生虛擬網卡設定 + 生命週期 + 斷線保護的封鎖模式 + 規則模擬器
                    ruleset — 依網域/地區分流的規則庫：內建目錄、下載/匯入/更新、交給引擎
+                   ks-firewall — 斷線保護的防火牆層
 src/platform/      平台適配層 — windows / darwin / linux 各一份，收斂所有 OS 差異
                    （引擎執行檔名、TUN 命名、提權方式、行程列舉、系統代理、開機自啟）
-test/              277 個單元測試（jest）
+test/              單元測試（jest）；npm run lint / npm run typecheck（JSDoc + TypeScript 檢查）
 ```
 
 ## 授權

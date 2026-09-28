@@ -12,7 +12,7 @@ function getFreePort() {
   });
 }
 
-// Replicate testRawHandshake and testProxyHandshake from main.js for unit testing
+// Replicate testRawHandshake and testProxyHandshake from src/main/servers.js for unit testing
 function testRawHandshake(server, useTls, sendFn, validateFn) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
