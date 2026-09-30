@@ -17,7 +17,8 @@
     "pack": "npm run make-icon && electron-builder --win --dir",
     "dist": "npm run make-icon && electron-builder --win",
     "release": "npm run make-icon && electron-builder --win --publish always",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "typecheck": "tsc -p . && tsc -p tsconfig.renderer.json"
   },
   "dependencies": {
     "electron-store": "^8.1.0",
@@ -26,13 +27,15 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.0",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "eslint": "^10.11.0",
     "globals": "^17.12.0",
     "jest": "^30.5.2",
-    "png-to-ico": "^2.1.8",
-    "sharp": "^0.35.4"
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.4",
+    "typescript": "^7.0.2"
   },
   "jest": {
     "testTimeout": 15000
@@ -82,6 +85,7 @@
       "!**/{CHANGELOG,CHANGES,HISTORY,AUTHORS,CONTRIBUTORS}*",
       "!**/*.min.js.map",
       "!**/tsconfig.json",
+      "!tsconfig*.json",
       "!**/.eslintrc*",
       "!eslint.config.js",
       "!.gitignore",

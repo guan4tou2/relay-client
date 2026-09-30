@@ -19,6 +19,7 @@ const PENDING_MAX = 2048;
 class HitParser {
   // getRuleIndex()：回傳目前這份設定的 route.rules 索引對照表（singbox.js 的 engine.ruleIndex）
   // onHit(hit)：一條連線定案時呼叫，hit = { host, info }
+  /** @param {{ getRuleIndex?: () => any[], onHit?: (hit: { host: string, info: any }) => void }} [opts] */
   constructor({ getRuleIndex, onHit } = {}) {
     this.getRuleIndex = getRuleIndex || (() => []);
     this.onHit = onHit || (() => {});
@@ -68,4 +69,7 @@ class HitParser {
   }
 }
 
-module.exports = { HitParser, PARSED };
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.HitParser = HitParser;
+module.exports.PARSED = PARSED;

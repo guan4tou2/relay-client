@@ -1,0 +1,18 @@
+{
+  // 型別檢查（不編譯、不產生檔案）：程式照樣是純 JS，型別來自 JSDoc 與 electron / node 的型別定義。
+  // npm run typecheck；CI 也會跑。
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["main.js", "preload.js", "src/**/*.js"]
+}

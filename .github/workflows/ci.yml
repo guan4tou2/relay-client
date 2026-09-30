@@ -15,6 +15,7 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30   # 測試卡住時（例如 jest 等不到子行程結束）不要空燒到 6 小時的預設上限
     steps:
       - uses: actions/checkout@v7
       # electron 套件本身要求 node >= 22.12 才能安裝，ESLint 10 也要 20.19 以上 —— 用目前的 LTS
@@ -25,5 +26,7 @@ jobs:
       - run: npm ci
       - name: Lint
         run: npm run lint
+      - name: Type check
+        run: npm run typecheck
       - name: Unit tests
         run: npm test

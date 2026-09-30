@@ -160,4 +160,6 @@ class Launcher {
   async killAll() { for (const id of Array.from(this.instances.keys())) await this.kill(id); }
 }
 
-module.exports = { Launcher };
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.Launcher = Launcher;

@@ -1,0 +1,15 @@
+{
+  // 畫面端的型別檢查。renderer/js/ 的各檔是共用全域範圍的一般 script ——
+  // TypeScript 對沒有 import / export 的檔案正是這樣看待，所以不用改寫成 module。
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": false,
+    "skipLibCheck": true
+  },
+  "include": ["renderer/js/*.js", "renderer/globals.d.ts"]
+}

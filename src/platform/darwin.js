@@ -147,14 +147,26 @@ function browserCandidates() {
   ];
 }
 
-module.exports = {
-  id: 'darwin', label: 'macOS',
-  engineBinName, tunInterfaceName, selfProcessNames, isElevated, engineElevation,
-  staleEngineCleanupCommand, killTree,
-  path,   // 讓共用模組跟這個 adapter 用同一種路徑語意（不看執行主機）
-  exeFilters, listProcesses, listProcessesCommand, parseProcessList, normalizeApp, appNameEquals,
-  systemProxy, autostart, browserCandidates,
-  systemDnsServers: () => [],   // macOS 本版本不支援引擎
-  // 匯出給測試用的純函式
-  _internal: { parseNetworkServices, parseWebProxy, appLabel },
-};
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.id = 'darwin';
+module.exports.label = 'macOS';
+module.exports.engineBinName = engineBinName;
+module.exports.tunInterfaceName = tunInterfaceName;
+module.exports.selfProcessNames = selfProcessNames;
+module.exports.isElevated = isElevated;
+module.exports.engineElevation = engineElevation;
+module.exports.staleEngineCleanupCommand = staleEngineCleanupCommand;
+module.exports.killTree = killTree;
+module.exports.path = path;   // 讓共用模組跟這個 adapter 用同一種路徑語意（不看執行主機）
+module.exports.exeFilters = exeFilters;
+module.exports.listProcesses = listProcesses;
+module.exports.listProcessesCommand = listProcessesCommand;
+module.exports.parseProcessList = parseProcessList;
+module.exports.normalizeApp = normalizeApp;
+module.exports.appNameEquals = appNameEquals;
+module.exports.systemProxy = systemProxy;
+module.exports.autostart = autostart;
+module.exports.browserCandidates = browserCandidates;
+module.exports.systemDnsServers = () => [];   // macOS 本版本不支援引擎
+module.exports._internal = { parseNetworkServices, parseWebProxy, appLabel };   // 匯出給測試用的純函式

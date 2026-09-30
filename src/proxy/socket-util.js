@@ -4,4 +4,6 @@ function noDelay(...sockets) {
   for (const s of sockets) { try { if (s && s.setNoDelay) s.setNoDelay(true); } catch (e) {} }
 }
 
-module.exports = { noDelay };
+// 逐一掛在 module.exports 上：.js 裡的 object literal 型別是「可擴充的」，
+// 寫成 module.exports = { ... } 的話 npm run typecheck 抓不到呼叫端拼錯的名字。
+module.exports.noDelay = noDelay;

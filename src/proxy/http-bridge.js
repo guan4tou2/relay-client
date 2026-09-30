@@ -42,7 +42,7 @@ class HttpBridge extends EventEmitter {
   }
 
   start(localPort, upstream) {
-    return new Promise((resolve, reject) => {
+    return /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
       // upstream 可為單一 proxy 物件，或一串 proxy 陣列（多跳串鏈）
       this.chain = Array.isArray(upstream) ? upstream : [upstream];
       this.remoteProxy = this.chain[0];
@@ -61,7 +61,7 @@ class HttpBridge extends EventEmitter {
         this.emit('listening', localPort);
         resolve();
       });
-    });
+    }));
   }
 
   async _handleConnect(req, clientSocket, head) {
@@ -245,7 +245,7 @@ class HttpBridge extends EventEmitter {
       socket.destroy();
     }
     this.activeSockets.clear();
-    return new Promise(resolve => {
+    return /** @type {Promise<void>} */ (new Promise(resolve => {
       if (!this.server) return resolve();
       let resolved = false;
       const done = () => {
@@ -259,7 +259,7 @@ class HttpBridge extends EventEmitter {
       this.server.close(done);
       const timer = setTimeout(done, 2000);
       if (timer.unref) timer.unref();
-    });
+    }));
   }
 
   get running() {

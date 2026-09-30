@@ -95,3 +95,52 @@ describe('connectViaChain — 多跳代理串鏈', () => {
     await close(a);
   });
 });
+
+// 上游把 SOCKS 回覆跟伺服器的第一段資料黏在同一個封包送來（SSH banner、SMTP 問候這類伺服器先開口的協定）。
+// socks 套件會把那段多餘位元組留到 setImmediate 才補發；以前呼叫端一 pipe() 就先流出後到的資料，
+// 補發的反而排到後面 —— Windows CI 上實際發生過（收到 "DEST" 而不是 "UP1-DEST"）。
+// Linux 的 loopback 不容易讓「後到的資料」先進可讀緩衝區，所以這裡用 push() 模擬 Windows 的情況。
+describe('握手時黏在回覆後面的資料，順序不能亂', () => {
+  const { connectViaProxy } = require('../src/proxy/connect');
+  function socks5WithBanner(banner) {
+    return net.createServer((sock) => {
+      sock.once('data', () => {
+        sock.write(Buffer.from([0x05, 0x00]));
+        sock.once('data', () => {
+          // 回覆 + banner 一次寫出 → 必定同一個封包
+          sock.write(Buffer.concat([Buffer.from([0x05, 0, 0, 1, 0, 0, 0, 0, 0, 0]), Buffer.from(banner)]));
+        });
+      });
+    });
+  }
+  const collect = (sock, want) => new Promise((res, rej) => {
+    let buf = '';
+    const out = new (require('stream').Writable)({ write(c, _e, cb) { buf += c; if (buf.length >= want) res(buf); cb(); } });
+    sock.pipe(out);
+    sock.setTimeout(4000, () => rej(new Error('read timeout: ' + JSON.stringify(buf))));
+  });
+
+  for (const [name, connect] of [
+    ['單跳', (p) => connectViaProxy(hop(p), { host: 'x.test', port: 22 })],
+    ['串鏈的最後一跳', async (p) => {
+      const a = makeSocks5(); const ap = await listen(a);
+      const s = await connectViaChain([hop(ap), hop(p)], { host: 'x.test', port: 22 });
+      s.once('close', () => a.close());
+      return s;
+    }],
+  ]) {
+    test(`${name}：banner 在後到的資料前面`, async () => {
+      const up = socks5WithBanner('SSH-2.0-banner\r\n');
+      const port = await listen(up);
+      let sock;
+      try {
+        sock = await connect(port);
+        sock.push(Buffer.from('LATER'));   // 作業系統已經讀進來、排在 banner 之後的資料
+        expect(await collect(sock, 'SSH-2.0-banner\r\nLATER'.length)).toBe('SSH-2.0-banner\r\nLATER');
+      } finally {
+        if (sock) sock.destroy();          // 失敗時也要收乾淨，不然 jest 會等不到結束
+        await close(up);
+      }
+    });
+  }
+});
