@@ -25,7 +25,41 @@ function tlsOptions(proxy) {
 
 // 單跳：等同 connectViaChain([proxy], destination)，行為與舊版一致。
 async function connectViaProxy(proxy, destination) {
-  return chainHop(proxy, destination, null);
+  const socket = await chainHop(proxy, destination, null);
+  return isSocks(proxy) ? settleSocksSocket(socket) : socket;
+}
+
+const isSocks = (proxy) => { const t = proxy.type || 'socks5'; return t === 'socks5' || t === 'socks4'; };
+
+// socks 套件握手完成時，跟回覆黏在同一個封包裡的多餘位元組（伺服器先開口的協定：SSH banner、
+// SMTP 問候…）不會馬上交出來，而是等下一輪事件迴圈（setImmediate）才 emit('data') 補發並 resume()。
+// 呼叫端一拿到 socket 就 pipe() 的話，pipe 會先把 socket 恢復流動，後到的資料先流出去，
+// 補發的那段反而排到後面 —— 位元組順序就亂了（Windows 上兩次 write 常被合成一個封包，實際發生過）。
+// 這裡先接住補發的資料；真的有的話，暫停 socket、照原順序放回可讀緩衝區，之後從頭依序送出。
+// 沒有多餘位元組（大多數情況）就原封不動交出去。
+// 只用在交給呼叫端的最後一個 socket：串鏈中間那幾跳還要被下一跳的 socks 套件接著讀。
+function settleSocksSocket(socket) {
+  return new Promise((resolve) => {
+    const early = [];
+    const onData = (chunk) => early.push(chunk);
+    socket.on('data', onData);
+    setImmediate(() => {   // 排在 socks 套件自己的 setImmediate 之後（那個在握手完成、我們拿到 socket 之前就排好了）
+      socket.removeListener('data', onData);
+      if (early.length) {
+        socket.pause();
+        socket.unshift(Buffer.concat(early));
+        // pause() 之後再加 'data' listener 不會自動恢復流動（pipe 會）。把「加了 listener 就開始流」的
+        // 預設行為接回來，只用 on('data') 讀的呼叫端才不會卡住。
+        const onListener = (ev) => {
+          if (ev !== 'data') return;
+          socket.removeListener('newListener', onListener);
+          process.nextTick(() => socket.resume());
+        };
+        socket.on('newListener', onListener);
+      }
+      resolve(socket);
+    });
+  });
 }
 
 // 多跳串鏈（proxychains 型）：client → chain[0] → chain[1] → … → destination。
@@ -47,7 +81,7 @@ async function connectViaChain(chain, destination) {
       throw new Error(`chain hop ${i + 1}/${chain.length} (${p.type || 'socks5'} ${p.host}:${p.port}) failed: ${err.message}`, { cause: err });
     }
   }
-  return socket;
+  return isSocks(chain[chain.length - 1]) ? settleSocksSocket(socket) : socket;
 }
 
 // 對 proxy 執行一次 handshake，要它 CONNECT 到 target。

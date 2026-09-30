@@ -15,7 +15,14 @@ function spawnNode() {
   children.push(cp);
   return { postMessage: (m) => cp.send(m), on: (ev, fn) => cp.on(ev, fn), kill: () => cp.kill(), _cp: cp };
 }
-afterAll(() => { for (const cp of children) { try { cp.kill(); } catch (e) {} } });
+// 測試中途失敗時會跳過該測試自己的 dispose()。只殺子行程是不夠的：RemoteRouteManager 會把它當成
+// 當掉、自動再 fork 一個，jest 就永遠等不到結束（Windows CI 因此卡到 6 小時逾時）。先 dispose 再殺。
+const managers = [];
+const mkRm = (opts) => { const rm = new RemoteRouteManager(opts); managers.push(rm); return rm; };
+afterAll(() => {
+  for (const rm of managers) { try { rm.dispose(); } catch (e) {} }
+  for (const cp of children) { try { cp.kill(); } catch (e) {} }
+});
 
 // 會在回應前先寫一段 tag 的 SOCKS5 上游：證明流量真的經過它
 function taggedSocks5(tag) {
@@ -63,7 +70,7 @@ describe('RemoteRouteManager — 中繼跑在獨立行程', () => {
   afterAll(async () => { await close(dest); await close(up); });
 
   test('啟動路由：流量經過指定上游，狀態快照同步回來', async () => {
-    const rm = new RemoteRouteManager({ spawn: spawnNode });
+    const rm = mkRm({ spawn: spawnNode });
     const port = await freePort();
     const started = once(rm, 'started');
     await rm.start({ id: 'a', localPort: port, kind: 'socks5', hops: [{ type: 'socks5', host: '127.0.0.1', port: upPort }] });
@@ -78,7 +85,7 @@ describe('RemoteRouteManager — 中繼跑在獨立行程', () => {
   });
 
   test('中繼的紀錄與統計會轉送回主行程', async () => {
-    const rm = new RemoteRouteManager({ spawn: spawnNode });
+    const rm = mkRm({ spawn: spawnNode });
     const logs = []; const stats = [];
     rm.on('log', (...a) => logs.push(a));
     rm.on('stats', (...a) => stats.push(a));
@@ -95,7 +102,7 @@ describe('RemoteRouteManager — 中繼跑在獨立行程', () => {
   test('啟動失敗（埠被占用）會把錯誤原因帶回來，狀態不留殘影', async () => {
     const blocker = net.createServer();
     const port = await listen(blocker);
-    const rm = new RemoteRouteManager({ spawn: spawnNode });
+    const rm = mkRm({ spawn: spawnNode });
     rm.on('error', () => {});
     await expect(rm.start({ id: 'c', localPort: port, kind: 'socks5', hops: [{ type: 'socks5', host: '127.0.0.1', port: upPort }] }))
       .rejects.toThrow(/EADDRINUSE|in use/i);
@@ -106,7 +113,7 @@ describe('RemoteRouteManager — 中繼跑在獨立行程', () => {
 
   test('中繼行程當掉：先回報路由停了，再自動重開並把路由拉回來', async () => {
     let spawned = 0;
-    const rm = new RemoteRouteManager({ spawn: () => { spawned++; return spawnNode(); } });
+    const rm = mkRm({ spawn: () => { spawned++; return spawnNode(); } });
     const port = await freePort();
     await rm.start({ id: 'd', localPort: port, kind: 'socks5', hops: [{ type: 'socks5', host: '127.0.0.1', port: upPort }] });
     const stopped = once(rm, 'stopped');
@@ -122,7 +129,7 @@ describe('RemoteRouteManager — 中繼跑在獨立行程', () => {
   });
 
   test('使用者停掉的路由，行程重開後不會被拉回來', async () => {
-    const rm = new RemoteRouteManager({ spawn: spawnNode });
+    const rm = mkRm({ spawn: spawnNode });
     const p1 = await freePort(); const p2 = await freePort();
     const hops = [{ type: 'socks5', host: '127.0.0.1', port: upPort }];
     await rm.start({ id: 'e1', localPort: p1, kind: 'socks5', hops });
@@ -138,7 +145,7 @@ describe('RemoteRouteManager — 中繼跑在獨立行程', () => {
 
   test('結束 app（dispose）後行程被收掉，不會自動重開', async () => {
     let spawned = 0;
-    const rm = new RemoteRouteManager({ spawn: () => { spawned++; return spawnNode(); } });
+    const rm = mkRm({ spawn: () => { spawned++; return spawnNode(); } });
     const port = await freePort();
     await rm.start({ id: 'f', localPort: port, kind: 'socks5', hops: [{ type: 'socks5', host: '127.0.0.1', port: upPort }] });
     const cp = children[children.length - 1];
@@ -156,7 +163,7 @@ describe('RemoteRouteManager — 獨立行程起不來時退回主行程', () =>
 
   test('行程還沒 ready 就結束 → 改用主行程的 RouteManager，並記一筆警告', async () => {
     const dead = () => { const c = new EventEmitter(); c.postMessage = () => {}; c.kill = () => {}; setImmediate(() => c.emit('exit', 1)); return c; };
-    const rm = new RemoteRouteManager({ spawn: dead, fallback: () => new RouteManager() });
+    const rm = mkRm({ spawn: dead, fallback: () => new RouteManager() });
     const logs = [];
     rm.on('log', (...a) => logs.push(a));
     const port = await freePort();
@@ -169,7 +176,7 @@ describe('RemoteRouteManager — 獨立行程起不來時退回主行程', () =>
   });
 
   test('spawn 直接丟例外也一樣退回', async () => {
-    const rm = new RemoteRouteManager({ spawn: () => { throw new Error('no utility process'); }, fallback: () => new RouteManager() });
+    const rm = mkRm({ spawn: () => { throw new Error('no utility process'); }, fallback: () => new RouteManager() });
     const port = await freePort();
     await rm.start({ id: 'h', localPort: port, kind: 'socks5', hops: [{ type: 'socks5', host: '127.0.0.1', port: 1 }] });
     expect(rm.isRunning('h')).toBe(true);
@@ -177,7 +184,7 @@ describe('RemoteRouteManager — 獨立行程起不來時退回主行程', () =>
   });
 
   test('沒給 fallback 就把錯誤丟給呼叫端', async () => {
-    const rm = new RemoteRouteManager({ spawn: () => { throw new Error('no utility process'); } });
+    const rm = mkRm({ spawn: () => { throw new Error('no utility process'); } });
     await expect(rm.start({ id: 'i', localPort: 1, kind: 'socks5', hops: [] })).rejects.toThrow('no utility process');
   });
 });
